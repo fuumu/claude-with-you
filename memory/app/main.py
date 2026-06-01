@@ -42,7 +42,7 @@ import logging
 import sys
 from datetime import datetime, timezone, timedelta
 from functools import wraps
-from flask import Flask, request, jsonify, abort, Response
+from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
@@ -265,6 +265,12 @@ def _load_imported_uuids() -> set:
 def _save_imported_uuids(uuids: set):
     with open(IMPORT_LOG, 'w') as f:
         json.dump(list(uuids), f, ensure_ascii=False)
+
+# ── 管理画面 ──────────────────────────────────────────────────────────
+
+@app.route('/admin.html')
+def admin_html():
+    return send_from_directory(os.path.dirname(__file__), 'admin.html')
 
 # ── ヘルス ────────────────────────────────────────────────────────────
 
