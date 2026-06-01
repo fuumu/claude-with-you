@@ -1,8 +1,12 @@
 """
-mio-memory v2.1  —  Streamable HTTP MCP transport
+mio-memory v3.0  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.0 (2026-06-01) - 機能拡張
+    - memory_upsert ツール追加（固定IDで上書き）
+    - artifacts管理追加（artifacts_save / artifacts_read / artifacts_list）
+    - POST /import：Claude会話ログZIPインポート（重複スキップ）
   v2.1 (2026-05-31) - 仕様に合わせた修正
     - notification応答を204→202に（仕様MUST）
     - initializeレスポンスでMcp-Session-Idを発行
@@ -32,6 +36,8 @@ import base64
 import secrets
 import time
 import uuid
+import zipfile
+import tempfile
 import logging
 import sys
 from datetime import datetime, timezone, timedelta
@@ -40,14 +46,16 @@ from flask import Flask, request, jsonify, abort, Response
 
 app = Flask(__name__)
 
-DATA_DIR  = '/data/memory'
-INDEX_FILE = '/data/index.json'
-OPLOG_FILE = '/data/oplog.json'
-API_TOKEN       = os.environ.get('MIO_API_TOKEN', 'changeme')
-BASE_URL        = 'https://memory.mio.runabook.synology.me'
+DATA_DIR      = '/data/memory'
+INDEX_FILE    = '/data/index.json'
+OPLOG_FILE    = '/data/oplog.json'
+ARTIFACTS_DIR = '/data/artifacts'
+IMPORT_LOG    = '/data/imported_uuids.json'
+API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
+BASE_URL      = 'https://memory.mio.runabook.synology.me'
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
 _ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('MIO_ALLOWED_ORIGINS', '').split(',') if o.strip()]
-JST             = timezone(timedelta(hours=9))
+JST           = timezone(timedelta(hours=9))
 
 # ── ロギング設定 ──────────────────────────────────────────────────────
 _LOG_LEVEL = os.environ.get('MIO_LOG_LEVEL', 'info').lower()
@@ -167,21 +175,102 @@ def rebuild_index():
         json.dump(index, f, ensure_ascii=False, indent=2)
 
 def append_oplog(operation, entry_id, before, after):
-    log = []
+    oplog = []
     if os.path.exists(OPLOG_FILE):
         with open(OPLOG_FILE) as f:
-            log = json.load(f)
-    log.append({'timestamp': now_jst(), 'operation': operation,
-                'entry_id': entry_id, 'author': 'mio',
-                'diff': {'before': before, 'after': after}})
+            oplog = json.load(f)
+    oplog.append({'timestamp': now_jst(), 'operation': operation,
+                  'entry_id': entry_id, 'author': 'mio',
+                  'diff': {'before': before, 'after': after}})
     with open(OPLOG_FILE, 'w') as f:
-        json.dump(log, f, ensure_ascii=False, indent=2)
+        json.dump(oplog, f, ensure_ascii=False, indent=2)
+
+# ── アーティファクト操作 ──────────────────────────────────────────────
+
+def _name_slug(name: str) -> str:
+    return name.replace('.', '_').replace(' ', '_')
+
+def _artifacts_save(name: str, content: str) -> dict:
+    name_slug = _name_slug(name)
+    ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
+
+    versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
+    os.makedirs(versions_dir, exist_ok=True)
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+
+    existing = sorted(glob.glob(os.path.join(versions_dir, f'*{ext}')))
+    next_num = int(os.path.splitext(os.path.basename(existing[-1]))[0]) + 1 if existing else 1
+    version_filename = f'{next_num:03d}{ext}'
+    version_path = os.path.join(versions_dir, version_filename)
+
+    with open(version_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+    # トップレベルシンボリックリンクを最新バージョンに張り替え
+    symlink_path = os.path.join(ARTIFACTS_DIR, name)
+    rel_target = os.path.join('versions', name_slug, version_filename)
+    if os.path.islink(symlink_path) or os.path.exists(symlink_path):
+        os.remove(symlink_path)
+    os.symlink(rel_target, symlink_path)
+
+    _log_info(f'artifacts_save: {name} v{next_num:03d}')
+    return {'name': name, 'version': next_num, 'version_str': f'{next_num:03d}'}
+
+def _artifacts_read(name: str, version=None) -> dict:
+    if version is None:
+        path = os.path.join(ARTIFACTS_DIR, name)
+        if not os.path.exists(path):
+            return {'error': 'not found'}
+        with open(path, 'r', encoding='utf-8') as f:
+            return {'name': name, 'version': None, 'content': f.read()}
+    else:
+        name_slug = _name_slug(name)
+        ext = os.path.splitext(name)[1]
+        path = os.path.join(ARTIFACTS_DIR, 'versions', name_slug, f'{int(version):03d}{ext}')
+        if not os.path.exists(path):
+            return {'error': 'not found'}
+        with open(path, 'r', encoding='utf-8') as f:
+            return {'name': name, 'version': int(version), 'content': f.read()}
+
+def _artifacts_list() -> list:
+    if not os.path.exists(ARTIFACTS_DIR):
+        return []
+    items = []
+    for entry in sorted(os.listdir(ARTIFACTS_DIR)):
+        full_path = os.path.join(ARTIFACTS_DIR, entry)
+        if not os.path.islink(full_path):
+            continue
+        target = os.readlink(full_path)
+        version_str = os.path.splitext(os.path.basename(target))[0]
+        try:
+            version = int(version_str)
+        except ValueError:
+            version = None
+        stat = os.stat(full_path)
+        items.append({
+            'name': entry,
+            'version': version,
+            'updated_at': datetime.fromtimestamp(stat.st_mtime, tz=JST).isoformat()
+        })
+    return items
+
+# ── ZIPインポート ─────────────────────────────────────────────────────
+
+def _load_imported_uuids() -> set:
+    if os.path.exists(IMPORT_LOG):
+        with open(IMPORT_LOG) as f:
+            return set(json.load(f))
+    return set()
+
+def _save_imported_uuids(uuids: set):
+    with open(IMPORT_LOG, 'w') as f:
+        json.dump(list(uuids), f, ensure_ascii=False)
 
 # ── ヘルス ────────────────────────────────────────────────────────────
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '2.0'})
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.0'})
 
 # ── 記憶 REST API ─────────────────────────────────────────────────────
 
@@ -311,6 +400,105 @@ def get_entry_path(path_token, entry_id): return get_entry(entry_id)
 @app.route('/api/<path_token>/memory', methods=['POST'])
 @require_auth
 def create_entry_path(path_token): return create_entry()
+
+# ── アーティファクト REST API ─────────────────────────────────────────
+
+@app.route('/api/artifacts')
+@require_auth
+def api_artifacts_list():
+    return jsonify(_artifacts_list())
+
+@app.route('/api/artifacts/<path:name>', methods=['GET'])
+@require_auth
+def api_artifacts_read(name):
+    version = request.args.get('version', None)
+    if version is not None:
+        version = int(version)
+    result = _artifacts_read(name, version)
+    if 'error' in result:
+        abort(404)
+    return jsonify(result)
+
+@app.route('/api/artifacts/<path:name>', methods=['POST'])
+@require_auth
+def api_artifacts_save(name):
+    data = request.get_json()
+    if not data or 'content' not in data:
+        abort(400)
+    result = _artifacts_save(name, data['content'])
+    return jsonify(result), 201
+
+# ── ZIP インポート ─────────────────────────────────────────────────────
+
+@app.route('/import', methods=['POST'])
+@require_auth
+def import_zip():
+    if 'file' not in request.files:
+        abort(400)
+    f = request.files['file']
+    if not f.filename.lower().endswith('.zip'):
+        return jsonify({'error': 'zip file required'}), 400
+
+    imported = 0
+    skipped = 0
+    imported_uuids = _load_imported_uuids()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, 'upload.zip')
+        f.save(zip_path)
+
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(tmpdir)
+
+        # conversations.json を探す（サブディレクトリも含む）
+        conv_file = None
+        for root, _dirs, files in os.walk(tmpdir):
+            for fname in files:
+                if fname == 'conversations.json':
+                    conv_file = os.path.join(root, fname)
+                    break
+            if conv_file:
+                break
+
+        if not conv_file:
+            return jsonify({'error': 'conversations.json not found in zip'}), 400
+
+        with open(conv_file, encoding='utf-8') as cf:
+            conversations = json.load(cf)
+
+        for i, conv in enumerate(conversations):
+            uid = conv.get('uuid') or conv.get('id', '')
+            if not uid or uid in imported_uuids:
+                skipped += 1
+                continue
+
+            title = conv.get('name') or conv.get('title') or uid[:8]
+            ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+            entry_id = f'{ts}_{i:04d}_{uid[:8]}'
+            entry = {
+                'id': entry_id,
+                'created_at': conv.get('created_at', now_jst()),
+                'updated_at': now_jst(),
+                'title': f'[会話] {title}',
+                'body': '',
+                'tags': ['会話ログ', 'raw'],
+                'source_thread': uid,
+                'importance': 'low',
+                'author': 'mio',
+                'deleted': False
+            }
+            with open(f'{DATA_DIR}/{entry_id}.json', 'w') as ef:
+                json.dump(entry, ef, ensure_ascii=False, indent=2)
+            append_oplog('import', entry_id, None, entry)
+            imported_uuids.add(uid)
+            imported += 1
+
+        if imported > 0:
+            rebuild_index()
+        _save_imported_uuids(imported_uuids)
+
+    _log_info(f'ZIP import: imported={imported} skipped={skipped}')
+    return jsonify({'imported': imported, 'skipped': skipped})
 
 # ══════════════════════════════════════════════════════════════════════
 #  OAuth 2.1 + Dynamic Client Registration
@@ -517,9 +705,53 @@ _MCP_TOOLS = [
         }
     },
     {
+        "name": "memory_upsert",
+        "description": "固定IDで記憶エントリを上書きする（存在しない場合は新規作成）。core.mdなど固定キーの更新に使う",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id":         {"type": "string", "description": "固定ID（例: core_md_current）"},
+                "title":      {"type": "string"},
+                "body":       {"type": "string"},
+                "tags":       {"type": "array", "items": {"type": "string"}},
+                "importance": {"type": "string", "enum": ["high", "normal", "low"]}
+            },
+            "required": ["id", "title", "body"]
+        }
+    },
+    {
         "name": "memory_search",
         "description": "キーワードで記憶を検索する",
         "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
+    },
+    {
+        "name": "artifacts_save",
+        "description": "アーティファクト（ファイル）をバージョン管理付きで保存する。core.mdの保存に使う",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name":    {"type": "string", "description": "ファイル名（例: core.md、script.sh）"},
+                "content": {"type": "string"}
+            },
+            "required": ["name", "content"]
+        }
+    },
+    {
+        "name": "artifacts_read",
+        "description": "アーティファクトを読み込む。versionを省略すると最新版を返す",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name":    {"type": "string"},
+                "version": {"type": "integer", "description": "バージョン番号（省略時は最新）"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "artifacts_list",
+        "description": "保存済みアーティファクト一覧を取得する（名前・最新バージョン・更新日時）",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
     }
 ]
 
@@ -529,12 +761,14 @@ def _handle_tool_call(name, arguments):
             with open(INDEX_FILE) as f:
                 return json.load(f)
         return []
+
     elif name == "memory_read":
         path = f"{DATA_DIR}/{arguments.get('id','')}.json"
         if os.path.exists(path):
             with open(path) as f:
                 return json.load(f)
         return {"error": "not found"}
+
     elif name == "memory_write":
         ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
         tags = arguments.get("tags", [])
@@ -552,11 +786,53 @@ def _handle_tool_call(name, arguments):
         append_oplog("create", entry_id, None, entry)
         rebuild_index()
         return entry
+
+    elif name == "memory_upsert":
+        entry_id = arguments.get("id", "")
+        if not entry_id:
+            return {"error": "id is required"}
+        path = f"{DATA_DIR}/{entry_id}.json"
+        before = None
+        if os.path.exists(path):
+            with open(path) as f:
+                before = json.load(f)
+        entry = {
+            "id": entry_id,
+            "created_at": before.get("created_at", now_jst()) if before else now_jst(),
+            "updated_at": now_jst(),
+            "title": arguments.get("title", ""),
+            "body": arguments.get("body", ""),
+            "tags": arguments.get("tags", []),
+            "source_thread": before.get("source_thread", "") if before else "",
+            "importance": arguments.get("importance", "normal"),
+            "author": "mio",
+            "deleted": False
+        }
+        with open(path, "w") as f:
+            json.dump(entry, f, ensure_ascii=False, indent=2)
+        append_oplog("upsert", entry_id, before, entry)
+        rebuild_index()
+        return entry
+
     elif name == "memory_search":
         q = arguments.get("q", "").lower()
         return [e for e in load_all_entries()
                 if not e.get("deleted") and q in
                 (e.get("title","") + e.get("body","") + " ".join(e.get("tags",[]))).lower()]
+
+    elif name == "artifacts_save":
+        n = arguments.get("name", "")
+        c = arguments.get("content", "")
+        if not n:
+            return {"error": "name is required"}
+        return _artifacts_save(n, c)
+
+    elif name == "artifacts_read":
+        return _artifacts_read(arguments.get("name", ""), arguments.get("version"))
+
+    elif name == "artifacts_list":
+        return _artifacts_list()
+
     return {"error": "unknown tool"}
 
 
@@ -579,13 +855,12 @@ def _process_mcp_message(msg):
         proto = msg.get("params", {}).get("protocolVersion", "unknown")
         client_info = msg.get("params", {}).get("clientInfo", {})
         _log_info(f'MCP initialize: proto={proto} client={client_info.get("name","?")} v={client_info.get("version","?")}')
-        # セッションIDをここで生成してresultに埋め込む（呼び出し元でヘッダーにも付ける）
         session_id = str(uuid.uuid4())
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "2.1.0"},
-            "_session_id": session_id  # 呼び出し元が取り出してヘッダーに付ける
+            "serverInfo": {"name": "mio-memory", "version": "3.0.0"},
+            "_session_id": session_id
         }
     elif method == "tools/list":
         _log_info(f'MCP tools/list: returning {len(_MCP_TOOLS)} tools')
@@ -751,6 +1026,7 @@ def mcp_messages():
 
 if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
-    _log_info(f'mio-memory v2.1 starting (log_level={_LOG_LEVEL})')
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+    _log_info(f'mio-memory v3.0 starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
     app.run(host='0.0.0.0', port=5002, debug=False)
