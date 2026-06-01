@@ -1,5 +1,7 @@
 # claude-with-you
 
+[日本語](#claude-with-you) | [English](#claude-with-you-english)
+
 Claude用の外部記憶MCPサーバー。Synology NAS上のDockerで稼働し、Claude.aiおよびClaude CodeからMCPプロトコルで読み書きできる。
 
 ---
