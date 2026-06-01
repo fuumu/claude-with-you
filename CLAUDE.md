@@ -29,6 +29,8 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/index.json` — rebuilt index (id, title, tags, importance, created_at)
 - `/data/oplog.json` — append-only operation log
 - `/data/oauth_store.json` — persisted OAuth clients and access tokens
+- `/data/artifacts/` — versioned file storage; top-level symlinks point to latest version
+- `/data/imported_uuids.json` — deduplication log for ZIP imports
 
 ## Architecture
 
@@ -42,13 +44,17 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed:**
+**MCP tools exposed (v3.0):**
 - `memory_read_index` — returns the index
 - `memory_read` — reads a single entry by id
 - `memory_write` — creates a new entry
+- `memory_upsert` — overwrites an entry by fixed id (creates if absent); used for core.md
 - `memory_search` — full-text keyword search across title, body, and tags
+- `artifacts_save` — saves a file with version history (symlink-based latest pointer)
+- `artifacts_read` — reads latest or a specific version of an artifact
+- `artifacts_list` — lists all saved artifacts
 
-**Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_chat`).
+**Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 
 ## Dependencies
 
