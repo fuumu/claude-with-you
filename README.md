@@ -64,10 +64,11 @@ Claude.ai / Claude Code
 
 ### 1. `.env` を作成
 
-```
-MIO_API_TOKEN=your-secret-token
-MIO_LOG_LEVEL=info
-# MIO_ALLOWED_ORIGINS=https://claude.ai  # 本番時は設定推奨
+`.env_sample` をコピーして `MIO_API_TOKEN` を書き換える。
+
+```bash
+cp .env_sample .env
+# MIO_API_TOKEN を自分のトークンに変更する
 ```
 
 ### 2. 起動
@@ -142,6 +143,7 @@ claude-with-you/
 ├── CLAUDE.md               Claude Code向けアーキテクチャ文書
 ├── README.md
 ├── docker-compose.yml
+├── .env_sample             環境変数サンプル（これをコピーして .env を作る）
 ├── .env                    (gitignored) 環境変数
 ├── docs/
 │   ├── design.md           MCPサーバー拡張設計仕様
@@ -185,8 +187,9 @@ Single-file Flask app (`memory/app/main.py`) running in Docker on a Synology NAS
 ## Quick Start
 
 ```bash
-# 1. Create .env
-echo "MIO_API_TOKEN=your-secret-token" > .env
+# 1. Create .env from sample
+cp .env_sample .env
+# Edit MIO_API_TOKEN in .env
 
 # 2. Start
 docker-compose up -d
