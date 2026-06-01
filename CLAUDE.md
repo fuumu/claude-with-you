@@ -56,6 +56,10 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 **Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 
+**MCP initialize instructions:**
+`/mcp` エンドポイントの initialize レスポンスに `instructions` フィールドが含まれる。
+接続時に Claude.ai へ「セッション開始時に `artifacts_read("core.md")` を実行して記憶を読み込む」旨を自動通知する。
+
 ## Dependencies
 
 All Python wheels are vendored in `memory/wheels/` so the Docker build works without internet access. The only runtime dependency is Flask. To add a package, download its wheel (and all transitive deps) into `memory/wheels/` and add it to `requirements.txt`.

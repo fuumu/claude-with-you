@@ -65,7 +65,7 @@ git commit -m "initial commit: mio-memory MCP server"
 
 # プッシュ
 # GitHubに初期コミットがある場合
-git pull origin main --allow-unrelated-histories
+git pull origin main origin main --allow-unrelated-histories
 git push origin main
 
 # GitHubが空の場合
