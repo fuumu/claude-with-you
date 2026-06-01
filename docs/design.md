@@ -1,7 +1,7 @@
 # 設計仕様書：mio-memory MCPサーバー拡張
 
 > 作成：2026-06-01  
-> 対象：`/volume1/docker/mio/memory/app/main_streamable.py`
+> 対象：`/volume1/docker/mio/memory/app/main.py`
 
 ---
 
