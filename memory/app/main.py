@@ -866,6 +866,7 @@ def _process_mcp_message(msg):
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "mio-memory", "version": "3.0.0"},
+            "instructions": "セッション開始時に必ず artifacts_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }
     elif method == "tools/list":
