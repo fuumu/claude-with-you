@@ -499,12 +499,92 @@ def import_zip():
             imported_uuids.add(uid)
             imported += 1
 
+        # memories.json を探す
+        memories_file = None
+        for root, _dirs, files in os.walk(tmpdir):
+            for fname in files:
+                if fname == 'memories.json':
+                    memories_file = os.path.join(root, fname)
+                    break
+            if memories_file:
+                break
+
+        artifact_name = None
+        if memories_file:
+            with open(memories_file, encoding='utf-8') as mf:
+                memories_data = json.load(mf)
+            if memories_data and isinstance(memories_data, list):
+                memory_content = memories_data[0].get('conversations_memory', '')
+                if memory_content:
+                    date_str = datetime.now(JST).strftime('%Y%m%d')
+                    artifact_name = f'core_memories_{date_str}.md'
+                    _artifacts_save(artifact_name, memory_content)
+
+        # projects/ フォルダを探す
+        projects_dir = None
+        for root, dirs, _files in os.walk(tmpdir):
+            if 'projects' in dirs:
+                projects_dir = os.path.join(root, 'projects')
+                break
+
+        if projects_dir:
+            for proj_file in os.listdir(projects_dir):
+                if not proj_file.endswith('.json'):
+                    continue
+                with open(os.path.join(projects_dir, proj_file), encoding='utf-8') as pf:
+                    proj = json.load(pf)
+
+                if proj.get('is_starter_project'):
+                    continue
+
+                proj_uuid = proj.get('uuid', '')
+                if proj_uuid in imported_uuids:
+                    skipped += 1
+                    continue
+
+                title = f'[project] {proj.get("name", proj_uuid[:8])}'
+                body_lines = [
+                    f'## {proj.get("name", "")}',
+                    f'uuid: {proj_uuid}',
+                    f'description: {proj.get("description", "")}',
+                    f'created_at: {proj.get("created_at", "")}',
+                ]
+                docs = proj.get('docs', [])
+                if docs:
+                    body_lines.append(f'\n## Knowledge ({len(docs)}件)')
+                    for doc in docs:
+                        body_lines.append(f'- {doc.get("filename", "")}: {doc.get("content", "")[:200]}...')
+
+                ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+                entry_id = f'{ts}_proj_{proj_uuid[:8]}'
+                entry = {
+                    'id': entry_id,
+                    'created_at': proj.get('created_at', now_jst()),
+                    'updated_at': now_jst(),
+                    'title': title,
+                    'body': '\n'.join(body_lines),
+                    'tags': ['project', 'raw'],
+                    'source_thread': proj_uuid,
+                    'importance': 'low',
+                    'author': 'mio',
+                    'deleted': False
+                }
+                with open(f'{DATA_DIR}/{entry_id}.json', 'w') as ef:
+                    json.dump(entry, ef, ensure_ascii=False, indent=2)
+                append_oplog('import', entry_id, None, entry)
+                imported_uuids.add(proj_uuid)
+                imported += 1
+
         if imported > 0:
             rebuild_index()
         _save_imported_uuids(imported_uuids)
 
-    _log_info(f'ZIP import: imported={imported} skipped={skipped}')
-    return jsonify({'imported': imported, 'skipped': skipped})
+    _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name}')
+    result = {'imported': imported, 'skipped': skipped}
+    if artifact_name:
+        result['memories_imported'] = True
+        result['memories_artifact'] = artifact_name
+    return jsonify(result)
 
 # ══════════════════════════════════════════════════════════════════════
 #  OAuth 2.1 + Dynamic Client Registration
