@@ -1,0 +1,11 @@
+version: '3'
+services:
+  memory:
+    build: ./memory
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./memory/data:/data
+    env_file:
+      - .env
+    restart: unless-stopped
