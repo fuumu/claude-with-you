@@ -88,6 +88,16 @@
     .artifact-ver  { font-size: .75rem; color: #7c6af7; }
     .artifact-date { font-size: .75rem; color: #5a6a7a; }
 
+    /* ── Import status ── */
+    .import-status {
+      max-width: 600px; margin: 0 auto 1.25rem; padding: .65rem 1rem;
+      background: #16213e; border: 1px solid #2a3a5a; border-radius: 8px;
+      font-size: .82rem; color: #7a8a9a; display: flex; align-items: center; gap: .5rem;
+    }
+    .import-status .label { color: #5a6a7a; }
+    .import-status .value { color: #c8d8e8; font-family: monospace; }
+    .import-status .date  { color: #5a6a7a; margin-left: auto; }
+
     /* ── Import ── */
     .drop-zone {
       border: 2px dashed #2a3a5a; border-radius: 12px; padding: 3rem;
@@ -189,6 +199,11 @@
 
 <!-- Import tab -->
 <div class="tab-panel" id="tab-import">
+  <div class="import-status" id="import-status">
+    <span class="label">最終インポート：</span>
+    <span class="value" id="import-status-name">読み込み中...</span>
+    <span class="date" id="import-status-date"></span>
+  </div>
   <div class="drop-zone" id="drop-zone">
     <div class="icon">📦</div>
     <p>ZIPファイルをここにドロップ</p>
@@ -254,6 +269,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name === 'memory')    loadMemory();
   if (name === 'artifacts') loadArtifacts();
+  if (name === 'import')    loadImportStatus();
 }
 
 // ── Memory ────────────────────────────────────────────────────────────
@@ -358,6 +374,29 @@ async function openArtifact(name) {
 }
 
 // ── Import ────────────────────────────────────────────────────────────
+async function loadImportStatus() {
+  try {
+    const res  = await apiFetch('/api/import-status');
+    const data = await res.json();
+    const nameEl = document.getElementById('import-status-name');
+    const dateEl = document.getElementById('import-status-date');
+    if (data.last_filename) {
+      nameEl.textContent = data.last_filename;
+      // ファイル名から日付をパース（例: claude_export_20260601.zip → 2026-06-01）
+      const m = data.last_filename.match(/(\d{4})(\d{2})(\d{2})/);
+      const dateStr = m ? `${m[1]}-${m[2]}-${m[3]}` : (data.imported_at || '').slice(0, 10);
+      dateEl.textContent = dateStr;
+    } else {
+      nameEl.textContent = 'インポート履歴なし';
+      dateEl.textContent = '';
+    }
+  } catch(e) {
+    if (e.message !== '401') {
+      document.getElementById('import-status-name').textContent = '取得失敗';
+    }
+  }
+}
+
 const dropZone = document.getElementById('drop-zone');
 dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
@@ -408,6 +447,7 @@ function esc(s) {
 if (getToken()) {
   document.getElementById('auth-overlay').style.display = 'none';
   loadMemory();
+  loadImportStatus();
 }
 </script>
 </body>

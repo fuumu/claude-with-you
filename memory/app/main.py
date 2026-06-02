@@ -50,7 +50,8 @@ DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
 OPLOG_FILE    = '/data/oplog.json'
 ARTIFACTS_DIR = '/data/artifacts'
-IMPORT_LOG    = '/data/imported_uuids.json'
+IMPORT_LOG         = '/data/imported_uuids.json'
+IMPORT_STATUS_FILE = '/data/.import_status.json'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
@@ -265,6 +266,23 @@ def _load_imported_uuids() -> set:
 def _save_imported_uuids(uuids: set):
     with open(IMPORT_LOG, 'w') as f:
         json.dump(list(uuids), f, ensure_ascii=False)
+
+def _write_import_status(filename: str):
+    with open(IMPORT_STATUS_FILE, 'w', encoding='utf-8') as f:
+        json.dump({
+            'last_filename': filename,
+            'imported_at': datetime.now(JST).isoformat()
+        }, f, ensure_ascii=False)
+
+# ── インポートステータス ──────────────────────────────────────────────
+
+@app.route('/api/import-status', methods=['GET'])
+@require_auth
+def api_import_status():
+    if os.path.exists(IMPORT_STATUS_FILE):
+        with open(IMPORT_STATUS_FILE, encoding='utf-8') as f:
+            return jsonify(json.load(f))
+    return jsonify({'last_filename': None, 'imported_at': None})
 
 # ── 管理画面 ──────────────────────────────────────────────────────────
 
@@ -580,6 +598,8 @@ def import_zip():
         _save_imported_uuids(imported_uuids)
 
     _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name}')
+    if imported > 0 or artifact_name:
+        _write_import_status(f.filename)
     result = {'imported': imported, 'skipped': skipped}
     if artifact_name:
         result['memories_imported'] = True
