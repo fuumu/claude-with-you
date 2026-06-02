@@ -88,6 +88,24 @@
     .artifact-ver  { font-size: .75rem; color: #7c6af7; }
     .artifact-date { font-size: .75rem; color: #5a6a7a; }
 
+    /* ── Batch command ── */
+    .batch-section {
+      max-width: 600px; margin: 1.75rem auto 0;
+    }
+    .batch-section h3 { font-size: .85rem; color: #7a8a9a; margin-bottom: .75rem; }
+    .batch-section p  { font-size: .8rem; color: #5a6a7a; margin-bottom: .75rem; line-height: 1.6; }
+    .batch-cmd-wrap {
+      background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 8px;
+      padding: .75rem 1rem; display: flex; align-items: center; gap: .75rem;
+    }
+    .batch-cmd { font-family: monospace; font-size: .85rem; color: #c8d8e8; flex: 1; white-space: nowrap; overflow-x: auto; }
+    .copy-btn {
+      padding: .3rem .75rem; font-size: .78rem; background: none;
+      border: 1px solid #2a3a5a; border-radius: 5px; color: #7a8a9a; cursor: pointer; white-space: nowrap;
+    }
+    .copy-btn:hover { border-color: #7c6af7; color: #7c6af7; }
+    .copy-btn.copied { border-color: #2ecc71; color: #2ecc71; }
+
     /* ── Import status ── */
     .import-status {
       max-width: 600px; margin: 0 auto 1.25rem; padding: .65rem 1rem;
@@ -211,6 +229,16 @@
     <button class="btn btn-secondary" onclick="document.getElementById('file-input').click()">ファイルを選択</button>
   </div>
   <div id="import-result"></div>
+
+  <div class="batch-section">
+    <h3>要約レイヤー生成</h3>
+    <p>rawインポート後、以下のコマンドをClaude Codeで実行して2層（要約）・3層（シンボリック圧縮）を生成してください。<br>
+    事前に <code>ANTHROPIC_API_KEY</code> と <code>MIO_API_TOKEN</code> を環境変数に設定してください。</p>
+    <div class="batch-cmd-wrap">
+      <span class="batch-cmd" id="batch-cmd">python scripts/generate_summary_layers.py</span>
+      <button class="copy-btn" id="copy-btn" onclick="copyCmd()">コピー</button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal -->
@@ -430,6 +458,16 @@ async function handleFile(file) {
 
 function showResult(html) {
   document.getElementById('import-result').innerHTML = html;
+}
+
+function copyCmd() {
+  const cmd = document.getElementById('batch-cmd').textContent;
+  navigator.clipboard.writeText(cmd).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'コピー済み';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'コピー'; btn.classList.remove('copied'); }, 2000);
+  });
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────

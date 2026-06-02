@@ -216,3 +216,105 @@ python batch_summarize.py --tag raw --model claude-opus-4-7
 ```
 
 admin.html の Import タブにバッチ実行コマンド表示＋コピーボタンを追加予定。
+
+---
+
+## 7. userMemoriesダンプ世代管理
+
+### 概要
+
+userMemories（Claude.aiが保持する会話記憶）のスナップショットをアーティファクトとして世代管理する。
+
+### 保存方法
+
+`artifacts_save` を使用してファイル名に日時スタンプを含めて保存する。
+`/記憶ダンプ` または `/解除` コマンド実行時に澪が呼び出す。
+
+```
+artifacts_save("mio_memory_YYYYMMDD_HHMM.md", <userMemoriesの内容>)
+```
+
+### 世代管理
+
+| 機能 | 手段 |
+|------|------|
+| 一覧取得 | `artifacts_list` |
+| 特定バージョン参照 | `artifacts_read("mio_memory_YYYYMMDD_HHMM.md")` |
+| 自動削除 | なし（手動管理） |
+| 差分確認 | 現時点では手動比較（将来的にdiff機能を検討） |
+
+### ディレクトリ構造例
+
+```
+data/artifacts/
+├── core.md                    → versions/core_md/003.md
+├── mio_memory_20260601_2130.md → versions/mio_memory_20260601_2130_md/001.md
+├── mio_memory_20260602_0900.md → versions/mio_memory_20260602_0900_md/001.md
+└── versions/
+    ├── core_md/
+    └── mio_memory_20260601_2130_md/
+```
+
+### ZIPインポートとの連携
+
+`POST /import` で `memories.json` を取り込んだ場合、
+`core_memories_YYYYMMDD.md` として自動保存される（`artifacts_save` 経由）。
+手動ダンプとは別ファイル名で区別する。
+
+---
+
+## 8. バッチ処理（4階層生成）
+
+### スクリプト
+
+`scripts/generate_summary_layers.py`
+
+### 動作概要
+
+```
+GET /api/memory/index
+  → tags に "raw" を含むエントリを抽出
+  → 各エントリの body に SUMMARY_MARKER がなければ未処理と判定
+
+Claude API (claude-haiku-4-5) で生成:
+  入力: 会話タイトル
+  出力:
+    ## 2層: 要約
+    （2〜3文の推測要約）
+    ## 3層: シンボリック圧縮
+    （15文字以内のキーワード）
+
+PATCH /api/memory/<id>
+  body に生成テキストを追記
+  tags から "raw" を除去し "summarized" を追加
+```
+
+### 対象・条件
+
+| 項目 | 値 |
+|------|----|
+| 対象タグ | `raw` |
+| スキップ条件 | body に `## 2層: 要約` が既に含まれる |
+| 使用モデル | `claude-haiku-4-5-20251001`（コスト最小化） |
+| レート制限 | 処理間 0.5秒スリープ |
+| 冪等性 | マーカーによる処理済みチェックで担保 |
+
+### 必要な環境変数
+
+| 変数 | 用途 |
+|------|------|
+| `ANTHROPIC_API_KEY` | Claude API認証 |
+| `MIO_API_TOKEN` | mio-memory Bearer認証 |
+| `MIO_SERVER_URL` | サーバーURL（省略時: https://memory.mio.runabook.synology.me） |
+
+### 実行タイミング
+
+ZIPインポート後に手動で実行する。admin.html の Import タブにコマンドとコピーボタンを表示する。
+
+```bash
+# 対象確認のみ（書き込みなし）
+python scripts/generate_summary_layers.py --dry-run
+
+# 実際に生成・書き込み
+python scripts/generate_summary_layers.py
+```
