@@ -6,6 +6,7 @@ services:
       - "5002:5002"
     volumes:
       - ./memory/data:/data
+      - ./scripts:/app/scripts:ro
     env_file:
       - .env
     restart: unless-stopped
