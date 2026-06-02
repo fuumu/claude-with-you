@@ -542,17 +542,18 @@ function renderOplog() {
 function openOplog(idx) {
   const row = oplogData[idx];
   if (!row) return;
-  const op  = row.operation || '?';
-  const ts  = (row.timestamp || '').slice(0, 19).replace('T', ' ');
+  const op     = row.operation || '?';
+  const ts     = (row.timestamp || '').slice(0, 19).replace('T', ' ');
+  const diff   = row.diff || {};
+  const after  = diff.after  ? JSON.stringify(diff.after,  null, 2) : '（なし）';
+  const before = diff.before ? JSON.stringify(diff.before, null, 2) : '（なし）';
   document.getElementById('modal-title').textContent = `[${op}] ${row.entry_id || ''}`;
   document.getElementById('modal-meta').textContent  = ts;
-  const after  = row.after  ? JSON.stringify(row.after,  null, 2) : '（なし）';
-  const before = row.before ? JSON.stringify(row.before, null, 2) : '（なし）';
   const body = document.getElementById('modal-body');
   body.className = 'modal-body';
-  body.textContent = (row.before
+  body.textContent = diff.before
     ? `▼ after\n${after}\n\n▼ before\n${before}`
-    : `▼ after\n${after}`);
+    : `▼ after\n${after}`;
   openModal();
 }
 
