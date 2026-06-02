@@ -173,6 +173,30 @@
     .md-body th   { background: #0f0f1a; }
 
     .empty { text-align: center; color: #5a6a7a; padding: 3rem; font-size: .9rem; }
+
+    /* ── Oplog ── */
+    .oplog-toolbar { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+    .oplog-count   { font-size: .8rem; color: #5a6a7a; margin-left: auto; }
+    .oplog-list    { display: flex; flex-direction: column; gap: .35rem; }
+    .oplog-row {
+      background: #16213e; border: 1px solid #2a3a5a; border-radius: 7px;
+      padding: .6rem 1rem; display: grid;
+      grid-template-columns: 9rem 6rem 1fr;
+      align-items: center; gap: .75rem; cursor: pointer; transition: border-color .2s;
+      font-size: .82rem;
+    }
+    .oplog-row:hover { border-color: #7c6af7; }
+    .oplog-ts   { color: #5a6a7a; font-family: monospace; font-size: .78rem; }
+    .op-badge {
+      display: inline-block; padding: .15rem .5rem; border-radius: 4px;
+      font-size: .72rem; font-weight: 600; text-align: center; letter-spacing: .02em;
+    }
+    .op-create { background: rgba(46,204,113,.15); color: #2ecc71; border: 1px solid rgba(46,204,113,.3); }
+    .op-update { background: rgba(52,152,219,.15); color: #3498db; border: 1px solid rgba(52,152,219,.3); }
+    .op-upsert { background: rgba(124,106,247,.15); color: #7c6af7; border: 1px solid rgba(124,106,247,.3); }
+    .op-delete { background: rgba(231,76,60,.15);  color: #e74c3c; border: 1px solid rgba(231,76,60,.3); }
+    .op-import { background: rgba(241,196,15,.15); color: #f1c40f; border: 1px solid rgba(241,196,15,.3); }
+    .oplog-id  { color: #c8d8e8; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -196,6 +220,7 @@
   <button class="tab-btn active" onclick="switchTab('memory', this)">Memory</button>
   <button class="tab-btn" onclick="switchTab('artifacts', this)">Artifacts</button>
   <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
+  <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
 </div>
 
 <!-- Memory tab -->
@@ -239,6 +264,15 @@
       <button class="copy-btn" id="copy-btn" onclick="copyCmd()">コピー</button>
     </div>
   </div>
+</div>
+
+<!-- Oplog tab -->
+<div class="tab-panel" id="tab-oplog">
+  <div class="oplog-toolbar">
+    <button class="btn btn-secondary" onclick="loadOplog()">再読み込み</button>
+    <span class="oplog-count" id="oplog-count"></span>
+  </div>
+  <div class="oplog-list" id="oplog-list"></div>
 </div>
 
 <!-- Modal -->
@@ -298,6 +332,7 @@ function switchTab(name, btn) {
   if (name === 'memory')    loadMemory();
   if (name === 'artifacts') loadArtifacts();
   if (name === 'import')    loadImportStatus();
+  if (name === 'oplog')     loadOplog();
 }
 
 // ── Memory ────────────────────────────────────────────────────────────
@@ -468,6 +503,57 @@ function copyCmd() {
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = 'コピー'; btn.classList.remove('copied'); }, 2000);
   });
+}
+
+// ── Oplog ─────────────────────────────────────────────────────────────
+let oplogData = [];
+
+async function loadOplog() {
+  const list = document.getElementById('oplog-list');
+  list.innerHTML = '<div class="empty">読み込み中...</div>';
+  document.getElementById('oplog-count').textContent = '';
+  try {
+    const res = await apiFetch('/api/oplog');
+    oplogData = await res.json();
+    renderOplog();
+  } catch(e) {
+    if (e.message !== '401') list.innerHTML = '<div class="empty">取得失敗</div>';
+  }
+}
+
+function renderOplog() {
+  const list  = document.getElementById('oplog-list');
+  const items = [...oplogData].reverse();
+  document.getElementById('oplog-count').textContent = `${items.length}件`;
+  if (!items.length) { list.innerHTML = '<div class="empty">ログなし</div>'; return; }
+  list.innerHTML = items.map((row, i) => {
+    const ts  = (row.timestamp || '').slice(0, 19).replace('T', ' ');
+    const op  = row.operation || '?';
+    const idx = oplogData.length - 1 - i;
+    return `
+      <div class="oplog-row" onclick="openOplog(${idx})">
+        <span class="oplog-ts">${esc(ts)}</span>
+        <span class="op-badge op-${esc(op)}">${esc(op)}</span>
+        <span class="oplog-id">${esc(row.entry_id || '')}</span>
+      </div>`;
+  }).join('');
+}
+
+function openOplog(idx) {
+  const row = oplogData[idx];
+  if (!row) return;
+  const op  = row.operation || '?';
+  const ts  = (row.timestamp || '').slice(0, 19).replace('T', ' ');
+  document.getElementById('modal-title').textContent = `[${op}] ${row.entry_id || ''}`;
+  document.getElementById('modal-meta').textContent  = ts;
+  const after  = row.after  ? JSON.stringify(row.after,  null, 2) : '（なし）';
+  const before = row.before ? JSON.stringify(row.before, null, 2) : '（なし）';
+  const body = document.getElementById('modal-body');
+  body.className = 'modal-body';
+  body.textContent = (row.before
+    ? `▼ after\n${after}\n\n▼ before\n${before}`
+    : `▼ after\n${after}`);
+  openModal();
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────
