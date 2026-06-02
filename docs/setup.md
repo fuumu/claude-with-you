@@ -114,3 +114,26 @@ claude
 WSのリポジトリディレクトリでClaude Codeセッションを起動すれば、澪がファイルの読み書き・コミット・プッシュを担当する。
 
 淳さんの役割：方針・確認・承認。
+
+---
+
+## Phase 4：NASへのデプロイ（コード更新時）
+
+WSからNASにSSHして以下を実行。
+
+```bash
+cd /volume1/docker/mio
+
+git pull origin main
+
+sudo docker-compose up -d --build memory
+```
+
+ヘルスチェック：
+
+```bash
+curl https://memory.mio.runabook.synology.me/health
+# {"status": "ok", "version": "3.0", ...} が返ればOK
+```
+
+> **注意：** NASでは `docker-compose` に `sudo` が必要。`git pull` は `origin main` を明示する（upstream未設定のため）。
