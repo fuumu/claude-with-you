@@ -139,6 +139,16 @@ data/artifacts/
 
 ---
 
+## ドキュメント
+
+| ファイル | 内容 |
+|---------|------|
+| [docs/design.md](docs/design.md) | MCPサーバー拡張設計仕様。memory_upsert・artifacts管理・ZIPインポート・MCP initialize instructions・4階層検索アーキテクチャ・バッチ処理の設計を記載 |
+| [docs/setup.md](docs/setup.md) | NAS→GitHub→WS の初回セットアップ手順（SSH鍵・git初期化・Claude Code登録） |
+| [docs/talk-and-build.md](docs/talk-and-build.md) | claude.ai chat（設計・議論）と Claude Code（実装・git操作）を役割分担する開発ワークフローの説明 |
+
+---
+
 ## プロジェクト構成
 
 ```
@@ -149,12 +159,16 @@ claude-with-you/
 ├── .env_sample             環境変数サンプル（これをコピーして .env を作る）
 ├── .env                    (gitignored) 環境変数
 ├── docs/
-│   ├── design.md           MCPサーバー拡張設計仕様
-│   └── setup.md            NAS→GitHub→WSセットアップ手順
+│   ├── design.md           MCPサーバー拡張設計仕様（8セクション）
+│   ├── setup.md            NAS→GitHub→WSセットアップ手順
+│   └── talk-and-build.md   chat×Claude Code 役割分担ワークフロー
+├── scripts/
+│   └── generate_summary_layers.py  rawエントリの2層・3層要約生成バッチ
 └── memory/
     ├── Dockerfile
     ├── app/
     │   ├── main.py         サーバー本体（全機能を1ファイルに集約）
+    │   ├── admin.html      管理UI（Memory/Artifacts/Importタブ）
     │   └── requirements.txt
     ├── wheels/             Pythonホイール（ベンダリング済み）
     └── data/               (gitignored) 実行時データ
@@ -163,7 +177,8 @@ claude-with-you/
         ├── index.json      再構築可能なインデックス
         ├── oplog.json      操作ログ（append-only）
         ├── oauth_store.json OAuthクライアント・トークン永続化
-        └── imported_uuids.json ZIPインポート済みUUID管理
+        ├── imported_uuids.json ZIPインポート済みUUID管理
+        └── .import_status.json 最終ZIPインポート記録
 ```
 
 ---
