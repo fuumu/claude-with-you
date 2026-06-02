@@ -39,7 +39,7 @@ except ImportError:
 # ── 設定 ─────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 MIO_API_TOKEN     = os.environ.get('MIO_API_TOKEN', '')
-MIO_SERVER_URL    = os.environ.get('MIO_SERVER_URL', 'https://memory.mio.runabook.synology.me').rstrip('/')
+MIO_SERVER_URL    = os.environ.get('MIO_SERVER_URL', 'http://localhost:5002').rstrip('/')
 LM_STUDIO_HOST    = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
 LM_STUDIO_PORT    = os.environ.get('LM_STUDIO_PORT', '1234')
 
