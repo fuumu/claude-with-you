@@ -48,6 +48,16 @@
     .tab-panel      { display: none; padding: 1.5rem; }
     .tab-panel.active { display: block; }
 
+    /* ── Search ── */
+    .search-bar { margin-bottom: .75rem; }
+    .search-bar input {
+      width: 100%; max-width: 400px; padding: .5rem .75rem;
+      background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 6px;
+      color: #c8d8e8; font-size: .85rem;
+    }
+    .search-bar input:focus { outline: none; border-color: #7c6af7; }
+    .search-bar input::placeholder { color: #3a4a6a; }
+
     /* ── Filter ── */
     .filter-bar { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
     .filter-btn {
@@ -243,6 +253,9 @@
 
 <!-- Memory tab -->
 <div class="tab-panel active" id="tab-memory">
+  <div class="search-bar">
+    <input type="search" id="memory-search" placeholder="🔍 キーワード検索..." oninput="onSearchInput(this.value)">
+  </div>
   <div class="filter-bar" id="filter-bar">
     <button class="filter-btn active" onclick="setFilter('全て', this)">全て</button>
   </div>
@@ -312,6 +325,8 @@
 const API = 'https://memory.mio.runabook.synology.me';
 let allEntries = [];
 let currentFilter = '全て';
+let searchKeyword = '';
+let searchTimer = null;
 
 // ── Auth ─────────────────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('mio_token') || ''; }
@@ -365,13 +380,24 @@ async function loadMemory() {
   const grid = document.getElementById('memory-grid');
   grid.innerHTML = '<div class="empty">読み込み中...</div>';
   try {
-    const res = await apiFetch('/api/memory/index');
+    let res;
+    if (searchKeyword) {
+      res = await apiFetch('/api/memory/search?q=' + encodeURIComponent(searchKeyword));
+    } else {
+      res = await apiFetch('/api/memory/index');
+    }
     allEntries = await res.json();
     renderFilterBar();
     renderCards();
   } catch(e) {
     if (e.message !== '401') grid.innerHTML = '<div class="empty">取得失敗</div>';
   }
+}
+
+function onSearchInput(val) {
+  clearTimeout(searchTimer);
+  searchKeyword = val.trim();
+  searchTimer = setTimeout(() => loadMemory(), 300);
 }
 
 function renderFilterBar() {

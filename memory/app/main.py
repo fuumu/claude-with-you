@@ -571,6 +571,21 @@ def create_share_token():
     url = f'{BASE_URL}/admin.html?id={entry_id}&token={token}'
     return jsonify({'token': token, 'url': url})
 
+@app.route('/api/memory/share/<entry_id>', methods=['POST'])
+@require_auth
+def api_memory_share(entry_id):
+    path = f'{DATA_DIR}/{entry_id}.json'
+    if not os.path.exists(path):
+        abort(404)
+    expires_in = int((request.get_json() or {}).get('expires_in', 86400))
+    token      = secrets.token_urlsafe(24)
+    expires_at = (datetime.now(tz=JST) + timedelta(seconds=expires_in)).isoformat()
+    tokens     = _load_share_tokens()
+    tokens[token] = {'entry_id': entry_id, 'expires_at': expires_at}
+    _save_share_tokens(tokens)
+    url = f'{BASE_URL}/admin.html?token={token}&id={entry_id}'
+    return jsonify({'token': token, 'url': url, 'expires_at': expires_at})
+
 @app.route('/api/share/<token>', methods=['GET'])
 def get_shared_entry(token):
     tokens = _load_share_tokens()
@@ -1063,6 +1078,13 @@ _MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "uuid": {"type": "string", "description": "シェアする会話のUUID"}
         }, "required": ["uuid"]}
+    },
+    {
+        "name": "memory_share",
+        "description": "記憶エントリの24時間有効な共有URLを生成する。淳さんにリンクを送るために使う",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "共有する記憶エントリのID"}
+        }, "required": ["id"]}
     }
 ]
 
@@ -1163,6 +1185,19 @@ def _handle_tool_call(name, arguments):
         tokens[token] = {'conv_uuid': uid, 'expires_at': expires_at}
         _save_share_tokens(tokens)
         url = f'{BASE_URL}/logs.html?token={token}'
+        return {"token": token, "url": url, "expires_at": expires_at}
+
+    elif name == "memory_share":
+        entry_id = arguments.get("id", "")
+        path = f"{DATA_DIR}/{entry_id}.json"
+        if not os.path.exists(path):
+            return {"error": f"entry not found: {entry_id}"}
+        token      = secrets.token_urlsafe(24)
+        expires_at = (datetime.now(tz=JST) + timedelta(seconds=86400)).isoformat()
+        tokens     = _load_share_tokens()
+        tokens[token] = {'entry_id': entry_id, 'expires_at': expires_at}
+        _save_share_tokens(tokens)
+        url = f'{BASE_URL}/admin.html?token={token}&id={entry_id}'
         return {"token": token, "url": url, "expires_at": expires_at}
 
     return {"error": "unknown tool"}
