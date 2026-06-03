@@ -71,3 +71,18 @@ All Python wheels are vendored in `memory/wheels/` so the Docker build works wit
 | `MIO_API_TOKEN` | `changeme` | Shared secret for Bearer auth and OAuth password |
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowed Origins; empty skips check |
+
+## 伝言・完了報告のフォーマット
+
+伝言ファイル（handoff_claude_code.md）の依頼は番号（No.1, No.2...）で管理する。
+
+完了報告は以下の形式で記憶に書き込むこと：
+
+| No. | 依頼内容 | 状況 | 備考 |
+|-----|---------|------|------|
+| 1   | ○○      | ✓完了 | - |
+| 2   | ○○      | △一部 | △の場合は理由を備考に |
+| 3   | ○○      | ✗未実施 | ✗の場合は理由を備考に |
+
+- 完了報告の記憶エントリのタグは必ず `["チャット宛", "完了報告"]` を含めること
+- エントリIDは `YYYYMMDD_HHMMSS_チャット宛` の形式
