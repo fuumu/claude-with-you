@@ -30,13 +30,6 @@
     }
     .sidebar-controls { padding: .7rem; border-bottom: 1px solid #21262d; flex-shrink: 0; }
 
-    .file-btn {
-      width: 100%; padding: .42rem .75rem; background: #21262d; border: 1px solid #30363d;
-      border-radius: 6px; color: #c9d1d9; cursor: pointer; font-size: .8rem; text-align: left;
-      transition: border-color .2s; margin-bottom: .3rem;
-    }
-    .file-btn:hover { border-color: #58a6ff; color: #58a6ff; }
-    #file-name { font-size: .72rem; color: #484f58; margin-bottom: .55rem; }
 
     .filter-section { display: flex; flex-direction: column; gap: .38rem; }
     .filter-row { display: flex; gap: .35rem; align-items: center; }
@@ -163,8 +156,6 @@
     .auth-card input:focus { outline: none; border-color: #58a6ff; }
     .btn { padding: .48rem 1.1rem; background: #238636; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: .88rem; width: 100%; }
     .btn:hover { background: #2ea043; }
-    .btn-skip { margin-top: .5rem; background: none; border: 1px solid #21262d; color: #484f58; }
-    .btn-skip:hover { border-color: #58a6ff; color: #58a6ff; background: none; }
 
     /* Modal */
     .modal-overlay {
@@ -190,10 +181,9 @@
 <div class="auth-overlay" id="auth-overlay">
   <div class="auth-card">
     <h2>澪の記憶サーバー</h2>
-    <p>関連記憶の検索にAPIトークンが必要です</p>
+    <p>会話ログを読み込むにはAPIトークンが必要です</p>
     <input type="password" id="token-input" placeholder="mio2026..." autocomplete="current-password">
     <button class="btn" onclick="saveToken()">接続</button>
-    <button class="btn btn-skip" onclick="skipAuth()">ログなし閲覧のみ</button>
   </div>
 </div>
 
@@ -207,9 +197,7 @@
 <div class="main">
   <div class="sidebar">
     <div class="sidebar-controls">
-      <button class="file-btn" onclick="document.getElementById('file-input').click()">📂 conversations.json を開く</button>
-      <input type="file" id="file-input" accept=".json" style="display:none" onchange="loadFile(this)">
-      <div id="file-name">ファイル未選択</div>
+      <div id="load-status" style="font-size:.72rem;color:#484f58;margin-bottom:.5rem;"></div>
       <div class="filter-section">
         <div class="filter-row">
           <label>並び順</label>
@@ -245,8 +233,8 @@
     <div class="conv-count" id="conv-count"></div>
     <div class="conv-list" id="conv-list">
       <div class="empty-state">
-        <span class="icon">📂</span>
-        <span class="hint">JSONファイルを開いてください</span>
+        <span class="icon">💬</span>
+        <span class="hint">読み込み中...</span>
       </div>
     </div>
   </div>
@@ -285,10 +273,10 @@
 
 <script>
 const API = 'https://memory.mio.runabook.synology.me';
-let allConvs = [];
 let filteredConvs = [];
 let activeUuid = null;
 let showThinking = false;
+const convCache = new Map(); // uuid → full conversation data
 
 // ── Auth ─────────────────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('mio_token') || ''; }
@@ -298,10 +286,7 @@ function saveToken() {
   if (!t) return;
   localStorage.setItem('mio_token', t);
   document.getElementById('auth-overlay').style.display = 'none';
-}
-
-function skipAuth() {
-  document.getElementById('auth-overlay').style.display = 'none';
+  loadConversations();
 }
 
 function resetToken() {
@@ -322,48 +307,54 @@ async function apiFetch(path) {
   return res;
 }
 
-// ── File load ─────────────────────────────────────────────────────────
-function loadFile(input) {
-  const file = input.files[0];
-  if (!file) return;
-  document.getElementById('file-name').textContent = file.name;
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const data = JSON.parse(e.target.result);
-      allConvs = Array.isArray(data) ? data : (data.conversations || []);
-      applyFilters();
-    } catch {
-      document.getElementById('file-name').textContent = 'JSONパースエラー';
-    }
-  };
-  reader.readAsText(file);
-}
+// ── Server load ───────────────────────────────────────────────────────
+let _filterTimer = null;
 
-// ── Filters ───────────────────────────────────────────────────────────
-function applyFilters() {
-  const sort     = document.getElementById('sort-select').value;
-  const kw       = document.getElementById('keyword-input').value.toLowerCase();
+async function loadConversations() {
+  const kw       = document.getElementById('keyword-input').value.trim();
   const dateFrom = document.getElementById('date-from').value;
   const dateTo   = document.getElementById('date-to').value;
   const minCount = parseInt(document.getElementById('min-count').value) || 0;
+  const sort     = document.getElementById('sort-select').value;
 
-  let convs = allConvs.slice();
+  document.getElementById('load-status').textContent = '読み込み中...';
+  document.getElementById('conv-list').innerHTML =
+    '<div class="empty-state"><span class="icon">💬</span><span class="hint">読み込み中...</span></div>';
 
-  if (kw) convs = convs.filter(c => (c.name || '').toLowerCase().includes(kw));
-  if (dateFrom) convs = convs.filter(c => (c.updated_at || c.created_at || '') >= dateFrom);
-  if (dateTo)   convs = convs.filter(c => (c.updated_at || c.created_at || '') <= dateTo + 'T23:59:59');
-  if (minCount > 0) convs = convs.filter(c => (c.chat_messages || []).length >= minCount);
+  let path = '/api/conversations/?limit=1000';
+  if (kw)       path += '&q='    + encodeURIComponent(kw);
+  if (dateFrom) path += '&from=' + encodeURIComponent(dateFrom);
+  if (dateTo)   path += '&to='   + encodeURIComponent(dateTo);
 
-  const [field, dir] = sort.split('_');
-  const key = field === 'updated' ? 'updated_at' : 'created_at';
-  convs.sort((a, b) => {
-    const va = a[key] || '', vb = b[key] || '';
-    return dir === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
-  });
+  try {
+    const res = await apiFetch(path);
+    let convs = await res.json();
 
-  filteredConvs = convs;
-  renderList();
+    // client-side: min-count + sort
+    if (minCount > 0) convs = convs.filter(c => (c.message_count || 0) >= minCount);
+
+    const [field, dir] = sort.split('_');
+    const key = field === 'updated' ? 'updated_at' : 'created_at';
+    convs.sort((a, b) => {
+      const va = a[key] || '', vb = b[key] || '';
+      return dir === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
+    });
+
+    filteredConvs = convs;
+    document.getElementById('load-status').textContent = '';
+    renderList();
+  } catch(e) {
+    if (e.message !== '401') {
+      document.getElementById('load-status').textContent = '取得失敗';
+      document.getElementById('conv-list').innerHTML =
+        '<div class="empty-state"><span class="icon">⚠️</span><span class="hint">取得失敗</span></div>';
+    }
+  }
+}
+
+function applyFilters() {
+  clearTimeout(_filterTimer);
+  _filterTimer = setTimeout(loadConversations, 300);
 }
 
 function renderList() {
@@ -377,24 +368,37 @@ function renderList() {
   }
 
   list.innerHTML = filteredConvs.map(c => {
-    const msgCount = (c.chat_messages || []).length;
+    const msgCount = c.message_count || 0;
     const date = (c.updated_at || c.created_at || '').slice(0, 10);
     const isActive = c.uuid === activeUuid;
     return `
       <div class="conv-item${isActive ? ' active' : ''}" onclick="selectConv('${esc(c.uuid)}')">
-        <div class="conv-title">${esc(c.name || '（無題）')}</div>
+        <div class="conv-title">${esc(c.title || c.name || '（無題）')}</div>
         <div class="conv-meta"><span>${date}</span><span>${msgCount}件</span></div>
       </div>`;
   }).join('');
 }
 
 // ── Conversation viewer ───────────────────────────────────────────────
-function selectConv(uuid) {
+async function selectConv(uuid) {
   activeUuid = uuid;
   renderList();
 
-  const conv = allConvs.find(c => c.uuid === uuid);
-  if (!conv) return;
+  // Use cached full data or fetch from server
+  let conv = convCache.get(uuid);
+  if (!conv) {
+    try {
+      const res = await apiFetch('/api/conversations/' + encodeURIComponent(uuid));
+      conv = await res.json();
+      convCache.set(uuid, conv);
+    } catch(e) {
+      if (e.message !== '401') {
+        document.getElementById('messages-wrap').innerHTML =
+          '<div class="empty-state"><span class="icon">⚠️</span><span class="hint">取得失敗</span></div>';
+      }
+      return;
+    }
+  }
 
   document.getElementById('conv-header').style.display = 'flex';
   document.getElementById('conv-header-title').textContent = conv.name || '（無題）';
@@ -412,7 +416,7 @@ function toggleThinking() {
   btn.classList.toggle('active', showThinking);
   btn.textContent = showThinking ? '🧠 思考を非表示' : '🧠 思考を表示';
   if (activeUuid) {
-    const conv = allConvs.find(c => c.uuid === activeUuid);
+    const conv = convCache.get(activeUuid);
     if (conv) renderMessages(conv);
   }
 }
@@ -600,35 +604,43 @@ function setFontSize(size, btn) {
   document.querySelectorAll('.fs-btn').forEach(b => b.classList.toggle('active', b.dataset.size === saved));
 })();
 
-// Handle ?token= (shared conversation link — no login required)
 (async function() {
+  // Handle ?token= (shared conversation link — no login required)
   const params = new URLSearchParams(location.search);
   const token  = params.get('token');
   if (token) {
     document.getElementById('auth-overlay').style.display = 'none';
-    document.getElementById('file-name').textContent = '共有リンクから読み込み中...';
+    document.getElementById('load-status').textContent = '共有リンクから読み込み中...';
     try {
       const res = await fetch(API + '/api/conversations/view?token=' + encodeURIComponent(token));
       if (res.status === 410) {
-        document.getElementById('file-name').textContent = 'リンクの有効期限が切れています';
+        document.getElementById('load-status').textContent = 'リンクの有効期限が切れています';
         return;
       }
       if (!res.ok) {
-        document.getElementById('file-name').textContent = 'リンクが無効です';
+        document.getElementById('load-status').textContent = 'リンクが無効です';
         return;
       }
       const conv = await res.json();
-      allConvs = [conv];
-      document.getElementById('file-name').textContent = conv.name || conv.uuid || '共有会話';
-      applyFilters();
-      selectConv(conv.uuid || conv.id || '');
+      convCache.set(conv.uuid || '', conv);
+      filteredConvs = [{
+        uuid: conv.uuid || '', title: conv.name || '',
+        created_at: conv.created_at || '', updated_at: conv.updated_at || '',
+        message_count: (conv.chat_messages || []).length
+      }];
+      document.getElementById('load-status').textContent = '';
+      renderList();
+      selectConv(conv.uuid || '');
     } catch {
-      document.getElementById('file-name').textContent = '読み込みエラー';
+      document.getElementById('load-status').textContent = '読み込みエラー';
     }
     return;
   }
+
+  // Normal: auto-load if token exists
   if (getToken()) {
     document.getElementById('auth-overlay').style.display = 'none';
+    loadConversations();
   }
 })();
 </script>
