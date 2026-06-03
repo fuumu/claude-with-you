@@ -112,7 +112,7 @@ def generate_layers(client: anthropic.Anthropic, model: str, title: str) -> str:
 
     msg = client.messages.create(
         model=model,
-        max_tokens=200,
+        max_tokens=400,
         messages=[{'role': 'user', 'content': prompt}]
     )
     return msg.content[0].text.strip()
