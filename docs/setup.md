@@ -137,3 +137,85 @@ curl https://memory.mio.runabook.synology.me/health
 ```
 
 > **注意：** NASでは `docker-compose` に `sudo` が必要。`git pull` は `origin main` を明示する（upstream未設定のため）。
+
+---
+
+## LMStudio セットアップ（WSで実行）
+
+`generate_summary_layers.py` を `--backend lmstudio` で使う場合の準備。
+
+### 1. Anthropic互換エンドポイントを有効化
+
+1. LMStudio を起動
+2. 左サイドバーの **Developer** タブ（`</>`アイコン）を開く
+3. **Server** を `Running` にする
+4. **Anthropic-compatible** が有効になっていることを確認（チェックボックスまたはトグル）
+5. ポート番号が `1234` になっていることを確認
+
+### 2. Windowsファイアウォールでポート1234を開放
+
+管理者権限のPowerShellで実行：
+
+```powershell
+netsh advfirewall firewall add rule name="LMStudio" dir=in action=allow protocol=TCP localport=1234
+```
+
+### 3. NASから接続確認
+
+NASにSSHして疎通テスト：
+
+```bash
+curl http://192.168.10.32:1234/v1/models
+# LMStudioが応答すればOK
+```
+
+---
+
+## Dockerビルド時のDNS問題（Synology NAS固有）
+
+### 症状
+
+`python:3.11-slim` イメージのビルド中に `pip install` がDNS解決失敗で止まる：
+
+```
+pip install anthropic
+...
+socket.gaierror: [Errno -3] Temporary failure in name resolution
+```
+
+### 原因
+
+Synology NASのDockerビルド環境はデフォルトのDNSが機能しない場合がある。
+
+### 解決策
+
+`docker-compose.yml` の `build:` セクションに `network: host` を追加すると、ビルド時にホストのDNS（インターネット疎通あり）を使うようになる：
+
+```yaml
+services:
+  memory:
+    build:
+      context: ./memory
+      network: host    ← これを追加
+```
+
+---
+
+## network_mode: host 使用時の注意点
+
+コンテナからWSのLMStudio（`192.168.10.32:1234`）に接続するため、`network_mode: host` を設定している。
+
+### 注意：`ports:` と `dns:` は不要
+
+`network_mode: host` 使用時は `ports:` と `dns:` の設定が無視される（警告が出る場合もある）ため、**削除すること**：
+
+```yaml
+services:
+  memory:
+    network_mode: host
+    # ports: は削除（network_mode: host では無効）
+    # dns: は削除（ホストのDNSを使うため不要）
+    volumes:
+      - ./memory/data:/data
+      - ./scripts:/app/scripts:ro
+```

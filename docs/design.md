@@ -299,22 +299,56 @@ PATCH /api/memory/<id>
 | レート制限 | 処理間 0.5秒スリープ |
 | 冪等性 | マーカーによる処理済みチェックで担保 |
 
+### オプション
+
+```
+--backend [anthropic|lmstudio]  使用バックエンド（デフォルト: anthropic）
+--model <モデル名>               使用モデル（省略時はバックエンドのデフォルト）
+--dry-run                       対象件数確認のみ（書き込みなし）
+```
+
+| バックエンド | デフォルトモデル |
+|-------------|----------------|
+| anthropic | `claude-haiku-4-5-20251001` |
+| lmstudio | `qwen/qwen3.6-35b-a3b` |
+
+lmstudio選択時の他のモデル候補：`google/gemma-4-26b-a4b`、`liquid/lfm2-24b-a2b`
+
 ### 必要な環境変数
 
-| 変数 | 用途 |
-|------|------|
-| `ANTHROPIC_API_KEY` | Claude API認証 |
-| `MIO_API_TOKEN` | mio-memory Bearer認証 |
-| `MIO_SERVER_URL` | サーバーURL（省略時: https://memory.mio.runabook.synology.me） |
+| 変数 | 用途 | デフォルト |
+|------|------|-----------|
+| `MIO_API_TOKEN` | mio-memory Bearer認証 | （必須） |
+| `ANTHROPIC_API_KEY` | Claude API認証（anthropicバックエンド使用時） | （必須） |
+| `MIO_SERVER_URL` | mio-memoryサーバーURL | `http://localhost:5002` |
+| `LM_STUDIO_HOST` | LMStudioのIPアドレス（lmstudioバックエンド使用時） | `192.168.10.32` |
+| `LM_STUDIO_PORT` | LMStudioのポート | `1234` |
 
-### 実行タイミング
+`MIO_SERVER_URL` はコンテナ内実行を前提に `http://localhost:5002` がデフォルト。
+コンテナ外から実行する場合は `.env` に `MIO_SERVER_URL=https://memory.mio.runabook.synology.me` を追加する。
 
-ZIPインポート後に手動で実行する。admin.html の Import タブにコマンドとコピーボタンを表示する。
+### 実行タイミング・コマンド例
+
+ZIPインポート後に手動で実行する。
+
+**コンテナ内から実行（推奨）：**
 
 ```bash
-# 対象確認のみ（書き込みなし）
-python scripts/generate_summary_layers.py --dry-run
+# 対象件数確認（書き込みなし）
+docker exec -it memory python /app/scripts/generate_summary_layers.py --dry-run
 
-# 実際に生成・書き込み
-python scripts/generate_summary_layers.py
+# LMStudioで実行
+docker exec -it memory python /app/scripts/generate_summary_layers.py --backend lmstudio
+
+# モデルを明示指定
+docker exec -it memory python /app/scripts/generate_summary_layers.py --backend lmstudio --model google/gemma-4-26b-a4b
+
+# Anthropicで実行
+docker exec -it memory python /app/scripts/generate_summary_layers.py --backend anthropic
+```
+
+**コンテナ外（WSなど）から実行する場合：**
+
+```bash
+MIO_SERVER_URL=https://memory.mio.runabook.synology.me python scripts/generate_summary_layers.py --dry-run
 ```
