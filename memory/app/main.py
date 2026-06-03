@@ -1090,6 +1090,13 @@ _MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "id": {"type": "string", "description": "共有する記憶エントリのID"}
         }, "required": ["id"]}
+    },
+    {
+        "name": "conversation_read",
+        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む",
+        "inputSchema": {"type": "object", "properties": {
+            "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"}
+        }, "required": ["uuid"]}
     }
 ]
 
@@ -1204,6 +1211,31 @@ def _handle_tool_call(name, arguments):
         _save_share_tokens(tokens)
         url = f'{BASE_URL}/admin.html?token={token}&id={entry_id}'
         return {"token": token, "url": url, "expires_at": expires_at}
+
+    elif name == "conversation_read":
+        uid   = arguments.get("uuid", "")
+        fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
+        if not os.path.exists(fpath):
+            return {"error": f"conversation not found: {uid}"}
+        with open(fpath, encoding='utf-8') as f:
+            conv = json.load(f)
+        messages = conv.get('chat_messages', [])
+        lines = []
+        for m in messages:
+            role    = m.get('sender') or m.get('role') or '?'
+            content = m.get('content') or m.get('text') or ''
+            text    = ''
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get('type') == 'text':
+                        text += c.get('text', '')
+            else:
+                text = str(content)
+            if text.strip():
+                lines.append(f'[{role}] {text[:500]}')
+        title  = conv.get('name') or conv.get('title') or '無題'
+        result = f'# {title}\n\n' + '\n\n'.join(lines)
+        return result
 
     return {"error": "unknown tool"}
 
