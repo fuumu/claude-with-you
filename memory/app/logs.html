@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>澪の記憶サーバー — Logs</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Helvetica Neue', sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -89,7 +91,30 @@
     .msg-assistant .msg-role { color: #a371f7; }
     .msg-ts { font-size: .65rem; color: #484f58; font-weight: normal; }
 
-    .block-text { font-size: .83rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+    .block-text { font-size: var(--msg-font-size, .9rem); line-height: 1.65; word-break: break-word; }
+    .block-text p { margin-bottom: .5rem; }
+    .block-text p:last-child { margin-bottom: 0; }
+    .block-text h1, .block-text h2, .block-text h3 { margin: .75rem 0 .35rem; color: #58a6ff; }
+    .block-text code { background: #161b22; padding: .1rem .3rem; border-radius: 3px; font-size: .85em; }
+    .block-text pre  { background: #161b22; padding: .65rem .8rem; border-radius: 5px; overflow-x: auto; margin-bottom: .5rem; }
+    .block-text pre code { background: none; padding: 0; }
+    .block-text ul, .block-text ol { margin-left: 1.4rem; margin-bottom: .5rem; }
+    .block-text li { margin-bottom: .15rem; }
+    .block-text table { border-collapse: collapse; width: 100%; margin-bottom: .5rem; font-size: .85em; }
+    .block-text th, .block-text td { border: 1px solid #21262d; padding: .3rem .6rem; }
+    .block-text th { background: #161b22; }
+    .block-text a { color: #58a6ff; }
+    .block-text strong { color: #e6edf3; }
+
+    /* Font size controls */
+    .font-size-ctrl { display: flex; align-items: center; gap: .3rem; margin-top: .5rem; }
+    .font-size-ctrl label { font-size: .72rem; color: #484f58; }
+    .fs-btn {
+      padding: .22rem .5rem; font-size: .72rem; background: none;
+      border: 1px solid #21262d; border-radius: 4px; color: #484f58; cursor: pointer; transition: all .15s;
+    }
+    .fs-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    .fs-btn.active { border-color: #58a6ff; color: #58a6ff; background: #1f6feb20; }
 
     .block-collapsible { border: 1px solid #21262d; border-radius: 5px; overflow: hidden; margin-top: .38rem; }
     .block-header {
@@ -112,12 +137,12 @@
     .related-header { padding: .45rem 1.25rem; font-size: .72rem; color: #484f58; font-weight: 600; letter-spacing: .04em; border-bottom: 1px solid #21262d; }
     .related-item {
       padding: .42rem 1.25rem; border-bottom: 1px solid #0d1117; cursor: pointer;
-      font-size: .76rem; transition: background .15s; display: flex; gap: .6rem; align-items: center;
+      font-size: var(--msg-font-size, .9rem); transition: background .15s; display: flex; gap: .6rem; align-items: center;
     }
     .related-item:hover { background: #161b22; }
     .related-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .related-badge { font-size: .68rem; color: #58a6ff; white-space: nowrap; background: #1f6feb20; padding: .1rem .4rem; border-radius: 3px; }
-    .related-empty { padding: .42rem 1.25rem; font-size: .76rem; color: #484f58; }
+    .related-empty { padding: .42rem 1.25rem; font-size: var(--msg-font-size, .9rem); color: #484f58; }
 
     /* Auth overlay */
     .auth-overlay {
@@ -208,6 +233,12 @@
         <div class="filter-row">
           <label>最小件数</label>
           <input type="number" id="min-count" value="3" min="0" onchange="applyFilters()" style="width:55px">
+        </div>
+        <div class="font-size-ctrl">
+          <label>文字サイズ</label>
+          <button class="fs-btn" data-size="small" onclick="setFontSize('small', this)">小</button>
+          <button class="fs-btn active" data-size="medium" onclick="setFontSize('medium', this)">中</button>
+          <button class="fs-btn" data-size="large" onclick="setFontSize('large', this)">大</button>
         </div>
       </div>
     </div>
@@ -411,14 +442,18 @@ function renderMessages(conv) {
   }).join('');
 }
 
+function renderMd(text) {
+  return DOMPurify.sanitize(marked.parse(text || ''));
+}
+
 function renderContentBlocks(content, role, mi) {
   if (typeof content === 'string') {
-    return `<div class="block-text">${escHtml(content)}</div>`;
+    return `<div class="block-text">${renderMd(content)}</div>`;
   }
   return (content || []).map((block, bi) => {
     const id = `b${mi}_${bi}`;
     if (block.type === 'text') {
-      return `<div class="block-text">${escHtml(block.text || '')}</div>`;
+      return `<div class="block-text">${renderMd(block.text || '')}</div>`;
     }
     if (block.type === 'thinking') {
       if (!showThinking) return '';
@@ -547,10 +582,26 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ── Font size ─────────────────────────────────────────────────────────
+const FONT_SIZES = { small: '.8rem', medium: '.9rem', large: '1.15rem' };
+
+function setFontSize(size, btn) {
+  localStorage.setItem('mio_logs_font_size', size);
+  document.documentElement.style.setProperty('--msg-font-size', FONT_SIZES[size]);
+  document.querySelectorAll('.fs-btn').forEach(b => b.classList.toggle('active', b.dataset.size === size));
+}
+
 // ── Init ──────────────────────────────────────────────────────────────
 if (getToken()) {
   document.getElementById('auth-overlay').style.display = 'none';
 }
+
+// Restore font size
+(function() {
+  const saved = localStorage.getItem('mio_logs_font_size') || 'medium';
+  document.documentElement.style.setProperty('--msg-font-size', FONT_SIZES[saved]);
+  document.querySelectorAll('.fs-btn').forEach(b => b.classList.toggle('active', b.dataset.size === saved));
+})();
 </script>
 </body>
 </html>
