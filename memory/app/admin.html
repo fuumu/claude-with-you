@@ -64,9 +64,15 @@
     }
     .card:hover { border-color: #7c6af7; transform: translateY(-1px); }
     .card.deleted { opacity: .5; }
-    .card-title { font-size: .9rem; margin-bottom: .5rem; line-height: 1.4; }
-    .card-meta  { font-size: .75rem; color: #5a6a7a; margin-bottom: .5rem; }
-    .card-tags  { display: flex; gap: .3rem; flex-wrap: wrap; }
+    .card-title  { font-size: .9rem; margin-bottom: .5rem; line-height: 1.4; }
+    .card-meta   { font-size: .75rem; color: #5a6a7a; margin-bottom: .5rem; }
+    .card-tags   { display: flex; gap: .3rem; flex-wrap: wrap; }
+    .card-footer { display: flex; justify-content: flex-end; margin-top: .6rem; }
+    .btn-delete  {
+      padding: .2rem .6rem; font-size: .72rem; background: none;
+      border: 1px solid rgba(231,76,60,.4); border-radius: 4px; color: #e74c3c; cursor: pointer;
+    }
+    .btn-delete:hover { background: rgba(231,76,60,.1); }
     .tag {
       padding: .15rem .5rem; border-radius: 4px; font-size: .7rem;
       background: #0f0f1a; border: 1px solid #2a3a5a; color: #7a8a9a;
@@ -375,6 +381,9 @@ function renderCards() {
         <div class="card-title"><span class="dot dot-${imp}"></span>${esc(e.title)}</div>
         <div class="card-meta">${date}</div>
         <div class="card-tags">${tags}</div>
+        <div class="card-footer">
+          <button class="btn-delete" onclick="deleteMemory('${esc(e.id)}', event)">削除</button>
+        </div>
       </div>`;
   }).join('');
 }
@@ -391,6 +400,15 @@ async function openMemory(id) {
     body.className = 'modal-body';
     body.textContent = e.body || '';
     openModal();
+  } catch {}
+}
+
+async function deleteMemory(id, event) {
+  event.stopPropagation();
+  if (!confirm('このエントリを削除しますか？')) return;
+  try {
+    await apiFetch('/api/memory/' + id, { method: 'DELETE' });
+    loadMemory();
   } catch {}
 }
 

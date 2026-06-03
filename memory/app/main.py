@@ -35,6 +35,7 @@ Originバリデーション（環境変数 MIO_ALLOWED_ORIGINS）:
 import os
 import json
 import glob
+import shutil
 import hashlib
 import hmac
 import base64
@@ -456,6 +457,21 @@ def api_artifacts_save(name):
         abort(400)
     result = _artifacts_save(name, data['content'])
     return jsonify(result), 201
+
+@app.route('/api/artifacts/<path:name>', methods=['DELETE'])
+@require_auth
+def api_artifacts_delete(name):
+    symlink_path = os.path.join(ARTIFACTS_DIR, name)
+    if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
+        abort(404)
+    if os.path.islink(symlink_path) or os.path.exists(symlink_path):
+        os.remove(symlink_path)
+    name_slug = _name_slug(name)
+    versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
+    if os.path.isdir(versions_dir):
+        shutil.rmtree(versions_dir)
+    _log_info(f'artifacts_delete: {name}')
+    return jsonify({'deleted': name})
 
 # ── ZIP インポート ─────────────────────────────────────────────────────
 
