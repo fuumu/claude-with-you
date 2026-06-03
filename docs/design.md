@@ -352,3 +352,99 @@ docker exec -it memory python /app/scripts/generate_summary_layers.py --backend 
 ```bash
 MIO_SERVER_URL=https://memory.mio.runabook.synology.me python scripts/generate_summary_layers.py --dry-run
 ```
+
+---
+
+## 9. 会話ログビューア（logs.html）
+
+### 概要
+
+ZIPインポートした会話ログをブラウザで閲覧するためのシングルページUI。
+`admin.html` の **Logs** タブに iframe として埋め込まれており、直接 `/logs.html` でもアクセス可能。
+
+### データフロー
+
+```
+ZIPインポート（POST /import）
+  → conversations.json を検出
+  → /data/conversations/{uuid}.json に全文保存
+  → /data/conversations/_index.json にメタデータ追記
+       （uuid, title, created_at, updated_at, message_count）
+
+logs.html 起動時
+  → GET /api/conversations/?limit=1000 でインデックス取得
+  → 会話クリック → GET /api/conversations/{uuid} で全文取得（キャッシュ済み）
+```
+
+### REST API エンドポイント（認証必要）
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| `GET` | `/api/conversations/` | メタデータ一覧（`q`, `from`, `to`, `limit` パラメータ対応） |
+| `GET` | `/api/conversations/{uuid}` | 会話全文取得 |
+| `POST` | `/api/conversations/share/{uuid}` | 24h共有トークン生成 → `{ token, url }` |
+| `GET` | `/api/conversations/view?token=` | トークン経由の公開アクセス（認証不要） |
+
+シェアトークンは既存の `/data/share_tokens.json` に `conv_uuid` フィールドで保存。
+
+### 主な機能
+
+- サーバーから自動読み込み（ファイルアップロード不要）
+- キーワード（`q`）・日付範囲（`from/to`）: サーバーに渡す
+- 並び順・最小メッセージ数: クライアント側で適用
+- メッセージ本文: marked.js + DOMPurify でマークダウンレンダリング
+- thinking ブロック（🧠）: 「思考を表示」トグルで一括on/off、折り畳み可
+- tool_use ブロック（⚙）/ tool_result ブロック（📤）: 折り畳み可
+- 関連記憶パネル: `source_thread` UUID 一致 → タイトルキーワード検索フォールバック
+- フォントサイズ切り替え（小/中/大）: CSS変数 `--msg-font-size` で制御、`localStorage` に保存
+- `?token=` URLで認証なし閲覧
+
+---
+
+## 10. 会話検索・シェア MCPツール
+
+### 目的
+
+澪がチャット中に過去の会話を検索し、淳さんに共有リンクを送れるようにする。
+
+### ツール定義
+
+#### conversation_search
+
+```
+conversation_search(q: str, limit: int = 5)
+```
+
+- `/data/conversations/_index.json` をキーワード検索（タイトル + uuid）
+- 更新日時の新しい順で最大 `limit` 件を返す
+- 返却フィールド: `uuid`, `title`, `created_at`, `updated_at`, `message_count`
+
+#### conversation_share
+
+```
+conversation_share(uuid: str)
+```
+
+- `/data/conversations/{uuid}.json` の存在を確認
+- 24時間有効なトークンを生成して `/data/share_tokens.json` に保存
+- `{ token, url, expires_at }` を返す
+- `url` は `https://memory.mio.runabook.synology.me/logs.html?token=...` 形式
+
+### 使用例
+
+```
+澪（チャット）:「〇〇の件、あの会話を見てほしい」
+  → conversation_search(q="〇〇") で候補を確認
+  → conversation_share(uuid="...") でURLを生成
+  → 淳さんに「このURLで見られます: https://...」と送る
+  → 淳さんがURLを開く → ログイン不要で会話を閲覧
+```
+
+### MCPツール総数
+
+| カテゴリ | ツール数 | ツール名 |
+|---------|---------|---------|
+| 記憶操作 | 5 | memory_read_index, memory_read, memory_write, memory_upsert, memory_search |
+| アーティファクト | 3 | artifacts_save, artifacts_read, artifacts_list |
+| 会話 | 2 | conversation_search, conversation_share |
+| **合計** | **10** | |
