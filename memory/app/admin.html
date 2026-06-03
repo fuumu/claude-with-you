@@ -67,12 +67,23 @@
     .card-title  { font-size: .9rem; margin-bottom: .5rem; line-height: 1.4; }
     .card-meta   { font-size: .75rem; color: #5a6a7a; margin-bottom: .5rem; }
     .card-tags   { display: flex; gap: .3rem; flex-wrap: wrap; }
-    .card-footer { display: flex; justify-content: flex-end; margin-top: .6rem; }
+    .card-footer { display: flex; justify-content: flex-end; gap: .4rem; margin-top: .6rem; }
     .btn-delete  {
       padding: .2rem .6rem; font-size: .72rem; background: none;
       border: 1px solid rgba(231,76,60,.4); border-radius: 4px; color: #e74c3c; cursor: pointer;
     }
     .btn-delete:hover { background: rgba(231,76,60,.1); }
+    .btn-link {
+      padding: .2rem .6rem; font-size: .72rem; background: none;
+      border: 1px solid rgba(52,152,219,.4); border-radius: 4px; color: #3498db; cursor: pointer;
+    }
+    .btn-link:hover { background: rgba(52,152,219,.1); }
+    .toast {
+      position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%) translateY(1rem);
+      background: #2ecc71; color: #fff; padding: .55rem 1.2rem; border-radius: 8px;
+      font-size: .85rem; opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none; z-index: 200;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .tag {
       padding: .15rem .5rem; border-radius: 4px; font-size: .7rem;
       background: #0f0f1a; border: 1px solid #2a3a5a; color: #7a8a9a;
@@ -231,15 +242,13 @@
 
 <!-- Memory tab -->
 <div class="tab-panel active" id="tab-memory">
-  <div class="filter-bar">
+  <div class="filter-bar" id="filter-bar">
     <button class="filter-btn active" onclick="setFilter('全て', this)">全て</button>
-    <button class="filter-btn" onclick="setFilter('timeline', this)">timeline</button>
-    <button class="filter-btn" onclick="setFilter('会話メモ', this)">会話メモ</button>
-    <button class="filter-btn" onclick="setFilter('milestone', this)">milestone</button>
-    <button class="filter-btn" onclick="setFilter('TODO', this)">TODO</button>
   </div>
   <div class="card-grid" id="memory-grid"></div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <!-- Artifacts tab -->
 <div class="tab-panel" id="tab-artifacts">
@@ -348,10 +357,30 @@ async function loadMemory() {
   try {
     const res = await apiFetch('/api/memory/index');
     allEntries = await res.json();
+    renderFilterBar();
     renderCards();
   } catch(e) {
     if (e.message !== '401') grid.innerHTML = '<div class="empty">取得失敗</div>';
   }
+}
+
+function renderFilterBar() {
+  const counts = {};
+  for (const e of allEntries) {
+    for (const t of (e.tags || [])) {
+      counts[t] = (counts[t] || 0) + 1;
+    }
+  }
+  const topTags = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([t]) => t);
+  const bar = document.getElementById('filter-bar');
+  bar.innerHTML =
+    `<button class="filter-btn${currentFilter === '全て' ? ' active' : ''}" onclick="setFilter('全て', this)">全て</button>` +
+    topTags.map(t =>
+      `<button class="filter-btn${currentFilter === t ? ' active' : ''}" onclick="setFilter('${esc(t)}', this)">${esc(t)}</button>`
+    ).join('');
 }
 
 function setFilter(tag, btn) {
@@ -382,6 +411,7 @@ function renderCards() {
         <div class="card-meta">${date}</div>
         <div class="card-tags">${tags}</div>
         <div class="card-footer">
+          <button class="btn-link"   onclick="shareMemory('${esc(e.id)}', event)">リンク</button>
           <button class="btn-delete" onclick="deleteMemory('${esc(e.id)}', event)">削除</button>
         </div>
       </div>`;
@@ -410,6 +440,27 @@ async function deleteMemory(id, event) {
     await apiFetch('/api/memory/' + id, { method: 'DELETE' });
     loadMemory();
   } catch {}
+}
+
+async function shareMemory(id, event) {
+  event.stopPropagation();
+  try {
+    const res = await apiFetch('/api/share-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry_id: id })
+    });
+    const data = await res.json();
+    await navigator.clipboard.writeText(data.url);
+    showToast('URLをコピーしました');
+  } catch { showToast('コピー失敗'); }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────
@@ -587,11 +638,34 @@ function esc(s) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
-if (getToken()) {
-  document.getElementById('auth-overlay').style.display = 'none';
-  loadMemory();
-  loadImportStatus();
-}
+(async () => {
+  const params      = new URLSearchParams(location.search);
+  const sharedId    = params.get('id');
+  const sharedToken = params.get('token');
+  if (sharedId && sharedToken) {
+    try {
+      const res = await fetch(API + '/api/share/' + sharedToken);
+      if (res.ok) {
+        const e = await res.json();
+        document.getElementById('auth-overlay').style.display = 'none';
+        const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
+        document.getElementById('modal-title').textContent = e.title || '';
+        document.getElementById('modal-meta').textContent =
+          `${date}　${(e.tags || []).join(' · ')}　importance: ${e.importance || 'normal'}`;
+        const body = document.getElementById('modal-body');
+        body.className = 'modal-body';
+        body.textContent = e.body || '';
+        openModal();
+        return;
+      }
+    } catch {}
+  }
+  if (getToken()) {
+    document.getElementById('auth-overlay').style.display = 'none';
+    loadMemory();
+    loadImportStatus();
+  }
+})();
 </script>
 </body>
 </html>

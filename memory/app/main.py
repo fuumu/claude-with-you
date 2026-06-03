@@ -58,6 +58,7 @@ OPLOG_FILE    = '/data/oplog.json'
 ARTIFACTS_DIR = '/data/artifacts'
 IMPORT_LOG         = '/data/imported_uuids.json'
 IMPORT_STATUS_FILE = '/data/.import_status.json'
+SHARE_TOKENS_FILE  = '/data/share_tokens.json'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
@@ -472,6 +473,54 @@ def api_artifacts_delete(name):
         shutil.rmtree(versions_dir)
     _log_info(f'artifacts_delete: {name}')
     return jsonify({'deleted': name})
+
+# ── シェアトークン ────────────────────────────────────────────────────
+
+def _load_share_tokens():
+    if os.path.exists(SHARE_TOKENS_FILE):
+        with open(SHARE_TOKENS_FILE) as f:
+            return json.load(f)
+    return {}
+
+def _save_share_tokens(tokens):
+    with open(SHARE_TOKENS_FILE, 'w') as f:
+        json.dump(tokens, f, ensure_ascii=False, indent=2)
+
+@app.route('/api/share-token', methods=['POST'])
+@require_auth
+def create_share_token():
+    data = request.get_json()
+    if not data or 'entry_id' not in data:
+        abort(400)
+    entry_id   = data['entry_id']
+    expires_in = int(data.get('expires_in', 86400))
+    path = f'{DATA_DIR}/{entry_id}.json'
+    if not os.path.exists(path):
+        abort(404)
+    token      = secrets.token_urlsafe(24)
+    expires_at = (datetime.now(tz=JST) + timedelta(seconds=expires_in)).isoformat()
+    tokens     = _load_share_tokens()
+    tokens[token] = {'entry_id': entry_id, 'expires_at': expires_at}
+    _save_share_tokens(tokens)
+    url = f'{BASE_URL}/admin.html?id={entry_id}&token={token}'
+    return jsonify({'token': token, 'url': url})
+
+@app.route('/api/share/<token>', methods=['GET'])
+def get_shared_entry(token):
+    tokens = _load_share_tokens()
+    if token not in tokens:
+        abort(404)
+    info       = tokens[token]
+    expires_at = datetime.fromisoformat(info['expires_at'])
+    if datetime.now(tz=JST) > expires_at:
+        abort(410)
+    entry_id = info['entry_id']
+    path = f'{DATA_DIR}/{entry_id}.json'
+    if not os.path.exists(path):
+        abort(404)
+    with open(path) as f:
+        entry = json.load(f)
+    return jsonify(entry)
 
 # ── ZIP インポート ─────────────────────────────────────────────────────
 
