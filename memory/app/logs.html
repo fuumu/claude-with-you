@@ -592,15 +592,44 @@ function setFontSize(size, btn) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
-if (getToken()) {
-  document.getElementById('auth-overlay').style.display = 'none';
-}
 
 // Restore font size
 (function() {
   const saved = localStorage.getItem('mio_logs_font_size') || 'medium';
   document.documentElement.style.setProperty('--msg-font-size', FONT_SIZES[saved]);
   document.querySelectorAll('.fs-btn').forEach(b => b.classList.toggle('active', b.dataset.size === saved));
+})();
+
+// Handle ?token= (shared conversation link — no login required)
+(async function() {
+  const params = new URLSearchParams(location.search);
+  const token  = params.get('token');
+  if (token) {
+    document.getElementById('auth-overlay').style.display = 'none';
+    document.getElementById('file-name').textContent = '共有リンクから読み込み中...';
+    try {
+      const res = await fetch(API + '/api/conversations/view?token=' + encodeURIComponent(token));
+      if (res.status === 410) {
+        document.getElementById('file-name').textContent = 'リンクの有効期限が切れています';
+        return;
+      }
+      if (!res.ok) {
+        document.getElementById('file-name').textContent = 'リンクが無効です';
+        return;
+      }
+      const conv = await res.json();
+      allConvs = [conv];
+      document.getElementById('file-name').textContent = conv.name || conv.uuid || '共有会話';
+      applyFilters();
+      selectConv(conv.uuid || conv.id || '');
+    } catch {
+      document.getElementById('file-name').textContent = '読み込みエラー';
+    }
+    return;
+  }
+  if (getToken()) {
+    document.getElementById('auth-overlay').style.display = 'none';
+  }
 })();
 </script>
 </body>

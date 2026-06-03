@@ -59,6 +59,7 @@ ARTIFACTS_DIR = '/data/artifacts'
 IMPORT_LOG         = '/data/imported_uuids.json'
 IMPORT_STATUS_FILE = '/data/.import_status.json'
 SHARE_TOKENS_FILE  = '/data/share_tokens.json'
+CONVERSATIONS_DIR  = '/data/conversations'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
@@ -290,6 +291,67 @@ def api_import_status():
         with open(IMPORT_STATUS_FILE, encoding='utf-8') as f:
             return jsonify(json.load(f))
     return jsonify({'last_filename': None, 'imported_at': None})
+
+# ── 会話ログ REST API ─────────────────────────────────────────────────
+
+@app.route('/api/conversations/')
+@require_auth
+def api_conversations_search():
+    q      = request.args.get('q', '').lower()
+    from_  = request.args.get('from', '')
+    to_    = request.args.get('to', '')
+    limit  = min(int(request.args.get('limit', 20)), 200)
+    index  = _load_conv_index()
+    if q:
+        index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+    if from_:
+        index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) >= from_]
+    if to_:
+        index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= to_ + 'T23:59:59']
+    index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
+    return jsonify(index[:limit])
+
+@app.route('/api/conversations/<uuid>')
+@require_auth
+def api_conversations_get(uuid):
+    fpath = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if not os.path.exists(fpath):
+        abort(404)
+    with open(fpath, encoding='utf-8') as f:
+        return jsonify(json.load(f))
+
+@app.route('/api/conversations/share/<uuid>', methods=['POST'])
+@require_auth
+def api_conversations_share(uuid):
+    fpath = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if not os.path.exists(fpath):
+        abort(404)
+    expires_in = int((request.get_json() or {}).get('expires_in', 86400))
+    token      = secrets.token_urlsafe(24)
+    expires_at = (datetime.now(tz=JST) + timedelta(seconds=expires_in)).isoformat()
+    tokens     = _load_share_tokens()
+    tokens[token] = {'conv_uuid': uuid, 'expires_at': expires_at}
+    _save_share_tokens(tokens)
+    url = f'{BASE_URL}/logs.html?token={token}'
+    return jsonify({'token': token, 'url': url})
+
+@app.route('/api/conversations/view')
+def api_conversations_view():
+    token  = request.args.get('token', '')
+    tokens = _load_share_tokens()
+    if token not in tokens:
+        abort(404)
+    info = tokens[token]
+    if 'conv_uuid' not in info:
+        abort(404)
+    expires_at = datetime.fromisoformat(info['expires_at'])
+    if datetime.now(tz=JST) > expires_at:
+        abort(410)
+    fpath = os.path.join(CONVERSATIONS_DIR, f'{info["conv_uuid"]}.json')
+    if not os.path.exists(fpath):
+        abort(404)
+    with open(fpath, encoding='utf-8') as f:
+        return jsonify(json.load(f))
 
 # ── 管理画面 ──────────────────────────────────────────────────────────
 
@@ -526,6 +588,53 @@ def get_shared_entry(token):
         entry = json.load(f)
     return jsonify(entry)
 
+# ── 会話ログ保存ヘルパー ──────────────────────────────────────────────
+
+def _conv_index_path():
+    return os.path.join(CONVERSATIONS_DIR, '_index.json')
+
+def _load_conv_index():
+    p = _conv_index_path()
+    if os.path.exists(p):
+        with open(p, encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def _save_conv_index(index):
+    os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
+    with open(_conv_index_path(), 'w', encoding='utf-8') as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+
+def _save_conversations(conversations):
+    """conversations.jsonの各会話を個別ファイルに保存し、インデックスを更新する"""
+    os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
+    index = _load_conv_index()
+    existing_uuids = {e['uuid'] for e in index}
+    saved = 0
+    for conv in conversations:
+        uid = conv.get('uuid') or conv.get('id', '')
+        if not uid:
+            continue
+        fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
+        with open(fpath, 'w', encoding='utf-8') as f:
+            json.dump(conv, f, ensure_ascii=False, indent=2)
+        msg_count = len(conv.get('chat_messages') or [])
+        meta = {
+            'uuid':          uid,
+            'title':         conv.get('name') or conv.get('title') or uid[:8],
+            'created_at':    conv.get('created_at', ''),
+            'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
+            'message_count': msg_count,
+        }
+        if uid in existing_uuids:
+            index = [m if m['uuid'] != uid else meta for m in index]
+        else:
+            index.append(meta)
+            existing_uuids.add(uid)
+            saved += 1
+    _save_conv_index(index)
+    return saved
+
 # ── ZIP インポート ─────────────────────────────────────────────────────
 
 @app.route('/import', methods=['POST'])
@@ -590,6 +699,13 @@ def import_zip():
             append_oplog('import', entry_id, None, entry)
             imported_uuids.add(uid)
             imported += 1
+
+        # conversations.json を /data/conversations/ に保存
+        conv_saved = 0
+        try:
+            conv_saved = _save_conversations(conversations)
+        except Exception as e:
+            _log_error(f'conv save error: {e}')
 
         # memories.json を探す
         memories_file = None
@@ -671,10 +787,10 @@ def import_zip():
             rebuild_index()
         _save_imported_uuids(imported_uuids)
 
-    _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name}')
+    _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name} conv_saved={conv_saved}')
     if imported > 0 or artifact_name:
         _write_import_status(f.filename)
-    result = {'imported': imported, 'skipped': skipped}
+    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved}
     if artifact_name:
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
@@ -932,6 +1048,21 @@ _MCP_TOOLS = [
         "name": "artifacts_list",
         "description": "保存済みアーティファクト一覧を取得する（名前・最新バージョン・更新日時）",
         "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "conversation_search",
+        "description": "過去の会話ログをキーワードで検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数）を返す",
+        "inputSchema": {"type": "object", "properties": {
+            "q":     {"type": "string", "description": "検索キーワード"},
+            "limit": {"type": "integer", "description": "最大取得件数（デフォルト5）"}
+        }, "required": ["q"]}
+    },
+    {
+        "name": "conversation_share",
+        "description": "指定した会話のシェアURLを生成する（24時間有効）。URLを淳さんに送ることで会話内容を共有できる",
+        "inputSchema": {"type": "object", "properties": {
+            "uuid": {"type": "string", "description": "シェアする会話のUUID"}
+        }, "required": ["uuid"]}
     }
 ]
 
@@ -1012,6 +1143,27 @@ def _handle_tool_call(name, arguments):
 
     elif name == "artifacts_list":
         return _artifacts_list()
+
+    elif name == "conversation_search":
+        q     = arguments.get("q", "").lower()
+        limit = min(int(arguments.get("limit", 5)), 50)
+        index = _load_conv_index()
+        hits  = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+        hits.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
+        return hits[:limit]
+
+    elif name == "conversation_share":
+        uid   = arguments.get("uuid", "")
+        fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
+        if not os.path.exists(fpath):
+            return {"error": f"conversation not found: {uid}"}
+        token      = secrets.token_urlsafe(24)
+        expires_at = (datetime.now(tz=JST) + timedelta(seconds=86400)).isoformat()
+        tokens     = _load_share_tokens()
+        tokens[token] = {'conv_uuid': uid, 'expires_at': expires_at}
+        _save_share_tokens(tokens)
+        url = f'{BASE_URL}/logs.html?token={token}'
+        return {"token": token, "url": url, "expires_at": expires_at}
 
     return {"error": "unknown tool"}
 
