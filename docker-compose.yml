@@ -4,14 +4,10 @@ services:
     build:
       context: ./memory
       network: host
-    ports:
-      - "5002:5002"
+    network_mode: host
     volumes:
       - ./memory/data:/data
       - ./scripts:/app/scripts:ro
     env_file:
       - .env
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
     restart: unless-stopped
