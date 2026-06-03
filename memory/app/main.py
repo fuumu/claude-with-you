@@ -297,6 +297,10 @@ def api_import_status():
 def admin_html():
     return send_from_directory(os.path.dirname(__file__), 'admin.html')
 
+@app.route('/logs.html')
+def logs_html():
+    return send_from_directory(os.path.dirname(__file__), 'logs.html')
+
 # ── ヘルス ────────────────────────────────────────────────────────────
 
 @app.route('/health')

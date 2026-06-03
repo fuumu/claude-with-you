@@ -238,6 +238,7 @@
   <button class="tab-btn" onclick="switchTab('artifacts', this)">Artifacts</button>
   <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
   <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
+  <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
 </div>
 
 <!-- Memory tab -->
@@ -288,6 +289,11 @@
     <span class="oplog-count" id="oplog-count"></span>
   </div>
   <div class="oplog-list" id="oplog-list"></div>
+</div>
+
+<!-- Logs tab -->
+<div class="tab-panel" id="tab-logs" style="padding:0; height: calc(100vh - 90px);">
+  <iframe id="logs-frame" src="" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>
 </div>
 
 <!-- Modal -->
@@ -348,6 +354,10 @@ function switchTab(name, btn) {
   if (name === 'artifacts') loadArtifacts();
   if (name === 'import')    loadImportStatus();
   if (name === 'oplog')     loadOplog();
+  if (name === 'logs') {
+    const frame = document.getElementById('logs-frame');
+    if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
+  }
 }
 
 // ── Memory ────────────────────────────────────────────────────────────

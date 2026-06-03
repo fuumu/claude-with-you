@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>澪の記憶サーバー — Logs</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Helvetica Neue', sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Header */
+    header {
+      background: #010409; border-bottom: 1px solid #21262d;
+      padding: .6rem 1.25rem; display: flex; align-items: center; flex-shrink: 0;
+    }
+    header h1 { font-size: .92rem; color: #58a6ff; }
+    .header-right { margin-left: auto; }
+    #token-status { font-size: .75rem; color: #484f58; cursor: pointer; }
+    #token-status:hover { color: #58a6ff; }
+
+    /* Layout */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* Left sidebar */
+    .sidebar {
+      width: 310px; min-width: 240px; background: #010409; border-right: 1px solid #21262d;
+      display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0;
+    }
+    .sidebar-controls { padding: .7rem; border-bottom: 1px solid #21262d; flex-shrink: 0; }
+
+    .file-btn {
+      width: 100%; padding: .42rem .75rem; background: #21262d; border: 1px solid #30363d;
+      border-radius: 6px; color: #c9d1d9; cursor: pointer; font-size: .8rem; text-align: left;
+      transition: border-color .2s; margin-bottom: .3rem;
+    }
+    .file-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    #file-name { font-size: .72rem; color: #484f58; margin-bottom: .55rem; }
+
+    .filter-section { display: flex; flex-direction: column; gap: .38rem; }
+    .filter-row { display: flex; gap: .35rem; align-items: center; }
+    label { font-size: .72rem; color: #484f58; white-space: nowrap; }
+
+    select, input[type="text"], input[type="date"], input[type="number"] {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 5px;
+      color: #c9d1d9; font-size: .76rem; padding: .28rem .45rem;
+    }
+    select:focus, input:focus { outline: none; border-color: #58a6ff; }
+    .filter-keyword { flex: 1; }
+
+    .conv-count { font-size: .7rem; color: #484f58; padding: .35rem .7rem; border-bottom: 1px solid #21262d; flex-shrink: 0; }
+    .conv-list { flex: 1; overflow-y: auto; }
+    .conv-item {
+      padding: .55rem .7rem; border-bottom: 1px solid #0d1117; cursor: pointer;
+      transition: background .15s; display: flex; flex-direction: column; gap: .18rem;
+    }
+    .conv-item:hover { background: #161b22; }
+    .conv-item.active { background: #1c2128; border-left: 2px solid #58a6ff; padding-left: calc(.7rem - 2px); }
+    .conv-title { font-size: .8rem; line-height: 1.35; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conv-meta  { font-size: .68rem; color: #484f58; display: flex; justify-content: space-between; }
+
+    /* Right pane */
+    .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .conv-header {
+      padding: .6rem 1.25rem; border-bottom: 1px solid #21262d; flex-shrink: 0;
+      display: flex; align-items: center; gap: .75rem; background: #010409;
+    }
+    .conv-header-info { flex: 1; min-width: 0; }
+    .conv-header-title { font-size: .9rem; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conv-header-meta  { font-size: .7rem; color: #484f58; margin-top: .1rem; }
+    .toggle-btn {
+      padding: .28rem .65rem; background: none; border: 1px solid #30363d; border-radius: 5px;
+      color: #484f58; cursor: pointer; font-size: .72rem; white-space: nowrap; flex-shrink: 0; transition: all .2s;
+    }
+    .toggle-btn.active { border-color: #58a6ff; color: #58a6ff; }
+
+    .messages-wrap { flex: 1; overflow-y: auto; padding: .9rem 1.25rem; display: flex; flex-direction: column; gap: .65rem; }
+
+    .empty-state { text-align: center; color: #484f58; padding: 3rem 1rem; display: flex; flex-direction: column; gap: .4rem; align-items: center; }
+    .empty-state .icon { font-size: 1.8rem; }
+    .empty-state .hint { font-size: .82rem; }
+
+    /* Message bubbles */
+    .msg { border-radius: 7px; padding: .65rem .9rem; border: 1px solid; }
+    .msg-human     { background: #1c2128; border-color: #30363d; }
+    .msg-assistant { background: #161b22; border-color: #1f6feb30; }
+    .msg-role      { font-size: .7rem; font-weight: 600; margin-bottom: .35rem; display: flex; justify-content: space-between; }
+    .msg-human .msg-role    { color: #58a6ff; }
+    .msg-assistant .msg-role { color: #a371f7; }
+    .msg-ts { font-size: .65rem; color: #484f58; font-weight: normal; }
+
+    .block-text { font-size: .83rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+
+    .block-collapsible { border: 1px solid #21262d; border-radius: 5px; overflow: hidden; margin-top: .38rem; }
+    .block-header {
+      display: flex; align-items: center; gap: .45rem; padding: .3rem .6rem;
+      background: #0d1117; cursor: pointer; font-size: .75rem; color: #484f58;
+      user-select: none; transition: background .15s;
+    }
+    .block-header:hover { background: #161b22; color: #c9d1d9; }
+    .chevron { margin-left: auto; font-size: .65rem; transition: transform .2s; display: inline-block; }
+    .block-header.open .chevron { transform: rotate(90deg); }
+    .block-content { display: none; padding: .55rem .7rem; font-size: .75rem; white-space: pre-wrap; word-break: break-word; background: #0d1117; color: #8b949e; max-height: 280px; overflow-y: auto; }
+    .block-content.open { display: block; }
+    .tool-input { color: #f0883e; }
+
+    /* Related memory panel */
+    .related-panel {
+      border-top: 1px solid #21262d; background: #010409; flex-shrink: 0;
+      max-height: 200px; overflow-y: auto;
+    }
+    .related-header { padding: .45rem 1.25rem; font-size: .72rem; color: #484f58; font-weight: 600; letter-spacing: .04em; border-bottom: 1px solid #21262d; }
+    .related-item {
+      padding: .42rem 1.25rem; border-bottom: 1px solid #0d1117; cursor: pointer;
+      font-size: .76rem; transition: background .15s; display: flex; gap: .6rem; align-items: center;
+    }
+    .related-item:hover { background: #161b22; }
+    .related-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .related-badge { font-size: .68rem; color: #58a6ff; white-space: nowrap; background: #1f6feb20; padding: .1rem .4rem; border-radius: 3px; }
+    .related-empty { padding: .42rem 1.25rem; font-size: .76rem; color: #484f58; }
+
+    /* Auth overlay */
+    .auth-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,.85);
+      z-index: 200; display: flex; align-items: center; justify-content: center;
+    }
+    .auth-card {
+      background: #161b22; border: 1px solid #21262d; border-radius: 12px;
+      padding: 2rem 2.5rem; width: 340px;
+    }
+    .auth-card h2 { font-size: 1.05rem; color: #58a6ff; margin-bottom: .4rem; }
+    .auth-card p  { font-size: .82rem; color: #484f58; margin-bottom: 1.4rem; }
+    .auth-card input {
+      width: 100%; padding: .5rem .7rem; background: #0d1117;
+      border: 1px solid #21262d; border-radius: 6px;
+      color: #c9d1d9; font-size: .9rem; margin-bottom: .9rem;
+    }
+    .auth-card input:focus { outline: none; border-color: #58a6ff; }
+    .btn { padding: .48rem 1.1rem; background: #238636; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: .88rem; width: 100%; }
+    .btn:hover { background: #2ea043; }
+    .btn-skip { margin-top: .5rem; background: none; border: 1px solid #21262d; color: #484f58; }
+    .btn-skip:hover { border-color: #58a6ff; color: #58a6ff; background: none; }
+
+    /* Modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.75); z-index: 100; align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal { background: #161b22; border: 1px solid #21262d; border-radius: 12px; width: 90%; max-width: 700px; max-height: 78vh; overflow-y: auto; padding: 1.5rem; }
+    .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: .7rem; }
+    .modal-title  { font-size: .92rem; line-height: 1.4; flex: 1; padding-right: 1rem; color: #c9d1d9; }
+    .modal-close  { background: none; border: none; color: #484f58; cursor: pointer; font-size: 1.1rem; }
+    .modal-close:hover { color: #c9d1d9; }
+    .modal-meta   { font-size: .76rem; color: #484f58; margin-bottom: .9rem; }
+    .modal-body   { font-size: .83rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: #8b949e; }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #21262d; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="auth-overlay" id="auth-overlay">
+  <div class="auth-card">
+    <h2>澪の記憶サーバー</h2>
+    <p>関連記憶の検索にAPIトークンが必要です</p>
+    <input type="password" id="token-input" placeholder="mio2026..." autocomplete="current-password">
+    <button class="btn" onclick="saveToken()">接続</button>
+    <button class="btn btn-skip" onclick="skipAuth()">ログなし閲覧のみ</button>
+  </div>
+</div>
+
+<header>
+  <h1>澪の記憶サーバー — Logs</h1>
+  <div class="header-right">
+    <span id="token-status" onclick="resetToken()">トークン変更</span>
+  </div>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-controls">
+      <button class="file-btn" onclick="document.getElementById('file-input').click()">📂 conversations.json を開く</button>
+      <input type="file" id="file-input" accept=".json" style="display:none" onchange="loadFile(this)">
+      <div id="file-name">ファイル未選択</div>
+      <div class="filter-section">
+        <div class="filter-row">
+          <label>並び順</label>
+          <select id="sort-select" onchange="applyFilters()" style="flex:1">
+            <option value="updated_desc">更新日 新→古</option>
+            <option value="updated_asc">更新日 古→新</option>
+            <option value="created_desc">作成日 新→古</option>
+            <option value="created_asc">作成日 古→新</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label>検索</label>
+          <input type="text" id="keyword-input" class="filter-keyword" placeholder="キーワード..." oninput="applyFilters()">
+        </div>
+        <div class="filter-row">
+          <label>From</label>
+          <input type="date" id="date-from" onchange="applyFilters()" style="flex:1">
+          <label style="margin-left:.25rem">To</label>
+          <input type="date" id="date-to" onchange="applyFilters()" style="flex:1">
+        </div>
+        <div class="filter-row">
+          <label>最小件数</label>
+          <input type="number" id="min-count" value="3" min="0" onchange="applyFilters()" style="width:55px">
+        </div>
+      </div>
+    </div>
+    <div class="conv-count" id="conv-count"></div>
+    <div class="conv-list" id="conv-list">
+      <div class="empty-state">
+        <span class="icon">📂</span>
+        <span class="hint">JSONファイルを開いてください</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="conv-header" id="conv-header" style="display:none">
+      <div class="conv-header-info">
+        <div class="conv-header-title" id="conv-header-title"></div>
+        <div class="conv-header-meta" id="conv-header-meta"></div>
+      </div>
+      <button class="toggle-btn" id="thinking-toggle" onclick="toggleThinking()">🧠 思考を表示</button>
+    </div>
+    <div class="messages-wrap" id="messages-wrap">
+      <div class="empty-state">
+        <span class="icon">💬</span>
+        <span class="hint">左のリストから会話を選択してください</span>
+      </div>
+    </div>
+    <div class="related-panel" id="related-panel" style="display:none">
+      <div class="related-header">関連記憶</div>
+      <div id="related-items"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal" onclick="onOverlayClick(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title"></div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-meta" id="modal-meta"></div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+const API = 'https://memory.mio.runabook.synology.me';
+let allConvs = [];
+let filteredConvs = [];
+let activeUuid = null;
+let showThinking = false;
+
+// ── Auth ─────────────────────────────────────────────────────────────
+function getToken() { return localStorage.getItem('mio_token') || ''; }
+
+function saveToken() {
+  const t = document.getElementById('token-input').value.trim();
+  if (!t) return;
+  localStorage.setItem('mio_token', t);
+  document.getElementById('auth-overlay').style.display = 'none';
+}
+
+function skipAuth() {
+  document.getElementById('auth-overlay').style.display = 'none';
+}
+
+function resetToken() {
+  localStorage.removeItem('mio_token');
+  document.getElementById('token-input').value = '';
+  document.getElementById('auth-overlay').style.display = 'flex';
+}
+
+document.getElementById('token-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveToken();
+});
+
+async function apiFetch(path) {
+  const res = await fetch(API + path, {
+    headers: { 'Authorization': 'Bearer ' + getToken() }
+  });
+  if (res.status === 401) { document.getElementById('auth-overlay').style.display = 'flex'; throw new Error('401'); }
+  return res;
+}
+
+// ── File load ─────────────────────────────────────────────────────────
+function loadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById('file-name').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      allConvs = Array.isArray(data) ? data : (data.conversations || []);
+      applyFilters();
+    } catch {
+      document.getElementById('file-name').textContent = 'JSONパースエラー';
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ── Filters ───────────────────────────────────────────────────────────
+function applyFilters() {
+  const sort     = document.getElementById('sort-select').value;
+  const kw       = document.getElementById('keyword-input').value.toLowerCase();
+  const dateFrom = document.getElementById('date-from').value;
+  const dateTo   = document.getElementById('date-to').value;
+  const minCount = parseInt(document.getElementById('min-count').value) || 0;
+
+  let convs = allConvs.slice();
+
+  if (kw) convs = convs.filter(c => (c.name || '').toLowerCase().includes(kw));
+  if (dateFrom) convs = convs.filter(c => (c.updated_at || c.created_at || '') >= dateFrom);
+  if (dateTo)   convs = convs.filter(c => (c.updated_at || c.created_at || '') <= dateTo + 'T23:59:59');
+  if (minCount > 0) convs = convs.filter(c => (c.chat_messages || []).length >= minCount);
+
+  const [field, dir] = sort.split('_');
+  const key = field === 'updated' ? 'updated_at' : 'created_at';
+  convs.sort((a, b) => {
+    const va = a[key] || '', vb = b[key] || '';
+    return dir === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
+  });
+
+  filteredConvs = convs;
+  renderList();
+}
+
+function renderList() {
+  const list  = document.getElementById('conv-list');
+  const count = document.getElementById('conv-count');
+  count.textContent = filteredConvs.length ? `${filteredConvs.length} 件` : '';
+
+  if (!filteredConvs.length) {
+    list.innerHTML = '<div class="empty-state"><span class="icon">📭</span><span class="hint">該当なし</span></div>';
+    return;
+  }
+
+  list.innerHTML = filteredConvs.map(c => {
+    const msgCount = (c.chat_messages || []).length;
+    const date = (c.updated_at || c.created_at || '').slice(0, 10);
+    const isActive = c.uuid === activeUuid;
+    return `
+      <div class="conv-item${isActive ? ' active' : ''}" onclick="selectConv('${esc(c.uuid)}')">
+        <div class="conv-title">${esc(c.name || '（無題）')}</div>
+        <div class="conv-meta"><span>${date}</span><span>${msgCount}件</span></div>
+      </div>`;
+  }).join('');
+}
+
+// ── Conversation viewer ───────────────────────────────────────────────
+function selectConv(uuid) {
+  activeUuid = uuid;
+  renderList();
+
+  const conv = allConvs.find(c => c.uuid === uuid);
+  if (!conv) return;
+
+  document.getElementById('conv-header').style.display = 'flex';
+  document.getElementById('conv-header-title').textContent = conv.name || '（無題）';
+  const updated = (conv.updated_at || '').slice(0, 16).replace('T', ' ');
+  const created = (conv.created_at || '').slice(0, 16).replace('T', ' ');
+  document.getElementById('conv-header-meta').textContent = `作成: ${created}　更新: ${updated}`;
+
+  renderMessages(conv);
+  loadRelated(conv);
+}
+
+function toggleThinking() {
+  showThinking = !showThinking;
+  const btn = document.getElementById('thinking-toggle');
+  btn.classList.toggle('active', showThinking);
+  btn.textContent = showThinking ? '🧠 思考を非表示' : '🧠 思考を表示';
+  if (activeUuid) {
+    const conv = allConvs.find(c => c.uuid === activeUuid);
+    if (conv) renderMessages(conv);
+  }
+}
+
+function renderMessages(conv) {
+  const wrap = document.getElementById('messages-wrap');
+  const msgs = conv.chat_messages || [];
+
+  if (!msgs.length) {
+    wrap.innerHTML = '<div class="empty-state"><span class="icon">📭</span><span class="hint">メッセージなし</span></div>';
+    return;
+  }
+
+  wrap.innerHTML = msgs.map((msg, mi) => {
+    const role   = msg.sender === 'human' ? 'human' : 'assistant';
+    const ts     = (msg.created_at || '').slice(11, 16);
+    const blocks = renderContentBlocks(msg.content || [], role, mi);
+    if (!blocks.trim() && role === 'assistant') return '';
+    return `
+      <div class="msg msg-${role}">
+        <div class="msg-role">
+          <span>${role === 'human' ? '👤 Human' : '🤖 Assistant'}</span>
+          <span class="msg-ts">${esc(ts)}</span>
+        </div>
+        ${blocks}
+      </div>`;
+  }).join('');
+}
+
+function renderContentBlocks(content, role, mi) {
+  if (typeof content === 'string') {
+    return `<div class="block-text">${escHtml(content)}</div>`;
+  }
+  return (content || []).map((block, bi) => {
+    const id = `b${mi}_${bi}`;
+    if (block.type === 'text') {
+      return `<div class="block-text">${escHtml(block.text || '')}</div>`;
+    }
+    if (block.type === 'thinking') {
+      if (!showThinking) return '';
+      return mkCollapsible(id, '🧠 思考', escHtml(block.thinking || ''), false);
+    }
+    if (block.type === 'tool_use') {
+      const inp = block.input ? JSON.stringify(block.input, null, 2) : '';
+      return mkCollapsible(id, `⚙ ${escHtml(block.name || 'tool_use')}`, `<span class="tool-input">${escHtml(inp)}</span>`, false);
+    }
+    if (block.type === 'tool_result') {
+      const inner = block.content;
+      let text = '';
+      if (typeof inner === 'string') text = inner;
+      else if (Array.isArray(inner)) text = inner.map(b => b.text || '').join('\n');
+      return mkCollapsible(id, '📤 tool_result', escHtml(text), false);
+    }
+    return '';
+  }).join('');
+}
+
+function mkCollapsible(id, label, innerHtml, openByDefault) {
+  const cls = openByDefault ? ' open' : '';
+  return `
+    <div class="block-collapsible">
+      <div class="block-header${cls}" onclick="toggleBlock('${id}', this)">
+        ${label}<span class="chevron">▶</span>
+      </div>
+      <div class="block-content${cls}" id="${id}">${innerHtml}</div>
+    </div>`;
+}
+
+function toggleBlock(id, header) {
+  const content = document.getElementById(id);
+  const isOpen = content.classList.toggle('open');
+  header.classList.toggle('open', isOpen);
+}
+
+// ── Related memory ────────────────────────────────────────────────────
+async function loadRelated(conv) {
+  const panel = document.getElementById('related-panel');
+  const items = document.getElementById('related-items');
+  panel.style.display = 'block';
+  items.innerHTML = '<div class="related-empty">検索中...</div>';
+
+  if (!getToken()) {
+    items.innerHTML = '<div class="related-empty">関連記憶の検索にはトークンが必要です</div>';
+    return;
+  }
+
+  try {
+    let results = [];
+    const uuid = conv.uuid || '';
+
+    // 1. Search by source_thread
+    if (uuid) {
+      const res = await apiFetch('/api/memory/index');
+      if (res.ok) {
+        const index = await res.json();
+        results = index.filter(e => e.source_thread === uuid && !e.deleted).slice(0, 5);
+      }
+    }
+
+    // 2. Fallback: keyword search from title
+    if (!results.length && conv.name) {
+      const words = conv.name.split(/[\s　、。・「」【】]+/).filter(w => w.length >= 2).slice(0, 3);
+      for (const word of words) {
+        if (results.length >= 5) break;
+        try {
+          const res2 = await apiFetch('/api/memory/search?q=' + encodeURIComponent(word));
+          if (res2.ok) {
+            const hits = await res2.json();
+            for (const h of hits) {
+              if (results.length >= 5) break;
+              if (!results.find(r => r.id === h.id)) results.push(h);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (!results.length) {
+      items.innerHTML = '<div class="related-empty">関連記憶なし</div>';
+      return;
+    }
+
+    items.innerHTML = results.slice(0, 5).map(e => {
+      const badge = e.source_thread === uuid ? 'スレッド一致' : 'キーワード';
+      return `
+        <div class="related-item" onclick="openRelated('${esc(e.id)}')">
+          <span class="related-title">${esc(e.title || e.id)}</span>
+          <span class="related-badge">${badge}</span>
+        </div>`;
+    }).join('');
+
+  } catch(e) {
+    if (e.message !== '401') {
+      items.innerHTML = '<div class="related-empty">取得失敗</div>';
+    }
+  }
+}
+
+async function openRelated(id) {
+  try {
+    const res = await apiFetch('/api/memory/' + encodeURIComponent(id));
+    const e = await res.json();
+    const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
+    document.getElementById('modal-title').textContent = e.title || '';
+    document.getElementById('modal-meta').textContent =
+      `${date}　${(e.tags || []).join(' · ')}　importance: ${e.importance || 'normal'}`;
+    document.getElementById('modal-body').textContent = e.body || '';
+    openModal();
+  } catch {}
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────
+function openModal()  { document.getElementById('modal').classList.add('open'); }
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── Util ──────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────
+if (getToken()) {
+  document.getElementById('auth-overlay').style.display = 'none';
+}
+</script>
+</body>
+</html>
