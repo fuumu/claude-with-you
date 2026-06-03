@@ -28,6 +28,7 @@ import time
 import argparse
 import urllib.request
 import urllib.error
+import urllib.parse
 
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
@@ -151,7 +152,7 @@ def main(backend: str, model: str, dry_run: bool):
         title    = idx.get('title', '（無題）')
 
         try:
-            entry = api_get(f'/api/memory/{entry_id}')
+            entry = api_get(f'/api/memory/{urllib.parse.quote(entry_id, safe="")}')
         except Exception as e:
             print(f"[{i:>3}/{len(raw_entries)}] ERROR  {entry_id}: {e}")
             errors += 1
@@ -182,7 +183,7 @@ def main(backend: str, model: str, dry_run: bool):
             if 'summarized' not in tags:
                 tags.append('summarized')
 
-            api_patch(f'/api/memory/{entry_id}', {'body': new_body, 'tags': tags})
+            api_patch(f'/api/memory/{urllib.parse.quote(entry_id, safe="")}', {'body': new_body, 'tags': tags})
             processed += 1
             time.sleep(RATE_LIMIT_SLEEP)
 
