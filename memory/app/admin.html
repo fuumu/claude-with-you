@@ -587,7 +587,8 @@ async function handleFile(file) {
     const res  = await apiFetch('/import', { method: 'POST', body: form });
     const data = await res.json();
     if (res.ok) {
-      showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件</span>`);
+      const convPart = data.conversations_saved != null ? ` / 会話保存: ${data.conversations_saved}件` : '';
+      showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件${convPart}</span>`);
     } else {
       showResult(`<span class="result-err">エラー: ${esc(String(data.error || res.status))}</span>`);
     }
@@ -678,6 +679,12 @@ function esc(s) {
   const params      = new URLSearchParams(location.search);
   const sharedId    = params.get('id');
   const sharedToken = params.get('token');
+
+  // ?token= だけの場合：APIトークンとして使ってログインスキップ
+  if (sharedToken && !sharedId) {
+    localStorage.setItem('mio_token', sharedToken);
+  }
+
   if (sharedId && sharedToken) {
     try {
       const res = await fetch(API + '/api/share/' + sharedToken);
