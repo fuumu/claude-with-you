@@ -28,6 +28,9 @@ import argparse
 import urllib.request
 import urllib.error
 
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 # ── 依存チェック ──────────────────────────────────────────────────────
 try:
     import anthropic
@@ -69,6 +72,7 @@ def make_client(backend: str) -> anthropic.Anthropic:
         return anthropic.Anthropic(
             base_url=f'http://{LM_STUDIO_HOST}:{LM_STUDIO_PORT}',
             api_key='lmstudio',
+            timeout=300.0,
         )
     return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
