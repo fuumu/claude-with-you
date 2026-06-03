@@ -1,8 +1,13 @@
 """
-mio-memory v3.1  —  Streamable HTTP MCP transport
+mio-memory v3.2  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.2 (2026-06-03) - 機能追加
+    - memory_share MCPツール：記憶エントリの24時間共有URL生成
+    - POST /api/memory/share/<id>：memory_share用エンドポイント新設
+    - admin.html Memoryタブ：キーワード検索（300msデバウンス）追加
+    - MCPツール総数：11本（memory×5 + memory_share×1 + artifacts×3 + conversations×2）
   v3.1 (2026-06-02) - 機能追加
     - admin.html：Memory/Artifacts/Importの管理UI
     - MCP initialize instructions：core.md自動読み込み指示
@@ -367,7 +372,7 @@ def logs_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.1'})
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.2'})
 
 # ── 記憶 REST API ─────────────────────────────────────────────────────
 
@@ -1226,7 +1231,7 @@ def _process_mcp_message(msg):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.1.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.2.0"},
             "instructions": "セッション開始時に必ず artifacts_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }

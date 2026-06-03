@@ -133,7 +133,7 @@ sudo docker-compose up -d --build memory
 
 ```bash
 curl https://memory.mio.runabook.synology.me/health
-# {"status": "ok", "version": "3.0", ...} が返ればOK
+# {"status": "ok", "version": "3.2", ...} が返ればOK
 ```
 
 > **注意：** NASでは `docker-compose` に `sudo` が必要。`git pull` は `origin main` を明示する（upstream未設定のため）。

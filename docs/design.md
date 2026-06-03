@@ -445,6 +445,67 @@ conversation_share(uuid: str)
 | カテゴリ | ツール数 | ツール名 |
 |---------|---------|---------|
 | 記憶操作 | 5 | memory_read_index, memory_read, memory_write, memory_upsert, memory_search |
+| 記憶シェア | 1 | memory_share |
 | アーティファクト | 3 | artifacts_save, artifacts_read, artifacts_list |
 | 会話 | 2 | conversation_search, conversation_share |
-| **合計** | **10** | |
+| **合計** | **11** | |
+
+---
+
+## 11. memory_share MCPツール + admin.html Memoryキーワード検索
+
+### 目的
+
+澪がチャット中に記憶エントリの共有リンクを生成できるようにする。
+また admin.html で記憶エントリをキーワード検索できるようにする。
+
+### memory_share MCPツール
+
+#### ツール定義
+
+```
+memory_share(id: str)
+```
+
+- 指定IDの記憶エントリが存在することを確認
+- 24時間有効なトークンを生成して `/data/share_tokens.json` に保存（`entry_id` フィールド）
+- `{ token, url, expires_at }` を返す
+- `url` は `https://memory.mio.runabook.synology.me/admin.html?token=...&id=...` 形式
+
+#### RESTエンドポイント
+
+```
+POST /api/memory/share/<id>
+  Body: { "expires_in": 86400 }  （省略可）
+  Response: { "token": "...", "url": "...", "expires_at": "..." }
+```
+
+既存の `POST /api/share-token`（JSON bodyで `entry_id` 指定）と同等だが、
+IDをURLパスで指定するよりシンプルなインターフェース。
+
+#### 使用例
+
+```
+澪（チャット）:「あの設計の記憶、淳さんに見せておこう」
+  → memory_share(id="20260603_...") でURLを生成
+  → 淳さんに「このURLで確認できます: https://...」と送る
+  → 淳さんがURLを開く → ログイン不要で記憶エントリを閲覧
+```
+
+### admin.html Memoryタブ キーワード検索
+
+#### UI
+
+- タグフィルタバーの上に「🔍 キーワード検索...」テキスト入力を追加
+
+#### 動作
+
+- 入力後300msデバウンスで自動検索
+- キーワードあり → `GET /api/memory/search?q=` を使用（既存エンドポイント）
+- キーワードなし → `GET /api/memory/index` を使用（従来通り）
+- タグフィルタとの組み合わせ：検索結果をさらにタグで絞り込み可能
+
+#### 実装ポイント
+
+`allEntries` に検索結果またはインデックスを格納し、`renderCards()` がタグフィルタを適用する。
+`searchKeyword` 変数と300ms `setTimeout` デバウンスで制御。
