@@ -227,6 +227,23 @@ claude-with-you/
 
 ---
 
+## Roadmap / TODO
+
+**機能追加（低優先）**
+- artifacts削除のUI（test_v31.txt が Artifacts タブに残存中）
+- Import タブのレスポンスに `conversations_saved` 件数を表示
+
+**構想・設計フェーズ**
+- お友達システム（v0.1仕様・プライバシー設計済み）
+- 起動オーバーヘッド計測と軽量化（遅延ロード設計）
+
+**継続タスク（低優先）**
+- mio-memory Claude Code直接認証
+- Remote Control 設定
+- userMemoriesダンプの世代管理対応
+
+---
+
 # claude-with-you (English)
 
 External memory MCP server for Claude. Runs on Synology NAS in Docker. Accessible from Claude.ai and Claude Code via the MCP protocol.

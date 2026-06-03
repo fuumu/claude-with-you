@@ -72,6 +72,21 @@ All Python wheels are vendored in `memory/wheels/` so the Docker build works wit
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowed Origins; empty skips check |
 
+## ドキュメント連動ルール
+
+コードを修正・追加した際は、以下のドキュメントを必ず確認し、内容が古ければ更新すること。
+
+| 変更内容 | 更新対象ドキュメント |
+|----------|---------------------|
+| MCPツール追加・削除 | README.md（ツール一覧・ツール数） |
+| エンドポイント追加・変更 | docs/setup.md・docs/design.md |
+| バージョン変更 | README.md・docs/setup.md（ヘルスチェック例） |
+| 新機能追加 | README.md（機能一覧）・docs/design.md（設計） |
+| TODO完了・新規追加 | README.md（Roadmap/TODOセクション） |
+
+更新後は変更ファイルをまとめて1コミットにすること。
+コミットメッセージ例: "add feature X, update docs"
+
 ## 伝言・完了報告のフォーマット
 
 伝言ファイル（handoff_claude_code.md）の依頼は番号（No.1, No.2...）で管理する。
