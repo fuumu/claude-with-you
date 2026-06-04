@@ -396,7 +396,8 @@ def logs_html():
 @app.route('/health')
 def health():
     return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.4',
-                    'mcp_tool_count': len(_MCP_TOOLS)})
+                    'mcp_tool_count': len(_MCP_TOOLS),
+                    'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
 # ── 記憶 REST API ─────────────────────────────────────────────────────
 
