@@ -44,11 +44,12 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.3, 12 tools):**
+**MCP tools exposed (v3.4, 15 tools):**
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — memory CRUD
 - `memory_share` — generates 24h share URL for a memory entry
 - `artifacts_save` / `artifacts_read` / `artifacts_list` — versioned file storage
 - `conversation_search` / `conversation_share` / `conversation_read` — conversation log access
+- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`)
 
 **Batch summary API:**
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
@@ -88,10 +89,10 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 - 影響範囲が不明な場合は README.md 最低限更新する
 
 ### 完了時
-1. `memory_write` でチャット宛に完了報告する
-   - タグ必須: `チャット宛`
-   - タイトル形式: `【チャット宛】handoff No.XX 完了報告（内容）`
+1. `inbox_post(to="chat", title="【完了報告】...", body="...")` でチャット宛に完了報告する
+   - タイトル形式: `【完了報告】handoff No.XX（内容）`
    - 本文: 実装内容の要約・コミットID・デプロイ手順（必要な場合）
+   - ※ `inbox_post` が使えないセッション（v3.4 デプロイ前に開始）では `memory_write(tags=["チャット宛", "完了報告"])` で代替
 2. `handoff_claude_code.md` を更新（完了チェックをつける）
 3. コミット・push する
 
@@ -122,5 +123,6 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | 2   | ○○      | △一部 | △の場合は理由を備考に |
 | 3   | ○○      | ✗未実施 | ✗の場合は理由を備考に |
 
-- 完了報告の記憶エントリのタグは必ず `["チャット宛", "完了報告"]` を含めること
-- エントリIDは `YYYYMMDD_HHMMSS_チャット宛` の形式
+- **推奨:** `inbox_post(to="chat", ...)` を使う（軽量・既読管理あり）
+- inbox が使えない場合（旧セッション）: `memory_write` タグ `["チャット宛", "完了報告"]` で代替
+- エントリIDは `YYYYMMDD_HHMMSS_チャット宛` の形式（memory_write 時）
