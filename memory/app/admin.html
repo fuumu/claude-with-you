@@ -355,6 +355,10 @@
     <input type="file" id="file-input" accept=".zip" style="display:none" onchange="handleFile(this.files[0])">
     <button class="btn btn-secondary" onclick="document.getElementById('file-input').click()">ファイルを選択</button>
   </div>
+  <div style="margin:.75rem 0 0;display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:#7a8a9a">
+    <input type="checkbox" id="import-overwrite" style="accent-color:#7ec8e3;cursor:pointer">
+    <label for="import-overwrite" style="cursor:pointer">上書きモード（既にインポート済みの会話も再処理する）</label>
+  </div>
   <div id="import-result"></div>
 
   <!-- Batch progress panel (auto-shown after import / manual start) -->
@@ -707,8 +711,10 @@ async function handleFile(file) {
   }
   showResult('<span class="spinner"></span>アップロード中...');
   try {
+    const overwrite = document.getElementById('import-overwrite')?.checked ? 'true' : 'false';
     const form = new FormData();
     form.append('file', file);
+    form.append('overwrite', overwrite);
     const res  = await apiFetch('/import', { method: 'POST', body: form });
     const data = await res.json();
     if (res.ok) {

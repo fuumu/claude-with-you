@@ -44,7 +44,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.4, 15 tools):**
+**MCP tools exposed (v3.5, 15 tools):**
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — memory CRUD
 - `memory_share` — generates 24h share URL for a memory entry
 - `artifacts_save` / `artifacts_read` / `artifacts_list` — versioned file storage

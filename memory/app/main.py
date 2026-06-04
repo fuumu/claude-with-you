@@ -1,8 +1,14 @@
 """
-mio-memory v3.4  —  Streamable HTTP MCP transport
+mio-memory v3.5  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.5 (2026-06-05) - 機能追加
+    - 全MCPツールレスポンスに server_time（JST）追加
+    - inbox persistent（常駐型）: inbox_post に persistent=true 追加
+    - artifacts_read: conv_artifacts へのフォールバック（孤立ファイル対応）
+    - artifacts ↔ conversation 双方向リンク: source_conversation_uuid フィールド
+    - インポート上書きモード: admin.html に上書きオプション追加
   v3.4 (2026-06-04) - 機能追加
     - memory_search に limit/offset/has_more 追加（コンテキスト削減）
     - インボックスシステム新設（/data/inbox/）
@@ -81,6 +87,7 @@ SHARE_TOKENS_FILE  = '/data/share_tokens.json'
 CONVERSATIONS_DIR  = '/data/conversations'
 CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
 INBOX_DIR          = '/data/inbox'
+ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
 
@@ -162,6 +169,28 @@ _oauth_codes = {}  # 認証コードは短命（10分失効）なので永続化
 def now_jst():
     return datetime.now(JST).isoformat()
 
+def _inject_server_time(result):
+    """全MCPツールレスポンスにサーバー時刻を付与する"""
+    st = now_jst()
+    if isinstance(result, dict):
+        return {**result, 'server_time': st}
+    elif isinstance(result, list):
+        return {'data': result, 'server_time': st}
+    elif isinstance(result, str):
+        return {'text': result, 'server_time': st}
+    return result
+
+def _load_artifacts_meta() -> dict:
+    if os.path.exists(ARTIFACTS_META_FILE):
+        with open(ARTIFACTS_META_FILE, encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def _save_artifacts_meta(meta: dict):
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+    with open(ARTIFACTS_META_FILE, 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
 def _verify_token(token: str) -> bool:
     if token == API_TOKEN:
         _log_debug('auth: API_TOKEN match')
@@ -227,7 +256,7 @@ def append_oplog(operation, entry_id, before, after):
 def _name_slug(name: str) -> str:
     return name.replace('.', '_').replace(' ', '_')
 
-def _artifacts_save(name: str, content: str) -> dict:
+def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None) -> dict:
     name_slug = _name_slug(name)
     ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
 
@@ -250,16 +279,39 @@ def _artifacts_save(name: str, content: str) -> dict:
         os.remove(symlink_path)
     os.symlink(rel_target, symlink_path)
 
+    # source_conversation_uuid をメタデータに保存
+    if source_conversation_uuid:
+        meta = _load_artifacts_meta()
+        meta[name] = {**meta.get(name, {}), 'source_conversation_uuid': source_conversation_uuid}
+        _save_artifacts_meta(meta)
+
     _log_info(f'artifacts_save: {name} v{next_num:03d}')
-    return {'name': name, 'version': next_num, 'version_str': f'{next_num:03d}'}
+    result = {'name': name, 'version': next_num, 'version_str': f'{next_num:03d}'}
+    if source_conversation_uuid:
+        result['source_conversation_uuid'] = source_conversation_uuid
+    return result
 
 def _artifacts_read(name: str, version=None) -> dict:
+    meta = _load_artifacts_meta()
+    entry_meta = meta.get(name, {})
+
     if version is None:
         path = os.path.join(ARTIFACTS_DIR, name)
-        if not os.path.exists(path):
-            return {'error': 'not found'}
-        with open(path, 'r', encoding='utf-8') as f:
-            return {'name': name, 'version': None, 'content': f.read()}
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                result = {'name': name, 'version': None, 'content': f.read()}
+                if entry_meta.get('source_conversation_uuid'):
+                    result['source_conversation_uuid'] = entry_meta['source_conversation_uuid']
+                return result
+        # conv_artifacts へのフォールバック（孤立ファイル対応）
+        if os.path.exists(CONV_ARTIFACTS_DIR):
+            for conv_uuid in sorted(os.listdir(CONV_ARTIFACTS_DIR)):
+                conv_path = os.path.join(CONV_ARTIFACTS_DIR, conv_uuid, name)
+                if os.path.exists(conv_path):
+                    with open(conv_path, 'r', encoding='utf-8') as f:
+                        return {'name': name, 'version': None, 'content': f.read(),
+                                'source_conv_uuid': conv_uuid, 'source': 'conv_artifact'}
+        return {'error': 'not found'}
     else:
         name_slug = _name_slug(name)
         ext = os.path.splitext(name)[1]
@@ -267,15 +319,22 @@ def _artifacts_read(name: str, version=None) -> dict:
         if not os.path.exists(path):
             return {'error': 'not found'}
         with open(path, 'r', encoding='utf-8') as f:
-            return {'name': name, 'version': int(version), 'content': f.read()}
+            result = {'name': name, 'version': int(version), 'content': f.read()}
+            if entry_meta.get('source_conversation_uuid'):
+                result['source_conversation_uuid'] = entry_meta['source_conversation_uuid']
+            return result
 
 def _artifacts_list() -> list:
     if not os.path.exists(ARTIFACTS_DIR):
         return []
+    meta = _load_artifacts_meta()
     items = []
     for entry in sorted(os.listdir(ARTIFACTS_DIR)):
         full_path = os.path.join(ARTIFACTS_DIR, entry)
         if not os.path.islink(full_path):
+            continue
+        # 壊れたシンボリックリンクをスキップ
+        if not os.path.exists(full_path):
             continue
         target = os.readlink(full_path)
         version_str = os.path.splitext(os.path.basename(target))[0]
@@ -284,11 +343,14 @@ def _artifacts_list() -> list:
         except ValueError:
             version = None
         stat = os.stat(full_path)
-        items.append({
+        item = {
             'name': entry,
             'version': version,
             'updated_at': datetime.fromtimestamp(stat.st_mtime, tz=JST).isoformat()
-        })
+        }
+        if meta.get(entry, {}).get('source_conversation_uuid'):
+            item['source_conversation_uuid'] = meta[entry]['source_conversation_uuid']
+        items.append(item)
     return items
 
 # ── ZIPインポート ─────────────────────────────────────────────────────
@@ -395,7 +457,7 @@ def logs_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.4',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.5',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -654,17 +716,18 @@ def _load_inbox_messages(to=None, unread_only=False):
             msg = json.load(f)
         if to and msg.get('to') != to:
             continue
-        if unread_only and msg.get('read'):
+        # persistent メッセージは常に含める（既読でもunread_onlyで表示）
+        if unread_only and msg.get('read') and not msg.get('persistent'):
             continue
         msgs.append(msg)
     return msgs
 
-def _post_inbox_message(to, title, body, from_='code'):
+def _post_inbox_message(to, title, body, from_='code', persistent=False):
     os.makedirs(INBOX_DIR, exist_ok=True)
     now   = now_jst()
     msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
     msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
-           "created_at": now, "read": False}
+           "created_at": now, "read": False, "persistent": persistent}
     with open(_inbox_path(msg_id), 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
     return msg
@@ -675,9 +738,11 @@ def _mark_inbox_read(msg_id):
         return None
     with open(path, encoding='utf-8') as f:
         msg = json.load(f)
-    msg['read'] = True
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(msg, f, ensure_ascii=False, indent=2)
+    # persistent メッセージは既読にしない
+    if not msg.get('persistent'):
+        msg['read'] = True
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(msg, f, ensure_ascii=False, indent=2)
     return msg
 
 @app.route('/api/inbox', methods=['GET'])
@@ -710,7 +775,8 @@ def api_inbox_post():
     if not to or not title:
         return jsonify({"error": "to and title are required"}), 400
     msg = _post_inbox_message(to=to, title=title, body=body,
-                              from_=data.get('from', 'code'))
+                              from_=data.get('from', 'code'),
+                              persistent=bool(data.get('persistent', False)))
     return jsonify(msg), 201
 
 @app.route('/api/inbox/<msg_id>/read', methods=['PATCH'])
@@ -739,7 +805,7 @@ def _load_conv_artifacts_index():
             return json.load(f)
     return []
 
-def extract_artifacts(conversations):
+def extract_artifacts(conversations, overwrite=False):
     """conversations の全会話から tool_use アーティファクトを抽出して保存する"""
     os.makedirs(CONV_ARTIFACTS_DIR, exist_ok=True)
     index    = _load_conv_artifacts_index()
@@ -782,7 +848,7 @@ def extract_artifacts(conversations):
 
                 if not filename or not file_content:
                     continue
-                if (conv_uuid, filename) in existing:
+                if not overwrite and (conv_uuid, filename) in existing:
                     continue
 
                 dest_dir = os.path.join(CONV_ARTIFACTS_DIR, conv_uuid)
@@ -887,6 +953,7 @@ def import_zip():
     if not f.filename.lower().endswith('.zip'):
         return jsonify({'error': 'zip file required'}), 400
 
+    overwrite = request.form.get('overwrite', 'false').lower() == 'true'
     imported = 0
     skipped = 0
     imported_uuids = _load_imported_uuids()
@@ -916,7 +983,7 @@ def import_zip():
 
         for i, conv in enumerate(conversations):
             uid = conv.get('uuid') or conv.get('id', '')
-            if not uid or uid in imported_uuids:
+            if not uid or (not overwrite and uid in imported_uuids):
                 skipped += 1
                 continue
 
@@ -951,7 +1018,7 @@ def import_zip():
         # アーティファクト抽出
         artifacts_extracted = 0
         try:
-            artifacts_extracted = extract_artifacts(conversations)
+            artifacts_extracted = extract_artifacts(conversations, overwrite=overwrite)
         except Exception as e:
             _log_error(f'artifact extract error: {e}')
 
@@ -994,7 +1061,7 @@ def import_zip():
                     continue
 
                 proj_uuid = proj.get('uuid', '')
-                if proj_uuid in imported_uuids:
+                if not overwrite and proj_uuid in imported_uuids:
                     skipped += 1
                     continue
 
@@ -1387,7 +1454,8 @@ _MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "name":    {"type": "string", "description": "ファイル名（例: core.md、script.sh）"},
-                "content": {"type": "string"}
+                "content": {"type": "string"},
+                "source_conversation_uuid": {"type": "string", "description": "このファイルが生まれた会話のUUID（省略可）"}
             },
             "required": ["name", "content"]
         }
@@ -1456,14 +1524,19 @@ _MCP_TOOLS = [
         "name": "inbox_post",
         "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）",
         "inputSchema": {"type": "object", "properties": {
-            "to":    {"type": "string", "description": "宛先（'chat' または 'code'）"},
-            "title": {"type": "string", "description": "件名"},
-            "body":  {"type": "string", "description": "本文"}
+            "to":         {"type": "string", "description": "宛先（'chat' または 'code'）"},
+            "title":      {"type": "string", "description": "件名"},
+            "body":       {"type": "string", "description": "本文"},
+            "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"}
         }, "required": ["to", "title", "body"]}
     }
 ]
 
 def _handle_tool_call(name, arguments):
+    """server_time を全レスポンスに付与するラッパー"""
+    return _inject_server_time(_handle_tool_call_raw(name, arguments))
+
+def _handle_tool_call_raw(name, arguments):
     if name == "memory_read_index":
         if os.path.exists(INDEX_FILE):
             with open(INDEX_FILE) as f:
@@ -1546,7 +1619,7 @@ def _handle_tool_call(name, arguments):
         c = arguments.get("content", "")
         if not n:
             return {"error": "name is required"}
-        return _artifacts_save(n, c)
+        return _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"))
 
     elif name == "artifacts_read":
         return _artifacts_read(arguments.get("name", ""), arguments.get("version"))
@@ -1631,8 +1704,9 @@ def _handle_tool_call(name, arguments):
         body  = arguments.get("body", "")
         if not to or not title:
             return {"error": "to and title are required"}
-        msg = _post_inbox_message(to=to, title=title, body=body, from_='code')
-        return {"id": msg['id'], "created_at": msg['created_at']}
+        persistent = bool(arguments.get("persistent", False))
+        msg = _post_inbox_message(to=to, title=title, body=body, from_='code', persistent=persistent)
+        return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent}
 
     return {"error": "unknown tool"}
 
@@ -1660,7 +1734,7 @@ def _process_mcp_message(msg):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.4.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.5.0"},
             "instructions": "セッション開始時に必ず artifacts_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }
@@ -1830,6 +1904,6 @@ if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     os.makedirs(INBOX_DIR, exist_ok=True)
-    _log_info(f'mio-memory v3.4 starting (log_level={_LOG_LEVEL})')
+    _log_info(f'mio-memory v3.5 starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
     app.run(host='0.0.0.0', port=5002, debug=False)
