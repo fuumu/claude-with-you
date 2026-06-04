@@ -201,6 +201,28 @@
 
     .empty { text-align: center; color: #5a6a7a; padding: 3rem; font-size: .9rem; }
 
+    /* ── Files ── */
+    .files-toolbar { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .files-search  { flex: 1; min-width: 200px; max-width: 360px; padding: .5rem .75rem;
+                     background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 6px;
+                     color: #c8d8e8; font-size: .85rem; }
+    .files-search:focus { outline: none; border-color: #7c6af7; }
+    .files-search::placeholder { color: #3a4a6a; }
+    .files-count   { font-size: .8rem; color: #5a6a7a; margin-left: auto; }
+    .files-list    { display: flex; flex-direction: column; gap: .35rem; }
+    .files-row {
+      background: #16213e; border: 1px solid #2a3a5a; border-radius: 7px;
+      padding: .6rem 1rem; display: grid;
+      grid-template-columns: 14rem 1fr 6rem 4.5rem;
+      align-items: center; gap: .75rem; cursor: pointer; transition: border-color .2s;
+      font-size: .82rem;
+    }
+    .files-row:hover { border-color: #7c6af7; }
+    .files-name  { font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c8d8e8; }
+    .files-conv  { color: #7a8a9a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .files-date  { color: #5a6a7a; font-size: .78rem; }
+    .files-size  { color: #5a6a7a; font-size: .78rem; text-align: right; }
+
     /* ── Oplog ── */
     .oplog-toolbar { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
     .oplog-count   { font-size: .8rem; color: #5a6a7a; margin-left: auto; }
@@ -248,6 +270,7 @@
   <button class="tab-btn" onclick="switchTab('artifacts', this)">Artifacts</button>
   <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
   <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
+  <button class="tab-btn" onclick="switchTab('files', this)">Files</button>
   <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
 </div>
 
@@ -302,6 +325,15 @@
     <span class="oplog-count" id="oplog-count"></span>
   </div>
   <div class="oplog-list" id="oplog-list"></div>
+</div>
+
+<!-- Files tab -->
+<div class="tab-panel" id="tab-files">
+  <div class="files-toolbar">
+    <input type="search" class="files-search" id="files-search" placeholder="🔍 ファイル名・会話名で検索..." oninput="onFilesSearch(this.value)">
+    <span class="files-count" id="files-count"></span>
+  </div>
+  <div class="files-list" id="files-list"></div>
 </div>
 
 <!-- Logs tab -->
@@ -369,6 +401,7 @@ function switchTab(name, btn) {
   if (name === 'artifacts') loadArtifacts();
   if (name === 'import')    loadImportStatus();
   if (name === 'oplog')     loadOplog();
+  if (name === 'files')     loadFiles();
   if (name === 'logs') {
     const frame = document.getElementById('logs-frame');
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
@@ -588,7 +621,8 @@ async function handleFile(file) {
     const data = await res.json();
     if (res.ok) {
       const convPart = data.conversations_saved != null ? ` / 会話保存: ${data.conversations_saved}件` : '';
-      showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件${convPart}</span>`);
+      const artPart  = data.artifacts_extracted  != null ? ` / 抽出ファイル: ${data.artifacts_extracted}件` : '';
+      showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件${convPart}${artPart}</span>`);
     } else {
       showResult(`<span class="result-err">エラー: ${esc(String(data.error || res.status))}</span>`);
     }
@@ -609,6 +643,64 @@ function copyCmd() {
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = 'コピー'; btn.classList.remove('copied'); }, 2000);
   });
+}
+
+// ── Files ─────────────────────────────────────────────────────────────
+let filesData = [];
+let filesTimer = null;
+
+async function loadFiles(q = '') {
+  const list = document.getElementById('files-list');
+  list.innerHTML = '<div class="empty">読み込み中...</div>';
+  document.getElementById('files-count').textContent = '';
+  try {
+    const url = '/api/conv-artifacts' + (q ? '?q=' + encodeURIComponent(q) : '');
+    const res  = await apiFetch(url);
+    filesData  = await res.json();
+    renderFiles();
+  } catch(e) {
+    if (e.message !== '401') list.innerHTML = '<div class="empty">取得失敗</div>';
+  }
+}
+
+function renderFiles() {
+  const list = document.getElementById('files-list');
+  document.getElementById('files-count').textContent = `${filesData.length}件`;
+  if (!filesData.length) { list.innerHTML = '<div class="empty">ファイルなし</div>'; return; }
+  list.innerHTML = filesData.map(f => {
+    const size = f.size > 1024 ? `${(f.size/1024).toFixed(1)}KB` : `${f.size}B`;
+    return `
+      <div class="files-row" onclick="openFile('${esc(f.conv_uuid)}','${esc(f.filename)}','${esc(f.conv_name)}')">
+        <span class="files-name">${esc(f.filename)}</span>
+        <span class="files-conv">${esc(f.conv_name)}</span>
+        <span class="files-date">${esc(f.conv_date)}</span>
+        <span class="files-size">${size}</span>
+      </div>`;
+  }).join('');
+}
+
+async function openFile(convUuid, filename, convName) {
+  try {
+    const res  = await apiFetch(`/api/conv-artifacts/${convUuid}/${filename}`);
+    const data = await res.json();
+    document.getElementById('modal-title').textContent = filename;
+    document.getElementById('modal-meta').textContent  = convName;
+    const body = document.getElementById('modal-body');
+    const ext  = filename.split('.').pop().toLowerCase();
+    if (['md'].includes(ext)) {
+      body.className = 'modal-body md-body';
+      body.innerHTML = marked.parse(data.content || '');
+    } else {
+      body.className = 'modal-body';
+      body.textContent = data.content || '';
+    }
+    openModal();
+  } catch {}
+}
+
+function onFilesSearch(val) {
+  clearTimeout(filesTimer);
+  filesTimer = setTimeout(() => loadFiles(val.trim()), 300);
 }
 
 // ── Oplog ─────────────────────────────────────────────────────────────

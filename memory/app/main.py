@@ -65,6 +65,7 @@ IMPORT_LOG         = '/data/imported_uuids.json'
 IMPORT_STATUS_FILE = '/data/.import_status.json'
 SHARE_TOKENS_FILE  = '/data/share_tokens.json'
 CONVERSATIONS_DIR  = '/data/conversations'
+CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
@@ -608,6 +609,114 @@ def get_shared_entry(token):
         entry = json.load(f)
     return jsonify(entry)
 
+# ── 会話内アーティファクト抽出 ───────────────────────────────────────
+
+_ARTIFACT_EXT_MAP = {
+    'python': '.py', 'javascript': '.js', 'typescript': '.ts',
+    'html': '.html', 'css': '.css', 'bash': '.sh', 'shell': '.sh',
+    'json': '.json', 'markdown': '.md', '': '.txt',
+}
+
+def _conv_artifacts_index_path():
+    return os.path.join(CONV_ARTIFACTS_DIR, '_index.json')
+
+def _load_conv_artifacts_index():
+    p = _conv_artifacts_index_path()
+    if os.path.exists(p):
+        with open(p, encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def extract_artifacts(conversations):
+    """conversations の全会話から tool_use アーティファクトを抽出して保存する"""
+    os.makedirs(CONV_ARTIFACTS_DIR, exist_ok=True)
+    index    = _load_conv_artifacts_index()
+    existing = {(e['conv_uuid'], e['filename']) for e in index}
+    extracted = 0
+
+    for conv in conversations:
+        conv_uuid = conv.get('uuid', '')
+        conv_name = conv.get('name') or conv.get('title') or conv_uuid[:8]
+        conv_date = (conv.get('updated_at') or conv.get('created_at') or '')[:10]
+
+        for msg in conv.get('chat_messages', []):
+            content = msg.get('content', [])
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get('type') != 'tool_use':
+                    continue
+
+                name         = block.get('name', '')
+                inp          = block.get('input', {})
+                file_content = None
+                filename     = None
+
+                if name == 'create_file':
+                    path = inp.get('path', '')
+                    file_content = inp.get('file_text', '')
+                    filename = os.path.basename(path)
+                    # /home/claude/ 以下の中間ファイルは除外（outputs/ は含める）
+                    if '/home/claude/' in path and '/mnt/user-data/outputs/' not in path:
+                        continue
+
+                elif name == 'artifacts':
+                    file_content = inp.get('content', '')
+                    artifact_id  = inp.get('id', 'unknown')
+                    lang = inp.get('language', '')
+                    mime = inp.get('type', '')
+                    ext  = '.jsx' if 'react' in mime else _ARTIFACT_EXT_MAP.get(lang, '.txt')
+                    filename = f'{artifact_id}{ext}'
+
+                if not filename or not file_content:
+                    continue
+                if (conv_uuid, filename) in existing:
+                    continue
+
+                dest_dir = os.path.join(CONV_ARTIFACTS_DIR, conv_uuid)
+                os.makedirs(dest_dir, exist_ok=True)
+                with open(os.path.join(dest_dir, filename), 'w', encoding='utf-8') as f:
+                    f.write(file_content)
+
+                entry = {
+                    'conv_uuid': conv_uuid,
+                    'conv_name': conv_name,
+                    'conv_date': conv_date,
+                    'filename':  filename,
+                    'size':      len(file_content),
+                    'path':      f'{conv_uuid}/{filename}',
+                }
+                index.append(entry)
+                existing.add((conv_uuid, filename))
+                extracted += 1
+
+    if extracted > 0:
+        with open(_conv_artifacts_index_path(), 'w', encoding='utf-8') as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+
+    return extracted
+
+# ── 会話ログ REST API ─────────────────────────────────────────────────
+
+@app.route('/api/conv-artifacts')
+@require_auth
+def api_conv_artifacts_list():
+    q     = request.args.get('q', '').lower()
+    index = _load_conv_artifacts_index()
+    if q:
+        index = [e for e in index if q in (e.get('filename','') + ' ' + e.get('conv_name','')).lower()]
+    return jsonify(index)
+
+@app.route('/api/conv-artifacts/<conv_uuid>/<path:filename>')
+@require_auth
+def api_conv_artifacts_get(conv_uuid, filename):
+    fpath = os.path.join(CONV_ARTIFACTS_DIR, conv_uuid, filename)
+    if not os.path.exists(fpath):
+        abort(404)
+    with open(fpath, encoding='utf-8') as f:
+        content = f.read()
+    return jsonify({'conv_uuid': conv_uuid, 'filename': filename, 'content': content})
+
 # ── 会話ログ保存ヘルパー ──────────────────────────────────────────────
 
 def _conv_index_path():
@@ -727,6 +836,13 @@ def import_zip():
         except Exception as e:
             _log_error(f'conv save error: {e}')
 
+        # アーティファクト抽出
+        artifacts_extracted = 0
+        try:
+            artifacts_extracted = extract_artifacts(conversations)
+        except Exception as e:
+            _log_error(f'artifact extract error: {e}')
+
         # memories.json を探す
         memories_file = None
         for root, _dirs, files in os.walk(tmpdir):
@@ -807,10 +923,10 @@ def import_zip():
             rebuild_index()
         _save_imported_uuids(imported_uuids)
 
-    _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name} conv_saved={conv_saved}')
+    _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name} conv_saved={conv_saved} artifacts_extracted={artifacts_extracted}')
     if imported > 0 or artifact_name:
         _write_import_status(f.filename)
-    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved}
+    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved, 'artifacts_extracted': artifacts_extracted}
     if artifact_name:
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
