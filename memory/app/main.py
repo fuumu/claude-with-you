@@ -1523,15 +1523,23 @@ def _handle_tool_call(name, arguments):
         return entry
 
     elif name == "memory_search":
-        q      = arguments.get("q", "").lower()
-        limit  = int(arguments.get("limit", 10))
-        offset = int(arguments.get("offset", 0))
-        all_hits = [e for e in load_all_entries()
-                    if not e.get("deleted") and q in
-                    (e.get("title","") + e.get("body","") + " ".join(e.get("tags",[]))).lower()]
-        total    = len(all_hits)
-        sliced   = all_hits[offset:offset + limit] if limit > 0 else all_hits[offset:]
-        return {"results": sliced, "total": total, "has_more": (offset + len(sliced)) < total}
+        try:
+            q       = str(arguments.get("q") or "").lower()
+            raw_l   = arguments.get("limit")
+            raw_o   = arguments.get("offset")
+            limit   = int(raw_l) if raw_l is not None else 10
+            offset  = int(raw_o) if raw_o is not None else 0
+            all_hits = [e for e in load_all_entries()
+                        if not e.get("deleted") and q in
+                        (str(e.get("title") or "") + str(e.get("body") or "") +
+                         " ".join(str(t) for t in (e.get("tags") or []))).lower()]
+            total  = len(all_hits)
+            sliced = all_hits[offset:offset + limit] if limit > 0 else all_hits[offset:]
+            return {"results": sliced, "total": total, "has_more": (offset + len(sliced)) < total}
+        except Exception as exc:
+            import traceback
+            _log_error(f'memory_search error: {traceback.format_exc()}')
+            return {"error": str(exc), "results": [], "total": 0, "has_more": False}
 
     elif name == "artifacts_save":
         n = arguments.get("name", "")
