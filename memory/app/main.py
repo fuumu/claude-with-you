@@ -1,8 +1,14 @@
 """
-mio-memory v3.3  —  Streamable HTTP MCP transport
+mio-memory v3.4  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.4 (2026-06-04) - 機能追加
+    - memory_search に limit/offset/has_more 追加（コンテキスト削減）
+    - インボックスシステム新設（/data/inbox/）
+      inbox_check / inbox_read / inbox_post MCPツール追加
+      GET/POST /api/inbox, GET /api/inbox/<id>, PATCH /api/inbox/<id>/read
+    - MCPツール総数：15本
   v3.3 (2026-06-04) - 機能追加
     - admin.html Filesタブ：拡張子フィルタ・日付範囲・ソートヘッダー・Prism.jsシンタックスハイライト・HTMLプレビュー（iframe）
     - admin.html：スクロール制御修正（各タブ内でスクロール完結）・↑TOPボタン追加
@@ -74,6 +80,7 @@ IMPORT_STATUS_FILE = '/data/.import_status.json'
 SHARE_TOKENS_FILE  = '/data/share_tokens.json'
 CONVERSATIONS_DIR  = '/data/conversations'
 CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
+INBOX_DIR          = '/data/inbox'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
 
@@ -388,7 +395,7 @@ def logs_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.3'})
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.4'})
 
 # ── 記憶 REST API ─────────────────────────────────────────────────────
 
@@ -403,7 +410,9 @@ def get_index():
 @app.route('/api/memory/search')
 @require_auth
 def search():
-    q = request.args.get('q', '').lower()
+    q      = request.args.get('q', '').lower()
+    limit  = int(request.args.get('limit', 0))   # 0 = no limit
+    offset = int(request.args.get('offset', 0))
     if not q:
         return jsonify([])
     results = []
@@ -414,6 +423,10 @@ def search():
                 ' '.join(entry.get('tags', []))).lower()
         if q in text:
             results.append(entry)
+    if offset:
+        results = results[offset:]
+    if limit:
+        results = results[:limit]
     return jsonify(results)
 
 @app.route('/api/memory/tags')
@@ -623,6 +636,88 @@ def get_shared_entry(token):
     with open(path) as f:
         entry = json.load(f)
     return jsonify(entry)
+
+# ── インボックス ──────────────────────────────────────────────────────
+
+def _inbox_path(msg_id):
+    return os.path.join(INBOX_DIR, f'{msg_id}.json')
+
+def _load_inbox_messages(to=None, unread_only=False):
+    os.makedirs(INBOX_DIR, exist_ok=True)
+    msgs = []
+    for fname in sorted(os.listdir(INBOX_DIR)):
+        if not fname.endswith('.json'):
+            continue
+        with open(os.path.join(INBOX_DIR, fname), encoding='utf-8') as f:
+            msg = json.load(f)
+        if to and msg.get('to') != to:
+            continue
+        if unread_only and msg.get('read'):
+            continue
+        msgs.append(msg)
+    return msgs
+
+def _post_inbox_message(to, title, body, from_='code'):
+    os.makedirs(INBOX_DIR, exist_ok=True)
+    now   = now_jst()
+    msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
+    msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
+           "created_at": now, "read": False}
+    with open(_inbox_path(msg_id), 'w', encoding='utf-8') as f:
+        json.dump(msg, f, ensure_ascii=False, indent=2)
+    return msg
+
+def _mark_inbox_read(msg_id):
+    path = _inbox_path(msg_id)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding='utf-8') as f:
+        msg = json.load(f)
+    msg['read'] = True
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(msg, f, ensure_ascii=False, indent=2)
+    return msg
+
+@app.route('/api/inbox', methods=['GET'])
+@require_auth
+def api_inbox_list():
+    to          = request.args.get('to')
+    full        = request.args.get('full', 'false').lower() == 'true'
+    unread_only = request.args.get('status') == 'new'
+    msgs = _load_inbox_messages(to=to, unread_only=unread_only)
+    if full:
+        return jsonify(msgs)
+    return jsonify({"count": len(msgs), "ids": [m['id'] for m in msgs]})
+
+@app.route('/api/inbox/<msg_id>', methods=['GET'])
+@require_auth
+def api_inbox_get(msg_id):
+    path = _inbox_path(msg_id)
+    if not os.path.exists(path):
+        abort(404)
+    with open(path, encoding='utf-8') as f:
+        return jsonify(json.load(f))
+
+@app.route('/api/inbox', methods=['POST'])
+@require_auth
+def api_inbox_post():
+    data = request.get_json() or {}
+    to    = data.get('to', '')
+    title = data.get('title', '')
+    body  = data.get('body', '')
+    if not to or not title:
+        return jsonify({"error": "to and title are required"}), 400
+    msg = _post_inbox_message(to=to, title=title, body=body,
+                              from_=data.get('from', 'code'))
+    return jsonify(msg), 201
+
+@app.route('/api/inbox/<msg_id>/read', methods=['PATCH'])
+@require_auth
+def api_inbox_mark_read(msg_id):
+    msg = _mark_inbox_read(msg_id)
+    if msg is None:
+        abort(404)
+    return jsonify(msg)
 
 # ── 会話内アーティファクト抽出 ───────────────────────────────────────
 
@@ -1276,8 +1371,12 @@ _MCP_TOOLS = [
     },
     {
         "name": "memory_search",
-        "description": "キーワードで記憶を検索する",
-        "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
+        "description": "キーワードで記憶を検索する。limit/offsetでページング可。{results, total, has_more}を返す",
+        "inputSchema": {"type": "object", "properties": {
+            "q":      {"type": "string", "description": "検索キーワード"},
+            "limit":  {"type": "integer", "description": "最大取得件数（デフォルト10、0=無制限）"},
+            "offset": {"type": "integer", "description": "スキップ件数（デフォルト0）"}
+        }, "required": ["q"]}
     },
     {
         "name": "artifacts_save",
@@ -1336,6 +1435,29 @@ _MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"}
         }, "required": ["uuid"]}
+    },
+    {
+        "name": "inbox_check",
+        "description": "インボックスの未読件数とIDリストを返す（軽量・約50トークン）。memory_searchでチャット宛を検索するより高速",
+        "inputSchema": {"type": "object", "properties": {
+            "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"}
+        }, "required": []}
+    },
+    {
+        "name": "inbox_read",
+        "description": "インボックスの特定メッセージを取得し既読にする",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "inbox_checkで取得したメッセージID"}
+        }, "required": ["id"]}
+    },
+    {
+        "name": "inbox_post",
+        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）",
+        "inputSchema": {"type": "object", "properties": {
+            "to":    {"type": "string", "description": "宛先（'chat' または 'code'）"},
+            "title": {"type": "string", "description": "件名"},
+            "body":  {"type": "string", "description": "本文"}
+        }, "required": ["to", "title", "body"]}
     }
 ]
 
@@ -1399,10 +1521,15 @@ def _handle_tool_call(name, arguments):
         return entry
 
     elif name == "memory_search":
-        q = arguments.get("q", "").lower()
-        return [e for e in load_all_entries()
-                if not e.get("deleted") and q in
-                (e.get("title","") + e.get("body","") + " ".join(e.get("tags",[]))).lower()]
+        q      = arguments.get("q", "").lower()
+        limit  = int(arguments.get("limit", 10))
+        offset = int(arguments.get("offset", 0))
+        all_hits = [e for e in load_all_entries()
+                    if not e.get("deleted") and q in
+                    (e.get("title","") + e.get("body","") + " ".join(e.get("tags",[]))).lower()]
+        total    = len(all_hits)
+        sliced   = all_hits[offset:offset + limit] if limit > 0 else all_hits[offset:]
+        return {"results": sliced, "total": total, "has_more": (offset + len(sliced)) < total}
 
     elif name == "artifacts_save":
         n = arguments.get("name", "")
@@ -1476,6 +1603,27 @@ def _handle_tool_call(name, arguments):
         result = f'# {title}\n\n' + '\n\n'.join(lines)
         return result
 
+    elif name == "inbox_check":
+        to   = arguments.get("to")
+        msgs = _load_inbox_messages(to=to, unread_only=True)
+        return {"count": len(msgs), "ids": [m['id'] for m in msgs]}
+
+    elif name == "inbox_read":
+        msg_id = arguments.get("id", "")
+        msg = _mark_inbox_read(msg_id)
+        if msg is None:
+            return {"error": f"message not found: {msg_id}"}
+        return msg
+
+    elif name == "inbox_post":
+        to    = arguments.get("to", "")
+        title = arguments.get("title", "")
+        body  = arguments.get("body", "")
+        if not to or not title:
+            return {"error": "to and title are required"}
+        msg = _post_inbox_message(to=to, title=title, body=body, from_='code')
+        return {"id": msg['id'], "created_at": msg['created_at']}
+
     return {"error": "unknown tool"}
 
 
@@ -1502,7 +1650,7 @@ def _process_mcp_message(msg):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.3.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.4.0"},
             "instructions": "セッション開始時に必ず artifacts_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }
@@ -1671,6 +1819,7 @@ def mcp_messages():
 if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-    _log_info(f'mio-memory v3.3 starting (log_level={_LOG_LEVEL})')
+    os.makedirs(INBOX_DIR, exist_ok=True)
+    _log_info(f'mio-memory v3.4 starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
     app.run(host='0.0.0.0', port=5002, debug=False)
