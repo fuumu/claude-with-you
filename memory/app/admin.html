@@ -5,9 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>澪の記憶サーバー — Admin</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-jsx.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Helvetica Neue', sans-serif; background: #1a1a2e; color: #c8d8e8; min-height: 100vh; }
+    body { font-family: 'Helvetica Neue', sans-serif; background: #1a1a2e; color: #c8d8e8; height: 100vh; overflow: hidden; }
 
     /* ── Auth ── */
     .auth-overlay {
@@ -46,7 +51,7 @@
     .tab-btn.active { color: #7c6af7; border-bottom-color: #7c6af7; }
     .tab-btn:hover  { color: #c8d8e8; }
     .tab-panel      { display: none; padding: 1.5rem; }
-    .tab-panel.active { display: block; }
+    .tab-panel.active { display: block; height: calc(100vh - 88px); overflow-y: auto; }
 
     /* ── Search ── */
     .search-bar { margin-bottom: .75rem; }
@@ -133,6 +138,16 @@
     .copy-btn:hover { border-color: #7c6af7; color: #7c6af7; }
     .copy-btn.copied { border-color: #2ecc71; color: #2ecc71; }
 
+    /* ── Batch progress panel ── */
+    .batch-progress-panel {
+      max-width: 600px; margin: 1.25rem auto 0;
+      padding: .85rem 1rem; background: #16213e; border: 1px solid #2a3a5a; border-radius: 8px;
+    }
+    .batch-progress-header { display: flex; justify-content: space-between; font-size: .85rem; margin-bottom: .45rem; color: #c8d8e8; }
+    .batch-progress-bar-wrap { height: 6px; background: #0f0f1a; border-radius: 3px; overflow: hidden; margin-bottom: .45rem; }
+    .batch-progress-bar { height: 100%; background: #7c6af7; width: 0%; transition: width .5s; }
+    .batch-status-detail { font-size: .78rem; color: #5a6a7a; }
+
     /* ── Import status ── */
     .import-status {
       max-width: 600px; margin: 0 auto 1.25rem; padding: .65rem 1rem;
@@ -202,13 +217,33 @@
     .empty { text-align: center; color: #5a6a7a; padding: 3rem; font-size: .9rem; }
 
     /* ── Files ── */
-    .files-toolbar { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .files-toolbar { display: flex; gap: .5rem; margin-bottom: .6rem; flex-wrap: wrap; align-items: center; }
     .files-search  { flex: 1; min-width: 200px; max-width: 360px; padding: .5rem .75rem;
                      background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 6px;
                      color: #c8d8e8; font-size: .85rem; }
     .files-search:focus { outline: none; border-color: #7c6af7; }
     .files-search::placeholder { color: #3a4a6a; }
     .files-count   { font-size: .8rem; color: #5a6a7a; margin-left: auto; }
+
+    .files-ext-bar { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .5rem; }
+    .files-date-bar {
+      display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem;
+      font-size: .82rem; color: #7a8a9a;
+    }
+    .files-date-bar input[type="date"] {
+      padding: .3rem .5rem; background: #0f0f1a; border: 1px solid #2a3a5a;
+      border-radius: 4px; color: #c8d8e8; font-size: .78rem;
+    }
+    .files-header {
+      display: grid; grid-template-columns: 14rem 1fr 6rem 4.5rem;
+      gap: .75rem; padding: .35rem 1rem; margin-bottom: .35rem;
+      font-size: .75rem; color: #5a6a7a; font-weight: 600;
+      border-bottom: 1px solid #2a3a5a;
+    }
+    .files-col-hdr { cursor: pointer; user-select: none; }
+    .files-col-hdr:hover { color: #7c6af7; }
+    .files-col-right { text-align: right; }
+
     .files-list    { display: flex; flex-direction: column; gap: .35rem; }
     .files-row {
       background: #16213e; border: 1px solid #2a3a5a; border-radius: 7px;
@@ -222,6 +257,17 @@
     .files-conv  { color: #7a8a9a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .files-date  { color: #5a6a7a; font-size: .78rem; }
     .files-size  { color: #5a6a7a; font-size: .78rem; text-align: right; }
+
+    /* ── TOP button ── */
+    .top-btn {
+      position: fixed; bottom: 5rem; right: 1.5rem;
+      width: 44px; height: 44px; border-radius: 50%;
+      background: #7c6af7; border: none; color: #fff; font-size: .72rem;
+      cursor: pointer; z-index: 50; opacity: 0; pointer-events: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,.5);
+      transition: opacity .25s;
+    }
+    .top-btn.visible { opacity: 1; pointer-events: auto; }
 
     /* ── Oplog ── */
     .oplog-toolbar { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
@@ -246,6 +292,10 @@
     .op-delete { background: rgba(231,76,60,.15);  color: #e74c3c; border: 1px solid rgba(231,76,60,.3); }
     .op-import { background: rgba(241,196,15,.15); color: #f1c40f; border: 1px solid rgba(241,196,15,.3); }
     .oplog-id  { color: #c8d8e8; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Prism overrides ── */
+    pre[class*="language-"] { border-radius: 6px; margin: 0; font-size: .82rem; }
+    code[class*="language-"] { white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -307,10 +357,26 @@
   </div>
   <div id="import-result"></div>
 
+  <!-- Batch progress panel (auto-shown after import / manual start) -->
+  <div class="batch-progress-panel" id="batch-progress-panel" style="display:none">
+    <div class="batch-progress-header">
+      <span id="batch-status-label">要約生成</span>
+      <span id="batch-status-pct">0%</span>
+    </div>
+    <div class="batch-progress-bar-wrap">
+      <div class="batch-progress-bar" id="batch-progress-bar"></div>
+    </div>
+    <div class="batch-status-detail" id="batch-status-detail"></div>
+  </div>
+
   <div class="batch-section">
     <h3>要約レイヤー生成</h3>
-    <p>rawインポート後、以下のコマンドをClaude Codeで実行して2層（要約）・3層（シンボリック圧縮）を生成してください。<br>
-    事前に <code>ANTHROPIC_API_KEY</code> と <code>MIO_API_TOKEN</code> を環境変数に設定してください。</p>
+    <p>ZIPインポート後、<code>ANTHROPIC_API_KEY</code> が設定されていれば自動実行されます。<br>
+    手動でLMStudioを使って実行することもできます。</p>
+    <div style="display:flex;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
+      <button class="btn btn-secondary" onclick="startBatch()">LMStudioで実行</button>
+      <button class="btn btn-secondary" onclick="pollBatchStatus()">状態を確認</button>
+    </div>
     <div class="batch-cmd-wrap">
       <span class="batch-cmd" id="batch-cmd">python scripts/generate_summary_layers.py</span>
       <button class="copy-btn" id="copy-btn" onclick="copyCmd()">コピー</button>
@@ -329,15 +395,33 @@
 
 <!-- Files tab -->
 <div class="tab-panel" id="tab-files">
+  <!-- Row 1: search + count -->
   <div class="files-toolbar">
     <input type="search" class="files-search" id="files-search" placeholder="🔍 ファイル名・会話名で検索..." oninput="onFilesSearch(this.value)">
     <span class="files-count" id="files-count"></span>
+  </div>
+  <!-- Row 2: extension filter buttons (populated dynamically) -->
+  <div class="files-ext-bar" id="files-ext-bar"></div>
+  <!-- Row 3: date range -->
+  <div class="files-date-bar">
+    <span>日付:</span>
+    <input type="date" id="files-from" onchange="renderFiles()">
+    <span>〜</span>
+    <input type="date" id="files-to" onchange="renderFiles()">
+    <button class="btn btn-secondary" style="padding:.25rem .6rem;font-size:.78rem" onclick="clearFilesDate()">クリア</button>
+  </div>
+  <!-- Column headers (sortable) -->
+  <div class="files-header">
+    <span class="files-col-hdr" onclick="sortFiles('filename')">ファイル名<span id="sort-filename"></span></span>
+    <span class="files-col-hdr" onclick="sortFiles('conv_name')">会話<span id="sort-conv_name"></span></span>
+    <span class="files-col-hdr" onclick="sortFiles('conv_date')">日付<span id="sort-conv_date"> ▼</span></span>
+    <span class="files-col-hdr files-col-right" onclick="sortFiles('size')">サイズ<span id="sort-size"></span></span>
   </div>
   <div class="files-list" id="files-list"></div>
 </div>
 
 <!-- Logs tab -->
-<div class="tab-panel" id="tab-logs" style="padding:0; height: calc(100vh - 90px);">
+<div class="tab-panel" id="tab-logs" style="padding:0; height: calc(100vh - 88px); overflow: hidden;">
   <iframe id="logs-frame" src="" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>
 </div>
 
@@ -353,12 +437,21 @@
   </div>
 </div>
 
+<!-- Floating TOP button -->
+<button class="top-btn" id="top-btn" onclick="scrollToTop()">↑ TOP</button>
+
 <script>
 const API = 'https://memory.mio.runabook.synology.me';
 let allEntries = [];
 let currentFilter = '全て';
 let searchKeyword = '';
 let searchTimer = null;
+
+// ── marked.js: external links open in new tab ─────────────────────────
+function renderMarkdown(content) {
+  const html = marked.parse(content || '');
+  return html.replace(/<a href="/g, '<a target="_blank" rel="noopener noreferrer" href="');
+}
 
 // ── Auth ─────────────────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('mio_token') || ''; }
@@ -399,7 +492,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name === 'memory')    loadMemory();
   if (name === 'artifacts') loadArtifacts();
-  if (name === 'import')    loadImportStatus();
+  if (name === 'import')    { loadImportStatus(); pollBatchStatus(); }
   if (name === 'oplog')     loadOplog();
   if (name === 'files')     loadFiles();
   if (name === 'logs') {
@@ -565,7 +658,7 @@ async function openArtifact(name) {
     const body = document.getElementById('modal-body');
     if (name.endsWith('.md')) {
       body.className = 'modal-body md-body';
-      body.innerHTML = marked.parse(a.content || '');
+      body.innerHTML = renderMarkdown(a.content || '');
     } else {
       body.className = 'modal-body';
       body.textContent = a.content || '';
@@ -583,7 +676,6 @@ async function loadImportStatus() {
     const dateEl = document.getElementById('import-status-date');
     if (data.last_filename) {
       nameEl.textContent = data.last_filename;
-      // ファイル名から日付をパース（例: claude_export_20260601.zip → 2026-06-01）
       const m = data.last_filename.match(/(\d{4})(\d{2})(\d{2})/);
       const dateStr = m ? `${m[1]}-${m[2]}-${m[3]}` : (data.imported_at || '').slice(0, 10);
       dateEl.textContent = dateStr;
@@ -623,6 +715,8 @@ async function handleFile(file) {
       const convPart = data.conversations_saved != null ? ` / 会話保存: ${data.conversations_saved}件` : '';
       const artPart  = data.artifacts_extracted  != null ? ` / 抽出ファイル: ${data.artifacts_extracted}件` : '';
       showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件${convPart}${artPart}</span>`);
+      // Poll batch status (auto-batch may have started)
+      setTimeout(pollBatchStatus, 1500);
     } else {
       showResult(`<span class="result-err">エラー: ${esc(String(data.error || res.status))}</span>`);
     }
@@ -645,9 +739,55 @@ function copyCmd() {
   });
 }
 
+// ── Batch (summary generation) ────────────────────────────────────────
+let batchPollTimer = null;
+
+async function pollBatchStatus() {
+  clearTimeout(batchPollTimer);
+  try {
+    const res = await apiFetch('/api/batch/status');
+    const s   = await res.json();
+    renderBatchStatus(s);
+    if (s.running) batchPollTimer = setTimeout(pollBatchStatus, 2000);
+  } catch {}
+}
+
+function renderBatchStatus(s) {
+  const panel = document.getElementById('batch-progress-panel');
+  if (!s || !s.started_at) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  const pct   = s.total > 0 ? Math.round(s.processed / s.total * 100) : 0;
+  const label = s.running ? '⏳ 要約生成中...' : '✓ 完了';
+  document.getElementById('batch-status-label').textContent = label;
+  document.getElementById('batch-status-pct').textContent   = pct + '%';
+  document.getElementById('batch-progress-bar').style.width = pct + '%';
+  document.getElementById('batch-status-detail').textContent =
+    `処理: ${s.processed}件 / スキップ: ${s.skipped || 0}件 / エラー: ${s.errors || 0}件 (合計: ${s.total}件)`;
+}
+
+async function startBatch() {
+  clearTimeout(batchPollTimer);
+  try {
+    const res = await apiFetch('/api/batch/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backend: 'lmstudio' })
+    });
+    if (res.ok) {
+      showToast('要約生成を開始しました');
+      setTimeout(pollBatchStatus, 500);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      showToast(d.error || '開始失敗');
+    }
+  } catch { showToast('通信エラー'); }
+}
+
 // ── Files ─────────────────────────────────────────────────────────────
 let filesData = [];
 let filesTimer = null;
+let filesSort = { col: 'conv_date', dir: 'desc' };
+let filesExtFilter = '';
 
 async function loadFiles(q = '') {
   const list = document.getElementById('files-list');
@@ -657,17 +797,55 @@ async function loadFiles(q = '') {
     const url = '/api/conv-artifacts' + (q ? '?q=' + encodeURIComponent(q) : '');
     const res  = await apiFetch(url);
     filesData  = await res.json();
+    renderExtFilters();
     renderFiles();
+    renderSortIndicators();
   } catch(e) {
     if (e.message !== '401') list.innerHTML = '<div class="empty">取得失敗</div>';
   }
 }
 
+function renderExtFilters() {
+  const exts = [...new Set(filesData.map(f => f.filename.split('.').pop().toLowerCase()))].sort();
+  const bar = document.getElementById('files-ext-bar');
+  bar.innerHTML =
+    `<button class="filter-btn${filesExtFilter === '' ? ' active' : ''}" onclick="setExtFilter('', this)">全て</button>` +
+    exts.map(e =>
+      `<button class="filter-btn${filesExtFilter === e ? ' active' : ''}" onclick="setExtFilter('${esc(e)}', this)">.${esc(e)}</button>`
+    ).join('');
+}
+
+function setExtFilter(ext, btn) {
+  filesExtFilter = ext;
+  document.querySelectorAll('#files-ext-bar .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderFiles();
+}
+
 function renderFiles() {
-  const list = document.getElementById('files-list');
-  document.getElementById('files-count').textContent = `${filesData.length}件`;
-  if (!filesData.length) { list.innerHTML = '<div class="empty">ファイルなし</div>'; return; }
-  list.innerHTML = filesData.map(f => {
+  const list    = document.getElementById('files-list');
+  const fromVal = document.getElementById('files-from')?.value || '';
+  const toVal   = document.getElementById('files-to')?.value   || '';
+
+  let data = filesData;
+  if (filesExtFilter) {
+    data = data.filter(f => f.filename.split('.').pop().toLowerCase() === filesExtFilter);
+  }
+  if (fromVal) data = data.filter(f => (f.conv_date || '') >= fromVal);
+  if (toVal)   data = data.filter(f => (f.conv_date || '') <= toVal);
+
+  data = [...data].sort((a, b) => {
+    const col = filesSort.col;
+    const va = col === 'size' ? (a.size || 0) : (a[col] || '');
+    const vb = col === 'size' ? (b.size || 0) : (b[col] || '');
+    if (va < vb) return filesSort.dir === 'asc' ? -1 : 1;
+    if (va > vb) return filesSort.dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  document.getElementById('files-count').textContent = `${data.length}件`;
+  if (!data.length) { list.innerHTML = '<div class="empty">ファイルなし</div>'; return; }
+  list.innerHTML = data.map(f => {
     const size = f.size > 1024 ? `${(f.size/1024).toFixed(1)}KB` : `${f.size}B`;
     return `
       <div class="files-row" onclick="openFile('${esc(f.conv_uuid)}','${esc(f.filename)}','${esc(f.conv_name)}')">
@@ -679,6 +857,37 @@ function renderFiles() {
   }).join('');
 }
 
+function sortFiles(col) {
+  if (filesSort.col === col) {
+    filesSort.dir = filesSort.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    filesSort = { col, dir: (col === 'size') ? 'desc' : 'asc' };
+  }
+  renderFiles();
+  renderSortIndicators();
+}
+
+function renderSortIndicators() {
+  ['filename', 'conv_name', 'conv_date', 'size'].forEach(col => {
+    const el = document.getElementById('sort-' + col);
+    if (!el) return;
+    el.textContent = filesSort.col === col ? (filesSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+  });
+}
+
+function clearFilesDate() {
+  document.getElementById('files-from').value = '';
+  document.getElementById('files-to').value   = '';
+  renderFiles();
+}
+
+// Extension→Prism language map
+const EXT_LANG = {
+  py: 'python', js: 'javascript', jsx: 'jsx', ts: 'typescript',
+  tsx: 'jsx', css: 'css', sh: 'bash', bash: 'bash',
+  json: 'json', yaml: 'yaml', yml: 'yaml', sql: 'sql',
+};
+
 async function openFile(convUuid, filename, convName) {
   try {
     const res  = await apiFetch(`/api/conv-artifacts/${convUuid}/${filename}`);
@@ -687,12 +896,23 @@ async function openFile(convUuid, filename, convName) {
     document.getElementById('modal-meta').textContent  = convName;
     const body = document.getElementById('modal-body');
     const ext  = filename.split('.').pop().toLowerCase();
-    if (['md'].includes(ext)) {
+
+    if (ext === 'md') {
       body.className = 'modal-body md-body';
-      body.innerHTML = marked.parse(data.content || '');
-    } else {
+      body.innerHTML = renderMarkdown(data.content || '');
+    } else if (ext === 'html' || ext === 'htm') {
       body.className = 'modal-body';
-      body.textContent = data.content || '';
+      body.innerHTML = '';
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'width:100%;height:420px;border:none;border-radius:6px;background:#fff;';
+      iframe.sandbox = 'allow-scripts';
+      iframe.srcdoc  = data.content || '';
+      body.appendChild(iframe);
+    } else {
+      const lang = EXT_LANG[ext] || ext;
+      body.className = 'modal-body';
+      body.innerHTML = `<pre><code class="language-${lang}">${esc(data.content || '')}</code></pre>`;
+      if (typeof Prism !== 'undefined') Prism.highlightElement(body.querySelector('code'));
     }
     openModal();
   } catch {}
@@ -760,6 +980,24 @@ function openModal()  { document.getElementById('modal').classList.add('open'); 
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── TOP button ────────────────────────────────────────────────────────
+function scrollToTop() {
+  const active = document.querySelector('.tab-panel.active');
+  if (active) active.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.querySelectorAll('.tab-panel').forEach(panel => {
+  panel.addEventListener('scroll', () => {
+    const btn    = document.getElementById('top-btn');
+    const active = document.querySelector('.tab-panel.active');
+    if (active && active.scrollTop > 300) {
+      btn.classList.add('visible');
+    } else {
+      btn.classList.remove('visible');
+    }
+  });
+});
 
 // ── Util ──────────────────────────────────────────────────────────────
 function esc(s) {

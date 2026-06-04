@@ -44,15 +44,16 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.0):**
-- `memory_read_index` — returns the index
-- `memory_read` — reads a single entry by id
-- `memory_write` — creates a new entry
-- `memory_upsert` — overwrites an entry by fixed id (creates if absent); used for core.md
-- `memory_search` — full-text keyword search across title, body, and tags
-- `artifacts_save` — saves a file with version history (symlink-based latest pointer)
-- `artifacts_read` — reads latest or a specific version of an artifact
-- `artifacts_list` — lists all saved artifacts
+**MCP tools exposed (v3.3, 12 tools):**
+- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — memory CRUD
+- `memory_share` — generates 24h share URL for a memory entry
+- `artifacts_save` / `artifacts_read` / `artifacts_list` — versioned file storage
+- `conversation_search` / `conversation_share` / `conversation_read` — conversation log access
+
+**Batch summary API:**
+- `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
+- `POST /api/batch/start` — start background summary thread (`backend: "anthropic"` or `"lmstudio"`)
+- Auto-starts on ZIP import when `ANTHROPIC_API_KEY` is set
 
 **Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 
@@ -62,7 +63,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 ## Dependencies
 
-All Python wheels are vendored in `memory/wheels/` so the Docker build works without internet access. The only runtime dependency is Flask. To add a package, download its wheel (and all transitive deps) into `memory/wheels/` and add it to `requirements.txt`.
+Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is installed via `pip install anthropic` at build time (requires internet — see `Dockerfile`). To add another package, download its wheel (and all transitive deps) into `memory/wheels/` and add it to `requirements.txt`.
 
 ## Key environment variables
 
@@ -71,6 +72,9 @@ All Python wheels are vendored in `memory/wheels/` so the Docker build works wit
 | `MIO_API_TOKEN` | `changeme` | Shared secret for Bearer auth and OAuth password |
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowed Origins; empty skips check |
+| `ANTHROPIC_API_KEY` | *(empty)* | If set, auto-starts summary batch after ZIP import |
+| `LM_STUDIO_HOST` | `192.168.10.32` | LMStudio host for manual batch runs |
+| `LM_STUDIO_PORT` | `1234` | LMStudio port |
 
 ## 澪コードの定型フロー
 

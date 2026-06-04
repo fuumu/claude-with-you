@@ -1,13 +1,20 @@
 """
-mio-memory v3.2  —  Streamable HTTP MCP transport
+mio-memory v3.3  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.3 (2026-06-04) - 機能追加
+    - admin.html Filesタブ：拡張子フィルタ・日付範囲・ソートヘッダー・Prism.jsシンタックスハイライト・HTMLプレビュー（iframe）
+    - admin.html：スクロール制御修正（各タブ内でスクロール完結）・↑TOPボタン追加
+    - admin.html：markedリンクをtarget="_blank"で開く設定
+    - ZIPインポート後にANTHROPIC_API_KEY設定済みなら要約バッチを自動起動
+    - GET /api/batch/status・POST /api/batch/start：バッチ進捗API追加
+    - admin.html Importタブ：バッチ進捗パネル・LMStudio手動実行ボタン
   v3.2 (2026-06-03) - 機能追加
     - memory_share MCPツール：記憶エントリの24時間共有URL生成
     - POST /api/memory/share/<id>：memory_share用エンドポイント新設
     - admin.html Memoryタブ：キーワード検索（300msデバウンス）追加
-    - MCPツール総数：11本（memory×5 + memory_share×1 + artifacts×3 + conversations×2）
+    - MCPツール総数：12本（memory×5 + memory_share×1 + artifacts×3 + conversations×2 + conversation_read×1）
   v3.1 (2026-06-02) - 機能追加
     - admin.html：Memory/Artifacts/Importの管理UI
     - MCP initialize instructions：core.md自動読み込み指示
@@ -50,6 +57,7 @@ import uuid
 import zipfile
 import tempfile
 import logging
+import threading
 import sys
 from datetime import datetime, timezone, timedelta
 from functools import wraps
@@ -68,6 +76,13 @@ CONVERSATIONS_DIR  = '/data/conversations'
 CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = 'https://memory.mio.runabook.synology.me'
+
+# ── バッチ要約生成状態 ────────────────────────────────────────────────
+_batch_status = {
+    'running': False, 'total': 0, 'processed': 0,
+    'errors': 0, 'skipped': 0, 'started_at': None,
+    'finished_at': None, 'backend': None,
+}
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
 _ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('MIO_ALLOWED_ORIGINS', '').split(',') if o.strip()]
 JST           = timezone(timedelta(hours=9))
@@ -373,7 +388,7 @@ def logs_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.2'})
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.3'})
 
 # ── 記憶 REST API ─────────────────────────────────────────────────────
 
@@ -930,7 +945,115 @@ def import_zip():
     if artifact_name:
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
+
+    # ANTHROPIC_API_KEY があれば要約バッチを自動起動
+    if imported > 0:
+        auto_key = os.environ.get('ANTHROPIC_API_KEY', '')
+        if auto_key and not _batch_status.get('running'):
+            t = threading.Thread(target=_run_summary_batch, args=(auto_key,), daemon=True)
+            t.start()
+
     return jsonify(result)
+
+# ── バッチ要約生成 ─────────────────────────────────────────────────────
+
+def _run_summary_batch(api_key: str, backend: str = 'anthropic',
+                       lm_host: str = '192.168.10.32', lm_port: str = '1234'):
+    global _batch_status
+    _batch_status.update({
+        'running': True, 'processed': 0, 'errors': 0, 'skipped': 0,
+        'started_at': now_jst(), 'finished_at': None, 'backend': backend,
+    })
+    try:
+        import anthropic as _anthropic
+        if backend == 'lmstudio':
+            client = _anthropic.Anthropic(
+                base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
+            model = 'qwen/qwen3.6-35b-a3b'
+        else:
+            client = _anthropic.Anthropic(api_key=api_key)
+            model  = 'claude-haiku-4-5-20251001'
+
+        index = []
+        if os.path.exists(INDEX_FILE):
+            with open(INDEX_FILE) as f:
+                index = json.load(f)
+        raw_entries = [e for e in index if 'raw' in (e.get('tags') or []) and not e.get('deleted')]
+        _batch_status['total'] = len(raw_entries)
+        _log_info(f'batch summary start: backend={backend} entries={len(raw_entries)}')
+
+        SUMMARY_MARKER = '## 2層: 要約'
+        LAYER3_MARKER  = '## 3層:'
+
+        for idx in raw_entries:
+            entry_id = idx['id']
+            title    = idx.get('title', '（無題）')
+            path     = f'{DATA_DIR}/{entry_id}.json'
+            if not os.path.exists(path):
+                _batch_status['errors'] += 1
+                continue
+            with open(path) as f:
+                entry = json.load(f)
+            body = entry.get('body', '')
+            if SUMMARY_MARKER in body and LAYER3_MARKER in body:
+                _batch_status['skipped'] += 1
+                continue
+            if SUMMARY_MARKER in body:
+                body = body[:body.index(SUMMARY_MARKER)].rstrip()
+            try:
+                msg = client.messages.create(
+                    model=model, max_tokens=400,
+                    messages=[{'role': 'user', 'content':
+                        f'以下はClaude.aiの会話タイトルです。タイトルだけから推測できる範囲で要約と圧縮表現を生成してください。\n\n会話タイトル: {title}\n\n以下の形式で出力してください（他の説明文は不要）:\n\n## 2層: 要約\n（会話の目的・内容・結論を2〜3文で推測。"〜についての会話" という形式でよい）\n\n## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）'
+                    }]
+                )
+                layers   = msg.content[0].text.strip()
+                new_body = (body.strip() + '\n\n' + layers).strip() if body.strip() else layers
+                tags     = [t for t in (entry.get('tags') or []) if t != 'raw']
+                if 'summarized' not in tags:
+                    tags.append('summarized')
+                entry['body']       = new_body
+                entry['tags']       = tags
+                entry['updated_at'] = now_jst()
+                with open(path, 'w') as ef:
+                    json.dump(entry, ef, ensure_ascii=False, indent=2)
+                _batch_status['processed'] += 1
+                time.sleep(0.5)
+            except Exception as e:
+                _log_error(f'batch summary error {entry_id}: {e}')
+                _batch_status['errors'] += 1
+
+        rebuild_index()
+    except Exception as e:
+        _log_error(f'batch summary fatal: {e}')
+    finally:
+        _batch_status['running']     = False
+        _batch_status['finished_at'] = now_jst()
+        _log_info(f'batch summary done: processed={_batch_status["processed"]} skipped={_batch_status["skipped"]} errors={_batch_status["errors"]}')
+
+
+@app.route('/api/batch/status')
+@require_auth
+def api_batch_status():
+    return jsonify(_batch_status)
+
+
+@app.route('/api/batch/start', methods=['POST'])
+@require_auth
+def api_batch_start():
+    if _batch_status.get('running'):
+        return jsonify({'error': 'already running'}), 409
+    data     = request.get_json() or {}
+    backend  = data.get('backend', 'anthropic')
+    api_key  = data.get('api_key', '') or os.environ.get('ANTHROPIC_API_KEY', '')
+    lm_host  = data.get('lm_host', os.environ.get('LM_STUDIO_HOST', '192.168.10.32'))
+    lm_port  = data.get('lm_port', os.environ.get('LM_STUDIO_PORT', '1234'))
+    if backend == 'anthropic' and not api_key:
+        return jsonify({'error': 'ANTHROPIC_API_KEY required'}), 400
+    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port), daemon=True)
+    t.start()
+    return jsonify({'started': True, 'backend': backend})
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  OAuth 2.1 + Dynamic Client Registration
@@ -1379,7 +1502,7 @@ def _process_mcp_message(msg):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.2.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.3.0"},
             "instructions": "セッション開始時に必ず artifacts_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }
@@ -1548,6 +1671,6 @@ def mcp_messages():
 if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-    _log_info(f'mio-memory v3.0 starting (log_level={_LOG_LEVEL})')
+    _log_info(f'mio-memory v3.3 starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
     app.run(host='0.0.0.0', port=5002, debug=False)
