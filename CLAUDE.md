@@ -72,6 +72,25 @@ All Python wheels are vendored in `memory/wheels/` so the Docker build works wit
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowed Origins; empty skips check |
 
+## 澪コードの定型フロー
+
+### 起動時
+1. `handoff_claude_code.md` を読む
+2. 未完了の依頼を上から順に処理する
+
+### 作業時のルール
+- コード変更と関連ドキュメント更新は**必ずセット**で行う
+- 更新対象ドキュメントの目安：README.md / design.md / setup.md / 各機能仕様書
+- 影響範囲が不明な場合は README.md 最低限更新する
+
+### 完了時
+1. `memory_write` でチャット宛に完了報告する
+   - タグ必須: `チャット宛`
+   - タイトル形式: `【チャット宛】handoff No.XX 完了報告（内容）`
+   - 本文: 実装内容の要約・コミットID・デプロイ手順（必要な場合）
+2. `handoff_claude_code.md` を更新（完了チェックをつける）
+3. コミット・push する
+
 ## ドキュメント連動ルール
 
 コードを修正・追加した際は、以下のドキュメントを必ず確認し、内容が古ければ更新すること。

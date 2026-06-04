@@ -509,3 +509,59 @@ IDをURLパスで指定するよりシンプルなインターフェース。
 
 `allEntries` に検索結果またはインデックスを格納し、`renderCards()` がタグフィルタを適用する。
 `searchKeyword` 変数と300ms `setTimeout` デバウンスで制御。
+
+---
+
+## 12. 会話内アーティファクト抽出・Filesタブ
+
+### 概要
+
+ZIPインポート時に `chat_messages` の `tool_use` ブロックを走査し、
+Claude が会話中に生成したファイルを自動抽出・保存する。
+
+### 対象ブロック
+
+| tool_use.name | 抽出フィールド | ファイル名決定 |
+|--------------|--------------|--------------|
+| `create_file` | `input.path`, `input.file_text` | `basename(path)` |
+| `artifacts`   | `input.content`, `input.id`, `input.language`, `input.type` | `{id}{ext}`（言語から決定） |
+
+`create_file` で `/home/claude/` 配下（`/mnt/user-data/outputs/` 以外）は中間ファイルとして除外。
+
+### 保存先
+
+```
+/data/conv_artifacts/
+├── _index.json               全ファイルのインデックス
+└── {conv_uuid}/
+    ├── {filename1}
+    └── {filename2}
+```
+
+インデックスフィールド: `conv_uuid`, `conv_name`, `conv_date`, `filename`, `size`, `path`
+
+重複スキップ: `(conv_uuid, filename)` の組み合わせでユニーク管理。
+
+### REST APIエンドポイント
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| `GET` | `/api/conv-artifacts` | 一覧取得（`?q=` でキーワード絞り込み） |
+| `GET` | `/api/conv-artifacts/<uuid>/<filename>` | ファイル内容取得 |
+
+### ZIPインポートレスポンス拡張
+
+```json
+{
+  "imported": 10,
+  "skipped": 5,
+  "conversations_saved": 10,
+  "artifacts_extracted": 42
+}
+```
+
+### admin.html Files タブ
+
+- キーワード検索（ファイル名・会話名、300msデバウンス）
+- 一覧: ファイル名 / 会話名 / 日付 / サイズ
+- クリックでモーダルプレビュー（`.md` はマークダウンレンダリング）
