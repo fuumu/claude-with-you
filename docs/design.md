@@ -265,18 +265,119 @@ data/artifacts/
 
 ## 8. バッチ処理（4階層生成）
 
-### スクリプト
+### 概要
 
-`scripts/generate_summary_layers.py`
+2層（要約）・3層（シンボリック圧縮）の生成には2つの実行方法がある。
 
-### 動作概要
+| 方法 | 説明 | 推奨場面 |
+|------|------|---------|
+| **自動実行**（v3.3〜） | ZIPインポート後にサーバー内スレッドで自動起動 | `ANTHROPIC_API_KEY` 設定済みの場合 |
+| **手動実行（CLI）** | `scripts/generate_summary_layers.py` を直接実行 | LMStudio / コスト制御 / dry-run |
+
+---
+
+### 自動実行（ZIPインポート後）
+
+`POST /import` が完了した際、以下の条件を両方満たす場合にバックグラウンドスレッドで起動する：
+
+- `ANTHROPIC_API_KEY` 環境変数が設定されている
+- 既に別のバッチが実行中でない（`_batch_status['running'] == False`）
+
+起動バックエンドは `anthropic`、モデルは `claude-haiku-4-5-20251001`。
+
+**実装箇所：** `import_zip()` 末尾（`memory/app/main.py`）
+
+```python
+auto_key = os.environ.get('ANTHROPIC_API_KEY', '')
+if auto_key and not _batch_status.get('running'):
+    t = threading.Thread(target=_run_summary_batch, args=(auto_key,), daemon=True)
+    t.start()
+```
+
+---
+
+### バッチ状態管理（`_batch_status`）
+
+グローバル辞書でスレッドの進捗を管理する。Flaskはシングルプロセスのためスレッドセーフ性を要求しない（GIL保護）。
+
+```python
+_batch_status = {
+    'running': False,      # 実行中フラグ
+    'total': 0,            # 対象エントリ総数
+    'processed': 0,        # 処理完了件数
+    'errors': 0,           # エラー件数
+    'skipped': 0,          # スキップ件数（既に2・3層あり）
+    'started_at': None,    # 開始時刻（JST ISO文字列）
+    'finished_at': None,   # 完了時刻
+    'backend': None,       # 使用バックエンド
+}
+```
+
+---
+
+### APIエンドポイント
+
+#### GET /api/batch/status
+
+認証必要。`_batch_status` をそのままJSONで返す。
+
+```json
+{
+  "running": false,
+  "total": 120,
+  "processed": 118,
+  "errors": 1,
+  "skipped": 1,
+  "started_at": "2026-06-04T18:00:00+09:00",
+  "finished_at": "2026-06-04T18:15:32+09:00",
+  "backend": "anthropic"
+}
+```
+
+#### POST /api/batch/start
+
+認証必要。手動でバッチを起動する。
+
+リクエストBody（すべて省略可）：
+```json
+{
+  "backend": "lmstudio",
+  "api_key": "...",
+  "lm_host": "192.168.10.32",
+  "lm_port": "1234"
+}
+```
+
+- `backend` 省略時は `"anthropic"`
+- `backend: "anthropic"` の場合、`api_key` または `ANTHROPIC_API_KEY` 環境変数が必須
+- 既に実行中の場合は `409 Conflict` を返す
+
+レスポンス例：
+```json
+{ "started": true, "backend": "lmstudio" }
+```
+
+---
+
+### admin.html Importタブ 進捗パネル
+
+バッチ起動後、admin.html の Import タブに進捗パネルが表示される。
+
+- **自動更新：** ZIPインポート完了 1.5秒後に `GET /api/batch/status` ポーリング開始
+- **手動トリガー：** 「LMStudioで実行」ボタン → `POST /api/batch/start {backend:"lmstudio"}`
+- **ポーリング間隔：** 2秒、完了時（`running: false`）に自動停止
+- **表示内容：** プログレスバー（%）+ 「処理: X件 / スキップ: Y件 / エラー: Z件 (合計: N件)」
+
+---
+
+### 動作概要（共通）
 
 ```
 GET /api/memory/index
   → tags に "raw" を含むエントリを抽出
-  → 各エントリの body に SUMMARY_MARKER がなければ未処理と判定
+  → body に "## 2層: 要約" と "## 3層:" 両方なければ未処理と判定
 
-Claude API (claude-haiku-4-5) で生成:
+anthropic / LMStudio API で生成:
   入力: 会話タイトル
   出力:
     ## 2層: 要約
@@ -284,7 +385,7 @@ Claude API (claude-haiku-4-5) で生成:
     ## 3層: シンボリック圧縮
     （15文字以内のキーワード）
 
-PATCH /api/memory/<id>
+エントリ更新（直接ファイル書き込み or PATCH /api/memory/<id>）:
   body に生成テキストを追記
   tags から "raw" を除去し "summarized" を追加
 ```
@@ -294,12 +395,19 @@ PATCH /api/memory/<id>
 | 項目 | 値 |
 |------|----|
 | 対象タグ | `raw` |
-| スキップ条件 | body に `## 2層: 要約` が既に含まれる |
-| 使用モデル | `claude-haiku-4-5-20251001`（コスト最小化） |
+| スキップ条件 | body に `## 2層: 要約` と `## 3層:` 両方が含まれる |
+| 使用モデル（anthropic） | `claude-haiku-4-5-20251001` |
+| 使用モデル（lmstudio） | `qwen/qwen3.6-35b-a3b` |
 | レート制限 | 処理間 0.5秒スリープ |
 | 冪等性 | マーカーによる処理済みチェックで担保 |
 
-### オプション
+---
+
+### CLIスクリプト（手動実行）
+
+`scripts/generate_summary_layers.py` — コンテナ外から直接実行する場合に使用。
+
+**オプション：**
 
 ```
 --backend [anthropic|lmstudio]  使用バックエンド（デフォルト: anthropic）
@@ -307,29 +415,22 @@ PATCH /api/memory/<id>
 --dry-run                       対象件数確認のみ（書き込みなし）
 ```
 
-| バックエンド | デフォルトモデル |
-|-------------|----------------|
-| anthropic | `claude-haiku-4-5-20251001` |
-| lmstudio | `qwen/qwen3.6-35b-a3b` |
+| バックエンド | デフォルトモデル | 他の候補 |
+|-------------|----------------|---------|
+| anthropic | `claude-haiku-4-5-20251001` | — |
+| lmstudio | `qwen/qwen3.6-35b-a3b` | `google/gemma-4-26b-a4b`、`liquid/lfm2-24b-a2b` |
 
-lmstudio選択時の他のモデル候補：`google/gemma-4-26b-a4b`、`liquid/lfm2-24b-a2b`
-
-### 必要な環境変数
+**必要な環境変数（CLIスクリプト用）：**
 
 | 変数 | 用途 | デフォルト |
 |------|------|-----------|
 | `MIO_API_TOKEN` | mio-memory Bearer認証 | （必須） |
-| `ANTHROPIC_API_KEY` | Claude API認証（anthropicバックエンド使用時） | （必須） |
+| `ANTHROPIC_API_KEY` | Claude API認証（anthropicバックエンド） | （必須） |
 | `MIO_SERVER_URL` | mio-memoryサーバーURL | `http://localhost:5002` |
-| `LM_STUDIO_HOST` | LMStudioのIPアドレス（lmstudioバックエンド使用時） | `192.168.10.32` |
-| `LM_STUDIO_PORT` | LMStudioのポート | `1234` |
+| `LM_STUDIO_HOST` | LMStudioホスト（lmstudioバックエンド） | `192.168.10.32` |
+| `LM_STUDIO_PORT` | LMStudioポート | `1234` |
 
-`MIO_SERVER_URL` はコンテナ内実行を前提に `http://localhost:5002` がデフォルト。
-コンテナ外から実行する場合は `.env` に `MIO_SERVER_URL=https://memory.mio.runabook.synology.me` を追加する。
-
-### 実行タイミング・コマンド例
-
-ZIPインポート後に手動で実行する。
+`MIO_SERVER_URL` はコンテナ内実行前提のデフォルト。コンテナ外実行時は `.env` に `MIO_SERVER_URL=https://memory.mio.runabook.synology.me` を追加。
 
 **コンテナ内から実行（推奨）：**
 
@@ -339,9 +440,6 @@ docker exec -it memory python /app/scripts/generate_summary_layers.py --dry-run
 
 # LMStudioで実行
 docker exec -it memory python /app/scripts/generate_summary_layers.py --backend lmstudio
-
-# モデルを明示指定
-docker exec -it memory python /app/scripts/generate_summary_layers.py --backend lmstudio --model google/gemma-4-26b-a4b
 
 # Anthropicで実行
 docker exec -it memory python /app/scripts/generate_summary_layers.py --backend anthropic
@@ -447,8 +545,8 @@ conversation_share(uuid: str)
 | 記憶操作 | 5 | memory_read_index, memory_read, memory_write, memory_upsert, memory_search |
 | 記憶シェア | 1 | memory_share |
 | アーティファクト | 3 | artifacts_save, artifacts_read, artifacts_list |
-| 会話 | 2 | conversation_search, conversation_share |
-| **合計** | **11** | |
+| 会話 | 3 | conversation_search, conversation_share, conversation_read |
+| **合計** | **12** | |
 
 ---
 
@@ -560,8 +658,19 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 }
 ```
 
-### admin.html Files タブ
+### admin.html Files タブ（v3.3）
 
+**フィルタ・ソート：**
 - キーワード検索（ファイル名・会話名、300msデバウンス）
-- 一覧: ファイル名 / 会話名 / 日付 / サイズ
-- クリックでモーダルプレビュー（`.md` はマークダウンレンダリング）
+- 拡張子フィルタピル（filesDataから動的生成、クリック絞り込み）
+- 日付範囲（from/to ピッカー、クライアント側適用）
+- ソートヘッダー（ファイル名・会話名・日付・サイズ）：クリックで昇降順切り替え（▼▲表示）
+
+**プレビュー（クリックでモーダル表示）：**
+- `.md` → marked.js マークダウンレンダリング（リンクは `target="_blank"` で開く）
+- `.html` / `.htm` → `<iframe srcdoc sandbox="allow-scripts">` でサンドボックスプレビュー
+- `.py` / `.js` / `.jsx` / `.ts` / `.css` / `.sh` / `.json` / `.yaml` / `.sql` → Prism.js シンタックスハイライト（`prism-tomorrow` テーマ）
+- その他 → プレーンテキスト表示
+
+**CDN依存：**
+- Prism.js 1.29.0（prism-tomorrow テーマ + python / jsx / bash コンポーネント）
