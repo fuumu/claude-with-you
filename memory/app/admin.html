@@ -296,6 +296,27 @@
     /* ── Prism overrides ── */
     pre[class*="language-"] { border-radius: 6px; margin: 0; font-size: .82rem; }
     code[class*="language-"] { white-space: pre-wrap; word-break: break-word; }
+
+    /* ── Inbox ── */
+    .inbox-toolbar { display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap; }
+    .inbox-filter-btn { background:none; border:1px solid #2a3a5a; border-radius:4px; color:#7a8a9a; padding:.25rem .65rem; font-size:.8rem; cursor:pointer; }
+    .inbox-filter-btn.active { border-color:#7ec8e3; color:#7ec8e3; }
+    .inbox-list { display:flex; flex-direction:column; gap:.5rem; }
+    .inbox-item { background:#1a1a2e; border:1px solid #2a3a5a; border-radius:8px; padding:.75rem 1rem; cursor:pointer; transition:border-color .15s; }
+    .inbox-item:hover { border-color:#7ec8e3; }
+    .inbox-item.unread { border-left:3px solid #7ec8e3; }
+    .inbox-item.persistent { border-left:3px solid #f1c40f; }
+    .inbox-item-header { display:flex; align-items:center; gap:.5rem; margin-bottom:.25rem; }
+    .inbox-item-title { font-size:.9rem; color:#c8d8e8; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .inbox-badge-unread { background:#7ec8e3; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
+    .inbox-badge-persistent { background:#f1c40f; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
+    .inbox-item-meta { font-size:.75rem; color:#5a6a7a; }
+    .inbox-detail { background:#1a1a2e; border:1px solid #2a3a5a; border-radius:8px; padding:1.25rem; margin-top:1rem; display:none; }
+    .inbox-detail.open { display:block; }
+    .inbox-detail-title { font-size:1rem; color:#c8d8e8; margin-bottom:.5rem; }
+    .inbox-detail-meta { font-size:.78rem; color:#5a6a7a; margin-bottom:1rem; }
+    .inbox-detail-body { font-size:.88rem; color:#b0c0d0; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
+    .inbox-empty { color:#5a6a7a; font-size:.88rem; text-align:center; padding:2rem 0; }
   </style>
 </head>
 <body>
@@ -321,6 +342,7 @@
   <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
   <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
   <button class="tab-btn" onclick="switchTab('files', this)">Files</button>
+  <button class="tab-btn" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
   <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
 </div>
 
@@ -424,6 +446,23 @@
   <div class="files-list" id="files-list"></div>
 </div>
 
+<!-- Inbox tab -->
+<div class="tab-panel" id="tab-inbox">
+  <div class="inbox-toolbar">
+    <button class="btn btn-secondary" onclick="loadInbox()" style="padding:.25rem .65rem;font-size:.8rem">再読み込み</button>
+    <button class="inbox-filter-btn active" id="inbox-filter-all" onclick="setInboxFilter('all', this)">すべて</button>
+    <button class="inbox-filter-btn" id="inbox-filter-chat" onclick="setInboxFilter('chat', this)">→ chat</button>
+    <button class="inbox-filter-btn" id="inbox-filter-code" onclick="setInboxFilter('code', this)">→ code</button>
+    <span id="inbox-count" style="font-size:.8rem;color:#5a6a7a;margin-left:auto"></span>
+  </div>
+  <div class="inbox-list" id="inbox-list"></div>
+  <div class="inbox-detail" id="inbox-detail">
+    <div class="inbox-detail-title" id="inbox-detail-title"></div>
+    <div class="inbox-detail-meta" id="inbox-detail-meta"></div>
+    <div class="inbox-detail-body" id="inbox-detail-body"></div>
+  </div>
+</div>
+
 <!-- Logs tab -->
 <div class="tab-panel" id="tab-logs" style="padding:0; height: calc(100vh - 88px); overflow: hidden;">
   <iframe id="logs-frame" src="" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>
@@ -466,6 +505,15 @@ function saveToken() {
   localStorage.setItem('mio_token', t);
   document.getElementById('auth-overlay').style.display = 'none';
   loadMemory();
+  loadInboxBadge();
+}
+
+async function loadInboxBadge() {
+  try {
+    const res = await apiFetch('/api/inbox?full=true');
+    _inboxData = (await res.json()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    updateInboxBadge();
+  } catch(e) {}
 }
 
 function resetToken() {
@@ -499,6 +547,7 @@ function switchTab(name, btn) {
   if (name === 'import')    { loadImportStatus(); pollBatchStatus(); }
   if (name === 'oplog')     loadOplog();
   if (name === 'files')     loadFiles();
+  if (name === 'inbox')     loadInbox();
   if (name === 'logs') {
     const frame = document.getElementById('logs-frame');
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
@@ -789,6 +838,89 @@ async function startBatch() {
   } catch { showToast('通信エラー'); }
 }
 
+// ── Inbox ─────────────────────────────────────────────────────────────
+let _inboxFilter = 'all';
+let _inboxData   = [];
+
+function setInboxFilter(filter, btn) {
+  _inboxFilter = filter;
+  document.querySelectorAll('.inbox-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderInbox();
+}
+
+async function loadInbox() {
+  const list = document.getElementById('inbox-list');
+  list.innerHTML = '<div class="inbox-empty">読み込み中...</div>';
+  document.getElementById('inbox-detail').classList.remove('open');
+  try {
+    const res  = await apiFetch('/api/inbox?full=true');
+    _inboxData = (await res.json()).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    updateInboxBadge();
+    renderInbox();
+  } catch(e) {
+    if (e.message !== '401') list.innerHTML = '<div class="inbox-empty">取得失敗</div>';
+  }
+}
+
+function updateInboxBadge() {
+  const unread = _inboxData.filter(m => !m.read || m.persistent).length;
+  const badge  = document.getElementById('inbox-badge');
+  if (unread > 0) { badge.textContent = unread; badge.style.display = 'inline'; }
+  else             { badge.style.display = 'none'; }
+}
+
+function renderInbox() {
+  const list    = document.getElementById('inbox-list');
+  const filtered = _inboxFilter === 'all' ? _inboxData
+    : _inboxData.filter(m => m.to === _inboxFilter);
+  document.getElementById('inbox-count').textContent = `${filtered.length}件`;
+  if (!filtered.length) { list.innerHTML = '<div class="inbox-empty">メッセージなし</div>'; return; }
+  list.innerHTML = filtered.map(m => {
+    const ts   = (m.created_at || '').slice(0, 19).replace('T', ' ');
+    const cls  = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
+    const badge = m.persistent
+      ? '<span class="inbox-badge-persistent">常駐</span>'
+      : (!m.read ? '<span class="inbox-badge-unread">未読</span>' : '');
+    return `
+      <div class="inbox-item ${cls}" onclick="openInboxMessage('${esc(m.id)}')">
+        <div class="inbox-item-header">
+          <span class="inbox-item-title">${esc(m.title)}</span>${badge}
+        </div>
+        <div class="inbox-item-meta">${esc(m.from || '?')} → ${esc(m.to || '?')} ・ ${esc(ts)}</div>
+      </div>`;
+  }).join('');
+}
+
+async function openInboxMessage(id) {
+  const detail = document.getElementById('inbox-detail');
+  const msg    = _inboxData.find(m => m.id === id);
+  if (!msg) return;
+
+  // 既読マーク（persistent 以外）
+  if (!msg.read && !msg.persistent) {
+    try {
+      await apiFetch(`/api/inbox/${id}/read`, { method: 'PATCH' });
+      msg.read = true;
+      updateInboxBadge();
+      renderInbox();
+    } catch(e) {}
+  }
+
+  const ts  = (msg.created_at || '').slice(0, 19).replace('T', ' ');
+  const badges = [
+    msg.persistent ? '<span class="inbox-badge-persistent" style="font-size:.78rem">常駐</span>' : '',
+    !msg.read      ? '<span class="inbox-badge-unread"    style="font-size:.78rem">未読</span>' : '',
+  ].filter(Boolean).join(' ');
+
+  document.getElementById('inbox-detail-title').innerHTML = esc(msg.title) + (badges ? ' ' + badges : '');
+  document.getElementById('inbox-detail-meta').textContent =
+    `${msg.from || '?'} → ${msg.to || '?'} ・ ${ts}`;
+  document.getElementById('inbox-detail-body').textContent = msg.body || '';
+  detail.classList.add('open');
+  detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 // ── Files ─────────────────────────────────────────────────────────────
 let filesData = [];
 let filesTimer = null;
@@ -1043,6 +1175,7 @@ function esc(s) {
     document.getElementById('auth-overlay').style.display = 'none';
     loadMemory();
     loadImportStatus();
+    loadInboxBadge();
   }
 })();
 </script>

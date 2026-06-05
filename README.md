@@ -6,65 +6,73 @@
 
 Claude doesn't remember yesterday's conversations. `claude-with-you` solves this by giving Claude a persistent memory store it can read and write across sessions — running on your own hardware, under your control.
 
-Built around the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), it works with both **Claude.ai** (via OAuth) and **Claude Code** (via Bearer token). All data stays on your NAS or server.
+Built around the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), it works with both **Claude.ai** and **Claude Code**. All data stays on your NAS or server.
 
 ---
 
 ## Quick Start
 
-**Requirements:** Docker, a Synology NAS or any Linux server, Claude Code CLI
-
-### 1. Configure environment
+**Requirements:** Docker, a server with HTTPS (Synology NAS, VPS, etc.), Claude Code CLI
 
 ```bash
-cp .env_sample .env
-# Edit .env — set MIO_API_TOKEN to a secret of your choice
-```
+# 1. Clone and configure
+git clone https://github.com/fuumu/claude-with-you.git
+cd claude-with-you
+cp .env_sample .env        # then edit MIO_API_TOKEN
 
-### 2. Start the server
-
-```bash
+# 2. Start
 docker compose up -d
-```
 
-### 3. Verify
-
-```bash
+# 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.5","mcp_tool_count":15,...}
-```
+# {"status":"ok","version":"3.5","mcp_tool_count":15}
 
-### 4. Connect Claude Code
-
-```powershell
+# 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
+# An OAuth page opens — enter your MIO_API_TOKEN to authorize
 ```
 
-An OAuth login page opens — enter your `MIO_API_TOKEN` to authorize.
-
-### 5. Connect Claude.ai
-
-In Claude.ai settings → Connectors → Add custom MCP server → enter `https://your-domain/mcp`.
+For Claude.ai: Settings → Connectors → Add custom MCP → `https://your-domain/mcp`
 
 ---
 
-## What it does
+## Use Cases
 
-### Memory — store and recall anything
+### 1. Developer externalizes their thinking
 
-Claude can write notes, decisions, preferences, and facts to your server and retrieve them in future sessions. Memory entries are tagged JSON files, searchable by keyword.
+```
+You notice something important mid-session
+→ memory_write(title="...", body="...", tags=["idea"])
+→ Next session: memory_search(q="idea") brings it back
+→ No more "I had that insight last week but can't find it"
+```
 
-### Artifacts — versioned file storage
+### 2. An AI that remembers you
 
-Save and version markdown files, scripts, or any text content. `core.md` (Claude's identity file) lives here. Every save creates a new version; the latest is always accessible by name.
+```
+Claude + external memory
+→ Knows your name, preferences, ongoing projects
+→ "Last time we discussed X" actually works
+→ Relationship and context survive session boundaries
+```
 
-### Conversations — browse past chats
+### 3. Team shares a knowledge base
 
-Import your Claude.ai export ZIP and browse all past conversations. Search by keyword, read full conversation text, or share a conversation via a 24-hour link.
+```
+Multiple users → same memory server
+→ Shared decisions, documentation, conventions
+→ "What did we decide about auth?" → memory_search
+→ New team members onboard faster
+```
 
-### Inbox — messages between sessions
+### 4. Long-term knowledge accumulation
 
-Claude Code and Claude.ai can leave messages for each other in a lightweight inbox. Task handoffs, completion reports, and standing reminders (`persistent=true`) all flow through here.
+```
+Export ZIP from Claude.ai → import into memory server
+→ All past conversations searchable and readable
+→ "How was I thinking about this in May?" → conversation_search
+→ Your thinking history, preserved and queryable
+```
 
 ---
 
@@ -79,130 +87,270 @@ Claude.ai / Claude Code
   │  Docker: memory container        │
   │  Flask app — memory/app/main.py  │
   │                                  │
-  │  /mcp          MCP Streamable    │
-  │  /api/memory/* Memory REST API   │
-  │  /api/artifacts/* File REST API  │
-  │  /api/conversations/* Chat API   │
-  │  /api/inbox/*  Inbox REST API    │
-  │  /import       ZIP import        │
-  │  /admin.html   Web UI            │
-  │  /logs.html    Conversation view │
-  │  /oauth/*      OAuth 2.1         │
+  │  ┌─── MCP API Layer ───────────┐ │
+  │  │  /mcp   MCP Streamable HTTP │ │
+  │  │  /api/* REST API endpoints  │ │
+  │  │  /oauth/* OAuth 2.1         │ │
+  │  └────────────────────────────-┘ │
+  │  ┌─── Web UI Layer ────────────┐ │
+  │  │  /admin.html  Admin panel   │ │
+  │  │  /logs.html   Chat viewer   │ │
+  │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
-  ┌──────────────▼───────────────────┐
-  │  /data/                          │
-  │  ├── memory/*.json   entries     │
-  │  ├── artifacts/      files       │
-  │  ├── conversations/  chat logs   │
-  │  ├── inbox/          messages    │
-  │  ├── index.json      index       │
-  │  └── oplog.json      audit log   │
-  └──────────────────────────────────┘
+  /data/  memory/ · artifacts/ · conversations/ · inbox/
 ```
 
-**Single-file implementation** — all logic lives in `memory/app/main.py`. Three layers in one file:
-
-1. **REST API** (`/api/*`) — CRUD for memory, artifacts, conversations, inbox
-2. **OAuth 2.1** — Dynamic Client Registration + PKCE, so Claude.ai can connect without a pre-shared token
-3. **MCP Streamable HTTP** — implements the MCP 2025-11-25 spec
+Single-file implementation — all logic in `memory/app/main.py`.
 
 ---
 
-## MCP Tools (v3.5 — 15 tools)
+## Section A — MCP API Layer
 
-### Memory (6 tools)
+Claude calls these tools directly. All responses include `server_time` (JST).
 
-| Tool | Description | Required args |
-|------|-------------|---------------|
-| `memory_read_index` | List all memory entry titles and tags | — |
-| `memory_read` | Read a specific entry by ID | `id` |
-| `memory_write` | Create a new memory entry | `title`, `body` |
-| `memory_upsert` | Write to a fixed ID (create or overwrite) | `id`, `title`, `body` |
-| `memory_search` | Keyword search with pagination | `q` |
-| `memory_share` | Generate a 24h shareable URL | `id` |
+### Memory tools (6)
 
-`memory_search` returns `{results, total, has_more}` and supports `limit` (default 10) and `offset`.
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `memory_read_index` | List all entry titles and tags | — |
+| `memory_read` | Read one entry by ID | `id` |
+| `memory_write` | Create a new entry | `title`, `body`, `tags`, `importance` |
+| `memory_upsert` | Overwrite a fixed-ID entry | `id`, `title`, `body` |
+| `memory_search` | Full-text search with pagination | `q`, `limit` (default 10), `offset` |
+| `memory_share` | Generate 24h shareable URL | `id` |
 
-### Artifacts (3 tools)
+**Example — Claude saves a decision:**
+```
+memory_write(
+  title="Auth approach decision",
+  body="We chose JWT over sessions because...",
+  tags=["architecture", "auth"],
+  importance="high"
+)
+```
 
-| Tool | Description | Required args |
-|------|-------------|---------------|
-| `artifacts_save` | Save a file with version history | `name`, `content` |
-| `artifacts_read` | Read latest or specific version | `name` |
-| `artifacts_list` | List all saved artifacts | — |
+**Example — Claude searches later:**
+```
+memory_search(q="auth") 
+→ {"results": [...], "total": 3, "has_more": false, "server_time": "..."}
+```
 
-`artifacts_save` accepts an optional `source_conversation_uuid` to link the file to its origin conversation.  
+### Artifact tools (3)
+
+Versioned file storage. Every save creates a new version; the latest is always accessible by name.
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `artifacts_save` | Save a file (new version) | `name`, `content`, `source_conversation_uuid` |
+| `artifacts_read` | Read latest or specific version | `name`, `version` |
+| `artifacts_list` | List all files | — |
+
 `artifacts_read` falls back to conversation-extracted files if not found in the main store.
 
-### Conversations (3 tools)
+**Example — save a config file:**
+```
+artifacts_save(name="config.md", content="# Config\n...", source_conversation_uuid="abc-123")
+→ {"name": "config.md", "version": 2, "server_time": "..."}
+```
 
-| Tool | Description | Required args |
-|------|-------------|---------------|
-| `conversation_search` | Search past conversation titles | `q` |
+### Conversation tools (3)
+
+Browse and share past conversations imported from Claude.ai export ZIPs.
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `conversation_search` | Search conversation titles | `q`, `limit` |
 | `conversation_read` | Read full conversation text | `uuid` |
-| `conversation_share` | Generate a 24h shareable URL | `uuid` |
+| `conversation_share` | Generate 24h shareable URL | `uuid` |
 
-### Inbox (3 tools)
+**Example — find a past discussion:**
+```
+conversation_search(q="authentication") 
+→ [{uuid: "abc...", title: "Auth design session", message_count: 34}, ...]
 
-| Tool | Description | Required args |
-|------|-------------|---------------|
-| `inbox_check` | Get unread count and IDs (~50 tokens) | — |
-| `inbox_read` | Fetch and mark a message as read | `id` |
-| `inbox_post` | Send a message | `to`, `title`, `body` |
+conversation_read(uuid="abc...")
+→ {"text": "[human] Let's talk about auth...\n[assistant] ...", "server_time": "..."}
+```
 
-`inbox_check` accepts an optional `to` filter (`"chat"` or `"code"`).  
-`inbox_post` accepts `persistent=true` for standing messages that are never marked as read.
+### Inbox tools (3)
 
-All tool responses include a `server_time` field (JST ISO 8601).
+Lightweight message passing between Claude.ai sessions and Claude Code sessions.
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `inbox_check` | Get unread count + IDs (~50 tokens) | `to` (`"chat"` or `"code"`) |
+| `inbox_read` | Fetch a message and mark as read | `id` |
+| `inbox_post` | Send a message | `to`, `title`, `body`, `persistent` |
+
+`persistent=true` creates a standing message that is never marked as read — useful for reminders that should appear every session.
+
+**Example — Claude Code reports completion to Claude.ai:**
+```
+inbox_post(to="chat", title="Deploy complete", body="v3.5 is live. Commit: abc123")
+
+# Claude.ai checks later:
+inbox_check(to="chat") → {"count": 1, "ids": ["inbox_..."], "server_time": "..."}
+inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
+```
+
+### REST API reference
+
+All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/memory/index` | List all entries |
+| GET | `/api/memory/search?q=...` | Search entries |
+| GET | `/api/memory/<id>` | Get one entry |
+| POST | `/api/memory` | Create entry |
+| PATCH | `/api/memory/<id>` | Update entry |
+| DELETE | `/api/memory/<id>` | Soft-delete entry |
+| GET | `/api/artifacts` | List artifacts |
+| GET | `/api/artifacts/<name>` | Read artifact |
+| POST | `/api/artifacts/<name>` | Save artifact |
+| GET | `/api/conversations/` | Search conversations |
+| GET | `/api/conversations/<uuid>` | Get conversation |
+| GET | `/api/inbox` | List inbox messages |
+| POST | `/api/inbox` | Post a message |
+| PATCH | `/api/inbox/<id>/read` | Mark as read |
+| POST | `/import` | Import ZIP file |
+| GET | `/health` | Health check |
 
 ---
 
-## Web UI (`/admin.html`)
+## Section B — Web UI Layer
 
-The built-in admin panel has six tabs:
+Access at `https://your-domain/admin.html` — login with your API token.
+
+### Admin panel (`/admin.html`)
 
 | Tab | What you can do |
 |-----|-----------------|
-| **Memory** | Browse, search, and edit memory entries |
-| **Artifacts** | View and read versioned files |
-| **Import** | Upload a Claude.ai export ZIP; overwrite mode available |
+| **Memory** | Browse, search, read, and edit memory entries |
+| **Artifacts** | View versioned files and their content |
+| **Import** | Upload Claude.ai export ZIP; overwrite mode for re-processing |
 | **Files** | Browse files extracted from conversation tool-use blocks |
-| **Logs** | Search and read past conversations |
+| **Inbox** | Read messages between Claude Code and Claude.ai sessions |
+| **Logs** | Search and read full conversation history |
 | **Oplog** | Audit log of all create/update/delete operations |
 
-Access at `https://your-domain/admin.html` with your API token.
+### Conversation viewer (`/logs.html`)
+
+- Auto-loads conversations from the server
+- Filter by keyword, date range, minimum message count
+- Renders markdown with `marked.js` + `DOMPurify`
+- Collapsible `thinking` / `tool_use` / `tool_result` blocks
+- Font size toggle (small / medium / large)
+- Shareable via `?token=` URL (no login required)
+
+**Sharing a conversation:**
+```
+# Via MCP tool:
+conversation_share(uuid="abc-123")
+→ {"url": "https://your-domain/logs.html?token=xyz", "expires_at": "..."}
+
+# Anyone with the link can read the conversation for 24 hours
+```
 
 ---
 
-## Data Import
+## Section C — Data Import & Management
 
-Export your Claude.ai data (Settings → Export), then upload the ZIP via the admin panel or API:
+### Import a Claude.ai export
+
+1. In Claude.ai: Settings → Export Data → download the ZIP
+2. Upload via admin panel (Import tab) or API:
 
 ```bash
 curl -X POST https://your-domain/import \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "file=@claude_export.zip"
-# Add -F "overwrite=true" to reprocess already-imported conversations
+
+# Overwrite mode — reprocess already-imported conversations:
+curl -X POST https://your-domain/import \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@claude_export.zip" \
+  -F "overwrite=true"
 ```
 
-What gets imported:
+**What gets imported:**
 
-- `conversations.json` — every chat becomes a memory entry; full text is saved to `/data/conversations/`
-- `memories.json` — userMemories content saved as `core_memories_YYYYMMDD.md` artifact
-- `projects/*.json` — project metadata recorded as memory entries
-- If `ANTHROPIC_API_KEY` is set, a summarization batch starts automatically
+| Source | Result |
+|--------|--------|
+| `conversations.json` | Memory entry per chat + full text saved to `/data/conversations/` |
+| `memories.json` | userMemories → `core_memories_YYYYMMDD.md` artifact |
+| `projects/*.json` | Project metadata as memory entries |
+
+**Auto-summarization:** If `ANTHROPIC_API_KEY` is set, a batch job starts automatically after import. It adds 2-layer (summary) and 3-layer (symbolic compression) annotations to raw entries.
+
+### Versioned artifacts
+
+```
+/data/artifacts/
+├── core.md          → versions/core_md/003.md  (symlink to latest)
+└── versions/
+    └── core_md/
+        ├── 001.md
+        ├── 002.md
+        └── 003.md   ← current
+```
+
+Every `artifacts_save` creates a new numbered version. The top-level symlink always points to the latest. Specific versions are accessible via `artifacts_read(name="core.md", version=1)`.
 
 ---
 
-## Configuration
+## Deployment Options
+
+### Option 1: Synology NAS (recommended)
+
+Best for always-on availability at home. Reverse proxy via DSM's built-in nginx handles HTTPS.
+
+```yaml
+# docker-compose.yml is pre-configured for NAS
+# Set MIO_API_TOKEN in .env, then:
+docker compose up -d
+```
+
+Configure DSM Application Portal → Reverse Proxy → route `your-nas-domain/` → `localhost:5002`.
+
+### Option 2: PC + ngrok (development / demo)
+
+Quickest way to get a public HTTPS URL without a domain. Good for testing Claude.ai integration.
+
+```bash
+# Start the server locally
+docker compose up -d
+
+# Expose it via ngrok
+ngrok http 5002
+# → https://xxxx.ngrok-free.app  (use this as your MCP URL)
+```
+
+Note: ngrok URL changes on each restart unless you have a paid plan.
+
+### Option 3: VPS + Certbot
+
+For a stable public URL on a cloud server (DigitalOcean, Linode, etc.).
+
+```bash
+# On your VPS — install Certbot, get a certificate
+certbot --nginx -d your-domain.com
+
+# Clone the repo, set up .env, start
+docker compose up -d
+```
+
+Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
+
+### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MIO_API_TOKEN` | `changeme` | Shared secret — used for Bearer auth and OAuth login |
+| `MIO_API_TOKEN` | `changeme` | Shared secret — Bearer auth and OAuth login |
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
-| `MIO_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowed Origins; empty = skip check |
-| `ANTHROPIC_API_KEY` | *(empty)* | If set, auto-starts summarization after ZIP import |
+| `MIO_ALLOWED_ORIGINS` | *(empty)* | Allowed CORS origins; empty = skip check |
+| `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
 | `LM_STUDIO_HOST` | `192.168.10.32` | LM Studio host for local summarization |
 | `LM_STUDIO_PORT` | `1234` | LM Studio port |
 
@@ -219,7 +367,7 @@ claude-with-you/
 ├── .env_sample
 ├── docs/
 │   ├── design.md           MCP server design spec
-│   ├── setup.md            First-time setup (NAS → GitHub → workstation)
+│   ├── setup.md            First-time setup guide
 │   └── talk-and-build.md   Claude.ai + Claude Code workflow
 ├── scripts/
 │   └── generate_summary_layers.py
@@ -235,21 +383,12 @@ claude-with-you/
 
 ---
 
-## Redeploy after code changes
-
-```bash
-docker compose up -d --build memory
-docker compose logs -f memory
-```
-
----
-
 ## Roadmap
 
-- `BASE_URL` env variable (currently hardcoded in `main.py` and `admin.html`)
-- UI distribution for students (vanilla JS + `config.js` approach)
-- Friend system (v0.1 spec drafted)
+- `BASE_URL` env variable (currently hardcoded)
+- UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
+- Friend system (v0.1 spec drafted)
 - Artifact delete UI
 
 ---
