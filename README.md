@@ -356,6 +356,12 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 
 ---
 
+## Memory Customization
+
+→ **[MEMORY_CUSTOMIZATION.md](MEMORY_CUSTOMIZATION.md)** — Read this before you start. Covers the 3-layer memory structure, userMemories template, core.md template, and how to define your system's "roots".
+
+---
+
 ## Project Structure
 
 ```

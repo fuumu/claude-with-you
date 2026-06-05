@@ -30,7 +30,13 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/oplog.json` — append-only operation log
 - `/data/oauth_store.json` — persisted OAuth clients and access tokens
 - `/data/artifacts/` — versioned file storage; top-level symlinks point to latest version
+- `/data/artifacts/_meta.json` — artifact ↔ conversation bidirectional link metadata
+- `/data/conversations/` — full conversation text from ZIP imports ({uuid}.json + _index.json)
+- `/data/conv_artifacts/` — files extracted from conversation tool-use blocks
+- `/data/inbox/` — inbox messages (inbox_check / inbox_read / inbox_post)
+- `/data/share_tokens.json` — share tokens for memory entries and conversations
 - `/data/imported_uuids.json` — deduplication log for ZIP imports
+- `/data/.import_status.json` — last ZIP import record
 
 ## Architecture
 
@@ -49,7 +55,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `memory_share` — generates 24h share URL for a memory entry
 - `artifacts_save` / `artifacts_read` / `artifacts_list` — versioned file storage
 - `conversation_search` / `conversation_share` / `conversation_read` — conversation log access
-- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`)
+- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read
 
 **Batch summary API:**
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
@@ -80,8 +86,9 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 ## 澪コードの定型フロー
 
 ### 起動時
-1. `handoff_claude_code.md` を読む
-2. 未完了の依頼を上から順に処理する
+1. `inbox_check(to="code")` で未読メッセージを確認する
+2. メッセージがあれば `inbox_read(id)` で内容を読み、対応する
+3. なければ通常作業待機
 
 ### 作業時のルール
 - コード変更と関連ドキュメント更新は**必ずセット**で行う
@@ -102,11 +109,14 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 
 | 変更内容 | 更新対象ドキュメント |
 |----------|---------------------|
-| MCPツール追加・削除 | README.md（ツール一覧・ツール数） |
+| MCPツール追加・削除 | README.ja.md（日本語版・正）と README.md（英語版）を両方更新 |
 | エンドポイント追加・変更 | docs/setup.md・docs/design.md |
-| バージョン変更 | README.md・docs/setup.md（ヘルスチェック例） |
-| 新機能追加 | README.md（機能一覧）・docs/design.md（設計） |
-| TODO完了・新規追加 | README.md（Roadmap/TODOセクション） |
+| バージョン変更 | README.ja.md・README.md・docs/setup.md（ヘルスチェック例） |
+| 新機能追加 | README.ja.md（機能一覧）・docs/design.md（設計） |
+| 記憶層・運用方針の変更 | MEMORY_CUSTOMIZATION.ja.md と MEMORY_CUSTOMIZATION.md も更新 |
+| TODO完了・新規追加 | README.ja.md（Roadmap/TODOセクション） |
+
+**注意：README.ja.md が正。README.md はそこから同期する。日本語版を先に更新すること。**
 
 更新後は変更ファイルをまとめて1コミットにすること。
 コミットメッセージ例: "add feature X, update docs"
