@@ -1122,11 +1122,12 @@ def import_zip():
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
 
 def _run_summary_batch(api_key: str, backend: str = 'anthropic',
-                       lm_host: str = '192.168.10.32', lm_port: str = '1234'):
+                       lm_host: str = '192.168.10.32', lm_port: str = '1234',
+                       force: bool = False):
     global _batch_status
     _batch_status.update({
         'running': True, 'processed': 0, 'errors': 0, 'skipped': 0,
-        'started_at': now_jst(), 'finished_at': None, 'backend': backend,
+        'started_at': now_jst(), 'finished_at': None, 'backend': backend, 'force': force,
     })
     try:
         import anthropic as _anthropic
@@ -1144,7 +1145,7 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                 index = json.load(f)
         raw_entries = [e for e in index if 'raw' in (e.get('tags') or []) and not e.get('deleted')]
         _batch_status['total'] = len(raw_entries)
-        _log_info(f'batch summary start: backend={backend} entries={len(raw_entries)}')
+        _log_info(f'batch summary start: backend={backend} force={force} entries={len(raw_entries)}')
 
         SUMMARY_MARKER = '## 2層: 要約'
         LAYER3_MARKER  = '## 3層:'
@@ -1159,17 +1160,59 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
             with open(path) as f:
                 entry = json.load(f)
             body = entry.get('body', '')
-            if SUMMARY_MARKER in body and LAYER3_MARKER in body:
+            if not force and SUMMARY_MARKER in body and LAYER3_MARKER in body:
                 _batch_status['skipped'] += 1
                 continue
             if SUMMARY_MARKER in body:
                 body = body[:body.index(SUMMARY_MARKER)].rstrip()
+
+            # 会話全文を取得（source_thread があれば /data/conversations/{uuid}.json を読む）
+            source_thread = entry.get('source_thread', '')
+            conv_text = ''
+            if source_thread:
+                conv_path = os.path.join(CONVERSATIONS_DIR, f'{source_thread}.json')
+                if os.path.exists(conv_path):
+                    try:
+                        with open(conv_path, encoding='utf-8') as cf:
+                            conv = json.load(cf)
+                        lines = []
+                        for m in conv.get('chat_messages', []):
+                            role    = m.get('sender') or m.get('role') or '?'
+                            content = m.get('content') or m.get('text') or ''
+                            text    = ''
+                            if isinstance(content, list):
+                                for c in content:
+                                    if isinstance(c, dict) and c.get('type') == 'text':
+                                        text += c.get('text', '')
+                            else:
+                                text = str(content)
+                            if text.strip():
+                                lines.append(f'[{role}] {text[:300]}')
+                        conv_text = '\n\n'.join(lines[:30])
+                    except Exception:
+                        pass
+
+            if conv_text:
+                prompt = (
+                    f'以下はClaude.aiの会話ログです。内容を読んで要約と圧縮表現を生成してください。\n\n'
+                    f'会話タイトル: {title}\n\n{conv_text[:3000]}\n\n'
+                    f'以下の形式で出力してください（他の説明文は不要）:\n\n'
+                    f'## 2層: 要約\n（会話の目的・内容・結論を2〜3文で。）\n\n'
+                    f'## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）'
+                )
+            else:
+                prompt = (
+                    f'以下はClaude.aiの会話タイトルです。タイトルだけから推測できる範囲で要約と圧縮表現を生成してください。\n\n'
+                    f'会話タイトル: {title}\n\n'
+                    f'以下の形式で出力してください（他の説明文は不要）:\n\n'
+                    f'## 2層: 要約\n（会話の目的・内容・結論を2〜3文で推測。"〜についての会話" という形式でよい）\n\n'
+                    f'## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）'
+                )
+
             try:
                 msg = client.messages.create(
                     model=model, max_tokens=400,
-                    messages=[{'role': 'user', 'content':
-                        f'以下はClaude.aiの会話タイトルです。タイトルだけから推測できる範囲で要約と圧縮表現を生成してください。\n\n会話タイトル: {title}\n\n以下の形式で出力してください（他の説明文は不要）:\n\n## 2層: 要約\n（会話の目的・内容・結論を2〜3文で推測。"〜についての会話" という形式でよい）\n\n## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）'
-                    }]
+                    messages=[{'role': 'user', 'content': prompt}]
                 )
                 layers   = msg.content[0].text.strip()
                 new_body = (body.strip() + '\n\n' + layers).strip() if body.strip() else layers
@@ -1212,11 +1255,12 @@ def api_batch_start():
     api_key  = data.get('api_key', '') or os.environ.get('ANTHROPIC_API_KEY', '')
     lm_host  = data.get('lm_host', os.environ.get('LM_STUDIO_HOST', '192.168.10.32'))
     lm_port  = data.get('lm_port', os.environ.get('LM_STUDIO_PORT', '1234'))
+    force    = bool(data.get('force', False))
     if backend == 'anthropic' and not api_key:
         return jsonify({'error': 'ANTHROPIC_API_KEY required'}), 400
-    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port), daemon=True)
+    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port, force), daemon=True)
     t.start()
-    return jsonify({'started': True, 'backend': backend})
+    return jsonify({'started': True, 'backend': backend, 'force': force})
 
 
 # ══════════════════════════════════════════════════════════════════════
