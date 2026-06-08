@@ -1143,7 +1143,12 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
         if os.path.exists(INDEX_FILE):
             with open(INDEX_FILE) as f:
                 index = json.load(f)
-        raw_entries = [e for e in index if 'raw' in (e.get('tags') or []) and not e.get('deleted')]
+        if force:
+            raw_entries = [e for e in index if
+                           ('raw' in (e.get('tags') or []) or 'summarized' in (e.get('tags') or []))
+                           and not e.get('deleted')]
+        else:
+            raw_entries = [e for e in index if 'raw' in (e.get('tags') or []) and not e.get('deleted')]
         _batch_status['total'] = len(raw_entries)
         _log_info(f'batch summary start: backend={backend} force={force} entries={len(raw_entries)}')
 
