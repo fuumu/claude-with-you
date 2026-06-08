@@ -119,6 +119,9 @@
     .artifact-name { font-size: .9rem; font-family: monospace; flex: 1; }
     .artifact-ver  { font-size: .75rem; color: #7c6af7; }
     .artifact-date { font-size: .75rem; color: #5a6a7a; }
+    .del-btn { background: none; border: none; color: #5a6a7a; cursor: pointer; font-size: .85rem; padding: .1rem .3rem; border-radius: 4px; opacity: 0; transition: all .15s; }
+    .artifact-item:hover .del-btn { opacity: 1; }
+    .del-btn:hover { color: #e05c5c; background: #3a1a1a; }
 
     /* ── Batch command ── */
     .batch-section {
@@ -484,7 +487,7 @@
 <button class="top-btn" id="top-btn" onclick="scrollToTop()">↑ TOP</button>
 
 <script>
-const API = 'https://memory.mio.runabook.synology.me';
+const API = window.location.origin;
 let allEntries = [];
 let currentFilter = '全て';
 let searchKeyword = '';
@@ -694,11 +697,21 @@ async function loadArtifacts() {
           <span class="artifact-name">${esc(a.name)}</span>
           <span class="artifact-ver">v${ver}</span>
           <span class="artifact-date">${date}</span>
+          <button class="del-btn" onclick="deleteArtifact('${esc(a.name)}', event)" title="削除">✕</button>
         </div>`;
     }).join('');
   } catch(e) {
     if (e.message !== '401') list.innerHTML = '<div class="empty">取得失敗</div>';
   }
+}
+
+async function deleteArtifact(name, event) {
+  event.stopPropagation();
+  if (!confirm(`「${name}」を削除しますか？（全バージョン削除）`)) return;
+  try {
+    await apiFetch('/api/artifacts/' + name, { method: 'DELETE' });
+    loadArtifacts();
+  } catch {}
 }
 
 async function openArtifact(name) {
@@ -1043,7 +1056,7 @@ async function openFile(convUuid, filename, convName) {
       body.innerHTML = '';
       const iframe = document.createElement('iframe');
       iframe.style.cssText = 'width:100%;height:420px;border:none;border-radius:6px;background:#fff;';
-      iframe.sandbox = 'allow-scripts';
+      iframe.sandbox = 'allow-scripts allow-same-origin';
       iframe.srcdoc  = data.content || '';
       body.appendChild(iframe);
     } else {

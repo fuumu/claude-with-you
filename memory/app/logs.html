@@ -174,6 +174,40 @@
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #21262d; border-radius: 3px; }
+
+    /* Right slider panel */
+    .right-panel {
+      width: 36px; background: #010409; border-left: 1px solid #21262d;
+      display: flex; flex-direction: column; flex-shrink: 0;
+      transition: width .22s ease; overflow: hidden;
+    }
+    .right-panel.open { width: 280px; }
+    .right-panel-toggle {
+      padding: .5rem 0; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: #484f58; font-size: .85rem; flex-shrink: 0;
+      border-bottom: 1px solid #21262d; transition: color .15s; user-select: none;
+    }
+    .right-panel-toggle:hover { color: #58a6ff; }
+    .right-panel-tabs {
+      display: flex; border-bottom: 1px solid #21262d; flex-shrink: 0; overflow: hidden;
+    }
+    .rp-tab {
+      flex: 1; padding: .4rem .2rem; font-size: .68rem; text-align: center; cursor: pointer;
+      color: #484f58; border-bottom: 2px solid transparent; transition: all .15s; white-space: nowrap;
+    }
+    .rp-tab:hover { color: #c9d1d9; }
+    .rp-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+    .rp-content { flex: 1; overflow-y: auto; }
+    .rp-section { padding: .5rem .65rem; }
+    .rp-item {
+      padding: .42rem .5rem; border-bottom: 1px solid #0d1117; font-size: .75rem;
+      color: #8b949e; cursor: pointer; line-height: 1.35;
+    }
+    .rp-item:hover { color: #c9d1d9; background: #0d1117; }
+    .rp-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rp-item-meta  { font-size: .66rem; color: #484f58; margin-top: .15rem; }
+    .rp-empty { padding: .75rem .65rem; font-size: .75rem; color: #484f58; }
+    .rp-loading { padding: .75rem .65rem; font-size: .75rem; color: #484f58; }
   </style>
 </head>
 <body>
@@ -258,6 +292,21 @@
       <div id="related-items"></div>
     </div>
   </div>
+
+  <!-- Right slider panel -->
+  <div class="right-panel" id="right-panel">
+    <div class="right-panel-toggle" onclick="toggleRightPanel()" id="rp-toggle" title="パネルを開く">▶</div>
+    <div class="right-panel-tabs" id="rp-tabs" style="display:none">
+      <div class="rp-tab active" onclick="switchRpTab('inbox', this)">受信</div>
+      <div class="rp-tab" onclick="switchRpTab('artifacts', this)">Files</div>
+      <div class="rp-tab" onclick="switchRpTab('memory', this)">記憶</div>
+    </div>
+    <div class="rp-content" id="rp-content" style="display:none">
+      <div id="rp-inbox"><div class="rp-loading">読み込み中...</div></div>
+      <div id="rp-artifacts" style="display:none"></div>
+      <div id="rp-memory" style="display:none"></div>
+    </div>
+  </div>
 </div>
 
 <div class="modal-overlay" id="modal" onclick="onOverlayClick(event)">
@@ -272,7 +321,7 @@
 </div>
 
 <script>
-const API = 'https://memory.mio.runabook.synology.me';
+const API = window.location.origin;
 let filteredConvs = [];
 let activeUuid = null;
 let showThinking = false;
@@ -643,6 +692,72 @@ function setFontSize(size, btn) {
     loadConversations();
   }
 })();
+
+// ── Right panel ───────────────────────────────────────────────────────
+let rpOpen = false;
+let rpTab = 'inbox';
+
+function toggleRightPanel() {
+  rpOpen = !rpOpen;
+  const panel = document.getElementById('right-panel');
+  const toggle = document.getElementById('rp-toggle');
+  const tabs   = document.getElementById('rp-tabs');
+  const content = document.getElementById('rp-content');
+  panel.classList.toggle('open', rpOpen);
+  toggle.textContent = rpOpen ? '◀' : '▶';
+  toggle.title = rpOpen ? 'パネルを閉じる' : 'パネルを開く';
+  tabs.style.display   = rpOpen ? 'flex' : 'none';
+  content.style.display = rpOpen ? 'block' : 'none';
+  if (rpOpen) loadRpTab(rpTab);
+}
+
+function switchRpTab(tab, el) {
+  rpTab = tab;
+  document.querySelectorAll('.rp-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  ['inbox','artifacts','memory'].forEach(t => {
+    document.getElementById('rp-' + t).style.display = (t === tab) ? 'block' : 'none';
+  });
+  loadRpTab(tab);
+}
+
+async function loadRpTab(tab) {
+  const el = document.getElementById('rp-' + tab);
+  el.innerHTML = '<div class="rp-loading">読み込み中...</div>';
+  try {
+    if (tab === 'inbox') {
+      const res  = await fetch(`${API}/api/inbox?to=chat`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : (data.data || []);
+      if (!items.length) { el.innerHTML = '<div class="rp-empty">メッセージなし</div>'; return; }
+      el.innerHTML = items.slice(0, 20).map(m => {
+        const date = (m.created_at || '').slice(0, 16).replace('T', ' ');
+        const read = m.read ? '' : '● ';
+        return `<div class="rp-item"><div class="rp-item-title">${read}${esc(m.title || '(無題)')}</div><div class="rp-item-meta">${date}${m.persistent ? ' 📌' : ''}</div></div>`;
+      }).join('');
+    } else if (tab === 'artifacts') {
+      const res  = await fetch(`${API}/api/artifacts`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
+      const items = await res.json();
+      if (!items.length) { el.innerHTML = '<div class="rp-empty">なし</div>'; return; }
+      el.innerHTML = items.map(a => {
+        const date = (a.updated_at || '').slice(0, 10);
+        const ver  = a.version != null ? `v${String(a.version).padStart(3,'0')}` : '';
+        return `<div class="rp-item"><div class="rp-item-title">${esc(a.name)}</div><div class="rp-item-meta">${ver} ${date}</div></div>`;
+      }).join('');
+    } else if (tab === 'memory') {
+      const res  = await fetch(`${API}/api/memory/search?q=&limit=15`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
+      const data = await res.json();
+      const items = data.results || data || [];
+      if (!items.length) { el.innerHTML = '<div class="rp-empty">なし</div>'; return; }
+      el.innerHTML = items.map(m => {
+        const date = (m.updated_at || m.created_at || '').slice(0, 10);
+        return `<div class="rp-item"><div class="rp-item-title">${esc(m.title || '(無題)')}</div><div class="rp-item-meta">${(m.tags || []).join(' ') || ''} ${date}</div></div>`;
+      }).join('');
+    }
+  } catch { el.innerHTML = '<div class="rp-empty">取得失敗</div>'; }
+}
+
+
 </script>
 </body>
 </html>

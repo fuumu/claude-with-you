@@ -89,7 +89,7 @@ CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
 INBOX_DIR          = '/data/inbox'
 ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
-BASE_URL      = 'https://memory.mio.runabook.synology.me'
+BASE_URL      = os.environ.get('MIO_BASE_URL', 'http://localhost:5002')
 
 # ── バッチ要約生成状態 ────────────────────────────────────────────────
 _batch_status = {
@@ -1528,11 +1528,13 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_search",
-        "description": "過去の会話ログをキーワードで検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数）を返す",
+        "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数）を返す",
         "inputSchema": {"type": "object", "properties": {
-            "q":     {"type": "string", "description": "検索キーワード"},
-            "limit": {"type": "integer", "description": "最大取得件数（デフォルト5）"}
-        }, "required": ["q"]}
+            "q":         {"type": "string",  "description": "検索キーワード（省略可）"},
+            "date_from": {"type": "string",  "description": "検索開始日（ISO 8601形式 例: 2026-06-01）"},
+            "date_to":   {"type": "string",  "description": "検索終了日（ISO 8601形式 例: 2026-06-30）"},
+            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト5）"}
+        }, "required": []}
     },
     {
         "name": "conversation_share",
@@ -1677,12 +1679,19 @@ def _handle_tool_call_raw(name, arguments):
         return _artifacts_list()
 
     elif name == "conversation_search":
-        q     = arguments.get("q", "").lower()
-        limit = min(int(arguments.get("limit", 5)), 50)
-        index = _load_conv_index()
-        hits  = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
-        hits.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
-        return hits[:limit]
+        q         = arguments.get("q", "").lower()
+        date_from = arguments.get("date_from", "")
+        date_to   = arguments.get("date_to", "")
+        limit     = min(int(arguments.get("limit", 5)), 50)
+        index     = _load_conv_index()
+        if q:
+            index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+        if date_from:
+            index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) >= date_from]
+        if date_to:
+            index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= date_to + 'T23:59:59']
+        index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
+        return index[:limit]
 
     elif name == "conversation_share":
         uid   = arguments.get("uuid", "")
@@ -1813,7 +1822,7 @@ def _process_mcp_message(msg):
 
 # ══════════════════════════════════════════════════════════════════════
 #  MCP Streamable HTTP Transport（新仕様 2025-03-26）
-#  コネクターURL: https://memory.mio.runabook.synology.me/mcp
+#  コネクターURL: {MIO_BASE_URL}/mcp
 # ══════════════════════════════════════════════════════════════════════
 
 @app.route('/mcp', methods=['GET', 'POST', 'DELETE'])
