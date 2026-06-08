@@ -74,6 +74,33 @@ Export ZIP from Claude.ai → import into memory server
 → Your thinking history, preserved and queryable
 ```
 
+### 5. Distributed development across locations
+
+```
+On the go: finalize a spec with Claude on your phone
+→ Claude posts it via inbox_post(to="code") to your home Claude Code
+→ Claude Code picks it up → implements → reports back via inbox_post(to="chat")
+→ Check inbox_check(to="chat") from your phone
+→ Come home to finished code
+```
+
+```
+Phone (away)                         Home PC (Claude Code)
+────────────────────                 ──────────────────────────
+ Finalize spec with Claude
+  ↓
+ inbox_post(to="code")  ──────────→  inbox_check / inbox_read
+                                           ↓
+                                         Implement
+                                           ↓
+                         ←──────────  inbox_post(to="chat")
+  ↓
+ inbox_check(to="chat")
+ Review → re-post revision if needed
+```
+
+**Stack:** Claude.ai app (phone) + MCP Connectors (NAS) + Claude Code (home PC)
+
 ---
 
 ## Architecture

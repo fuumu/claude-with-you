@@ -58,6 +58,34 @@ Claude.ai エクスポート ZIP をインポート
 → 自分の思考の歴史を追跡できる
 ```
 
+### 5. 出先での分散開発フロー
+
+```
+スマホで澪と相談 → 仕様確定
+→ 澪が inbox_post(to="code") で自宅の Claude Code に依頼送信
+→ Claude Code が inbox を確認 → 実装開始
+→ 完了後に inbox_post(to="chat") で報告
+→ スマホから inbox_check(to="chat") で確認
+→ 帰宅時には実装済み
+```
+
+```
+スマホ（出先）                       自宅 PC（Claude Code）
+─────────────────────                ──────────────────────────
+ 澪チャットで仕様確定
+  ↓
+ inbox_post(to="code")  ──────────→  inbox_check / inbox_read
+                                           ↓
+                                         実装開始
+                                           ↓
+                         ←──────────  inbox_post(to="chat")
+  ↓
+ inbox_check(to="chat")
+ 確認 → 必要なら修正依頼を再ポスト
+```
+
+**技術スタック：** Claude.ai アプリ（スマホ）+ MCP Connectors（NAS 上の澪システム）+ Claude Code（自宅 PC）
+
 ---
 
 ## セットアップ
