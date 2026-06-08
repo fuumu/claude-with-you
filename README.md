@@ -255,7 +255,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 | Tab | What you can do |
 |-----|-----------------|
 | **Memory** | Browse, search, read, and edit memory entries |
-| **Artifacts** | View versioned files and their content |
+| **Artifacts** | View versioned files, content preview, and delete |
 | **Import** | Upload Claude.ai export ZIP; overwrite mode for re-processing |
 | **Files** | Browse files extracted from conversation tool-use blocks |
 | **Inbox** | Read messages between Claude Code and Claude.ai sessions |
@@ -270,6 +270,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 - Collapsible `thinking` / `tool_use` / `tool_result` blocks
 - Font size toggle (small / medium / large)
 - Shareable via `?token=` URL (no login required)
+- Right collapsible panel (▶ toggle): Inbox / Artifacts / Memory at a glance
 
 **Sharing a conversation:**
 ```
@@ -375,6 +376,7 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MIO_API_TOKEN` | `changeme` | Shared secret — Bearer auth and OAuth login |
+| `MIO_BASE_URL` | `http://localhost:5002` | Public base URL used for OAuth and share links. Set to `https://your-domain.com` in production |
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Allowed CORS origins; empty = skip check |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
@@ -418,11 +420,9 @@ claude-with-you/
 
 ## Roadmap
 
-- `BASE_URL` env variable (currently hardcoded)
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 - Friend system (v0.1 spec drafted)
-- Artifact delete UI
 
 ---
 
