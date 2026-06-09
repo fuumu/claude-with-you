@@ -1,8 +1,12 @@
 """
-mio-memory v3.6  —  Streamable HTTP MCP transport
+mio-memory v3.7  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.7 (2026-06-09) - 機能追加
+    - inbox_check に include_read パラメータ追加
+      include_read=true で既読メッセージも含む全件返却
+      レスポンスに unread_count + messages[]{id, read, persistent, title, from, to} 追加
   v3.6 (2026-06-09) - 用語統一リファクタリング
     - MCPツール名変更: artifacts_save/read/list → CoreMem_save/read/list
     - REST エンドポイント変更: /api/artifacts → /api/coremem
@@ -1566,9 +1570,10 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_check",
-        "description": "インボックスの未読件数とIDリストを返す（軽量・約50トークン）。memory_searchでチャット宛を検索するより高速",
+        "description": "インボックスの未読件数とIDリストを返す（軽量・約50トークン）。memory_searchでチャット宛を検索するより高速。include_read=trueで既読メッセージも含めて返す",
         "inputSchema": {"type": "object", "properties": {
-            "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"}
+            "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"},
+            "include_read": {"type": "boolean", "description": "trueの場合、既読メッセージも含める。レスポンスにmessages[]（id+read+title）が追加される。デフォルト: false"}
         }, "required": []}
     },
     {
@@ -1752,9 +1757,19 @@ def _handle_tool_call_raw(name, arguments):
         return result
 
     elif name == "inbox_check":
-        to   = arguments.get("to")
-        msgs = _load_inbox_messages(to=to, unread_only=True)
-        return {"count": len(msgs), "ids": [m['id'] for m in msgs]}
+        to           = arguments.get("to")
+        include_read = bool(arguments.get("include_read", False))
+        msgs = _load_inbox_messages(to=to, unread_only=not include_read)
+        result = {"count": len(msgs), "ids": [m['id'] for m in msgs]}
+        if include_read:
+            unread_count = sum(1 for m in msgs if not m.get('read') or m.get('persistent'))
+            result["unread_count"] = unread_count
+            result["messages"] = [
+                {"id": m['id'], "read": bool(m.get('read')), "persistent": bool(m.get('persistent')),
+                 "title": m.get('title', ''), "from": m.get('from', ''), "to": m.get('to', '')}
+                for m in msgs
+            ]
+        return result
 
     elif name == "inbox_read":
         msg_id = arguments.get("id", "")

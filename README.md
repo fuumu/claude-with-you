@@ -206,7 +206,7 @@ Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `inbox_check` | Get unread count + IDs (~50 tokens) | `to` (`"chat"` or `"code"`) |
+| `inbox_check` | Get unread count + IDs (~50 tokens); `include_read=true` returns all msgs with `messages[]` metadata | `to`, `include_read` |
 | `inbox_read` | Fetch a message and mark as read | `id` |
 | `inbox_post` | Send a message | `to`, `title`, `body`, `persistent` |
 

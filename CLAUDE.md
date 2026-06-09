@@ -55,7 +55,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `memory_share` — generates 24h share URL for a memory entry
 - `CoreMem_save` / `CoreMem_read` / `CoreMem_list` — UserCoreMemory (NAS file store, versioned)
 - `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access
-- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read
+- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check(include_read=true)` returns all messages (including already-read ones) with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
 
 **Batch summary API:**
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
