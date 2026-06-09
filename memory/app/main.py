@@ -1,13 +1,20 @@
 """
-mio-memory v3.5  —  Streamable HTTP MCP transport
+mio-memory v3.6  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.6 (2026-06-09) - 用語統一リファクタリング
+    - MCPツール名変更: artifacts_save/read/list → CoreMem_save/read/list
+    - REST エンドポイント変更: /api/artifacts → /api/coremem
+    - 用語統一: ExtMemory(記憶KV) / UserCoreMemory(NASファイルストア) / LogStore(会話アーカイブ) / SysMemory(userMemories)
+    - admin.html: Artifacts タブ → CoreMem に改名
+    - logs.html U2: 右パネル artifacts タブ修正（空表示バグ修正含む）
+    - setup.md: 固有情報をプレースホルダーに置換
   v3.5 (2026-06-05) - 機能追加
     - 全MCPツールレスポンスに server_time（JST）追加
     - inbox persistent（常駐型）: inbox_post に persistent=true 追加
-    - artifacts_read: conv_artifacts へのフォールバック（孤立ファイル対応）
-    - artifacts ↔ conversation 双方向リンク: source_conversation_uuid フィールド
+    - CoreMem_read: conv_artifacts へのフォールバック（孤立ファイル対応）
+    - UserCoreMemory ↔ conversation 双方向リンク: source_conversation_uuid フィールド
     - インポート上書きモード: admin.html に上書きオプション追加
   v3.4 (2026-06-04) - 機能追加
     - memory_search に limit/offset/has_more 追加（コンテキスト削減）
@@ -34,7 +41,7 @@ mio-memory v3.5  —  Streamable HTTP MCP transport
     - GET /api/import-status：最終ZIPインポート記録
   v3.0 (2026-06-01) - 機能拡張
     - memory_upsert ツール追加（固定IDで上書き）
-    - artifacts管理追加（artifacts_save / artifacts_read / artifacts_list）
+    - UserCoreMemory管理追加（CoreMem_save / CoreMem_read / CoreMem_list）
     - POST /import：Claude会話ログZIPインポート（重複スキップ）
   v2.1 (2026-05-31) - 仕様に合わせた修正
     - notification応答を204→202に（仕様MUST）
@@ -285,7 +292,7 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
         meta[name] = {**meta.get(name, {}), 'source_conversation_uuid': source_conversation_uuid}
         _save_artifacts_meta(meta)
 
-    _log_info(f'artifacts_save: {name} v{next_num:03d}')
+    _log_info(f'CoreMem_save: {name} v{next_num:03d}')
     result = {'name': name, 'version': next_num, 'version_str': f'{next_num:03d}'}
     if source_conversation_uuid:
         result['source_conversation_uuid'] = source_conversation_uuid
@@ -457,7 +464,7 @@ def logs_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.5',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.6',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -596,16 +603,16 @@ def get_entry_path(path_token, entry_id): return get_entry(entry_id)
 @require_auth
 def create_entry_path(path_token): return create_entry()
 
-# ── アーティファクト REST API ─────────────────────────────────────────
+# ── UserCoreMemory REST API ───────────────────────────────────────────
 
-@app.route('/api/artifacts')
+@app.route('/api/coremem')
 @require_auth
-def api_artifacts_list():
+def api_coremem_list():
     return jsonify(_artifacts_list())
 
-@app.route('/api/artifacts/<path:name>', methods=['GET'])
+@app.route('/api/coremem/<path:name>', methods=['GET'])
 @require_auth
-def api_artifacts_read(name):
+def api_coremem_read(name):
     version = request.args.get('version', None)
     if version is not None:
         version = int(version)
@@ -614,18 +621,18 @@ def api_artifacts_read(name):
         abort(404)
     return jsonify(result)
 
-@app.route('/api/artifacts/<path:name>', methods=['POST'])
+@app.route('/api/coremem/<path:name>', methods=['POST'])
 @require_auth
-def api_artifacts_save(name):
+def api_coremem_save(name):
     data = request.get_json()
     if not data or 'content' not in data:
         abort(400)
     result = _artifacts_save(name, data['content'])
     return jsonify(result), 201
 
-@app.route('/api/artifacts/<path:name>', methods=['DELETE'])
+@app.route('/api/coremem/<path:name>', methods=['DELETE'])
 @require_auth
-def api_artifacts_delete(name):
+def api_coremem_delete(name):
     symlink_path = os.path.join(ARTIFACTS_DIR, name)
     if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
         abort(404)
@@ -635,7 +642,7 @@ def api_artifacts_delete(name):
     versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
     if os.path.isdir(versions_dir):
         shutil.rmtree(versions_dir)
-    _log_info(f'artifacts_delete: {name}')
+    _log_info(f'CoreMem_delete: {name}')
     return jsonify({'deleted': name})
 
 # ── シェアトークン ────────────────────────────────────────────────────
@@ -1497,8 +1504,8 @@ _MCP_TOOLS = [
         }, "required": ["q"]}
     },
     {
-        "name": "artifacts_save",
-        "description": "アーティファクト（ファイル）をバージョン管理付きで保存する。core.mdの保存に使う",
+        "name": "CoreMem_save",
+        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1510,8 +1517,8 @@ _MCP_TOOLS = [
         }
     },
     {
-        "name": "artifacts_read",
-        "description": "アーティファクトを読み込む。versionを省略すると最新版を返す",
+        "name": "CoreMem_read",
+        "description": "UserCoreMemoryからファイルを読み込む。versionを省略すると最新版を返す",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1522,8 +1529,8 @@ _MCP_TOOLS = [
         }
     },
     {
-        "name": "artifacts_list",
-        "description": "保存済みアーティファクト一覧を取得する（名前・最新バージョン・更新日時）",
+        "name": "CoreMem_list",
+        "description": "UserCoreMemoryの保存済みファイル一覧を取得する（名前・最新バージョン・更新日時）",
         "inputSchema": {"type": "object", "properties": {}, "required": []}
     },
     {
@@ -1665,17 +1672,17 @@ def _handle_tool_call_raw(name, arguments):
             _log_error(f'memory_search error: {traceback.format_exc()}')
             return {"error": str(exc), "results": [], "total": 0, "has_more": False}
 
-    elif name == "artifacts_save":
+    elif name == "CoreMem_save":
         n = arguments.get("name", "")
         c = arguments.get("content", "")
         if not n:
             return {"error": "name is required"}
         return _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"))
 
-    elif name == "artifacts_read":
+    elif name == "CoreMem_read":
         return _artifacts_read(arguments.get("name", ""), arguments.get("version"))
 
-    elif name == "artifacts_list":
+    elif name == "CoreMem_list":
         return _artifacts_list()
 
     elif name == "conversation_search":
@@ -1793,7 +1800,7 @@ def _process_mcp_message(msg):
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "mio-memory", "version": "3.5.0"},
-            "instructions": "セッション開始時に必ず artifacts_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
+            "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }
     elif method == "tools/list":

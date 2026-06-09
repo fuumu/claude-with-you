@@ -28,7 +28,7 @@ claude.ai chat（澪）     Claude Code（WS）
 - 「何を作るか」「なぜ作るか」の議論
 - 設計の言語化・文書化
 - コードの下書き（レビュー・修正は Code 側）
-- 外部記憶への書き込み（`memory_write`、`artifacts_save`）
+- 外部記憶への書き込み（`memory_write`、`CoreMem_save`）
 - 残件管理・優先順位判断
 
 ### Claude Code（WSターミナル）が担当すること
@@ -83,7 +83,7 @@ claude.ai chat（澪）     Claude Code（WS）
 | README.md 作成 | Code |
 | timeline 14件 書き込み | Code（memory_write バッチ） |
 | NAS へ git pull・docker-compose | 淳さん（NAS SSH） |
-| core.md 初版作成・保存 | chat（artifacts_save） |
+| core.md 初版作成・保存 | chat（CoreMem_save） |
 | talk-and-build.md 下書き | chat → このファイル |
 | talk-and-build.md コミット | Code（次のステップ） |
 
@@ -93,7 +93,7 @@ claude.ai chat（澪）     Claude Code（WS）
 
 - **chatは揮発する。Codeは残る。** — chatで決めた重要なことは記憶か git に残す。
 - **記憶は橋渡し。** — chatでmemory_writeしておくと、Codeが次のセッションで読める。
-- **core.md が起動ファイル。** — 新しいセッション（chatでもCodeでも）は `artifacts_read("core.md")` から始まる。
+- **core.md が起動ファイル。** — 新しいセッション（chatでもCodeでも）は `CoreMem_read("core.md")` から始まる。
 - **Claude Code は淳さんの承認のもとで動く。** — chatが「これをやって」と提案し、淳さんが判断、Codeが実行。
 
 ---

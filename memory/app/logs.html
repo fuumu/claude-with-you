@@ -298,12 +298,12 @@
     <div class="right-panel-toggle" onclick="toggleRightPanel()" id="rp-toggle" title="パネルを開く">▶</div>
     <div class="right-panel-tabs" id="rp-tabs" style="display:none">
       <div class="rp-tab active" onclick="switchRpTab('inbox', this)">受信</div>
-      <div class="rp-tab" onclick="switchRpTab('artifacts', this)">Files</div>
+      <div class="rp-tab" onclick="switchRpTab('coremem', this)">CoreMem</div>
       <div class="rp-tab" onclick="switchRpTab('memory', this)">記憶</div>
     </div>
     <div class="rp-content" id="rp-content" style="display:none">
       <div id="rp-inbox"><div class="rp-loading">読み込み中...</div></div>
-      <div id="rp-artifacts" style="display:none"></div>
+      <div id="rp-coremem" style="display:none"></div>
       <div id="rp-memory" style="display:none"></div>
     </div>
   </div>
@@ -715,7 +715,7 @@ function switchRpTab(tab, el) {
   rpTab = tab;
   document.querySelectorAll('.rp-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  ['inbox','artifacts','memory'].forEach(t => {
+  ['inbox','coremem','memory'].forEach(t => {
     document.getElementById('rp-' + t).style.display = (t === tab) ? 'block' : 'none';
   });
   loadRpTab(tab);
@@ -726,7 +726,7 @@ async function loadRpTab(tab) {
   el.innerHTML = '<div class="rp-loading">読み込み中...</div>';
   try {
     if (tab === 'inbox') {
-      const res  = await fetch(`${API}/api/inbox?to=chat`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
+      const res  = await fetch(`${API}/api/inbox?to=chat&full=true`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
       const data = await res.json();
       const items = Array.isArray(data) ? data : (data.data || []);
       if (!items.length) { el.innerHTML = '<div class="rp-empty">メッセージなし</div>'; return; }
@@ -735,8 +735,8 @@ async function loadRpTab(tab) {
         const read = m.read ? '' : '● ';
         return `<div class="rp-item"><div class="rp-item-title">${read}${esc(m.title || '(無題)')}</div><div class="rp-item-meta">${date}${m.persistent ? ' 📌' : ''}</div></div>`;
       }).join('');
-    } else if (tab === 'artifacts') {
-      const res  = await fetch(`${API}/api/artifacts`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
+    } else if (tab === 'coremem') {
+      const res  = await fetch(`${API}/api/coremem`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
       const items = await res.json();
       if (!items.length) { el.innerHTML = '<div class="rp-empty">なし</div>'; return; }
       el.innerHTML = items.map(a => {
@@ -745,9 +745,9 @@ async function loadRpTab(tab) {
         return `<div class="rp-item"><div class="rp-item-title">${esc(a.name)}</div><div class="rp-item-meta">${ver} ${date}</div></div>`;
       }).join('');
     } else if (tab === 'memory') {
-      const res  = await fetch(`${API}/api/memory/search?q=&limit=15`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
+      const res  = await fetch(`${API}/api/memory/index`, { headers: { 'Authorization': 'Bearer ' + getToken() }});
       const data = await res.json();
-      const items = data.results || data || [];
+      const items = (Array.isArray(data) ? data : []).slice(0, 15);
       if (!items.length) { el.innerHTML = '<div class="rp-empty">なし</div>'; return; }
       el.innerHTML = items.map(m => {
         const date = (m.updated_at || m.created_at || '').slice(0, 10);

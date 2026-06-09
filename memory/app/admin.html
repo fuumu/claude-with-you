@@ -341,7 +341,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('memory', this)">Memory</button>
-  <button class="tab-btn" onclick="switchTab('artifacts', this)">Artifacts</button>
+  <button class="tab-btn" onclick="switchTab('coremem', this)">CoreMem</button>
   <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
   <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
   <button class="tab-btn" onclick="switchTab('files', this)">Files</button>
@@ -362,8 +362,8 @@
 
 <div class="toast" id="toast"></div>
 
-<!-- Artifacts tab -->
-<div class="tab-panel" id="tab-artifacts">
+<!-- CoreMem tab -->
+<div class="tab-panel" id="tab-coremem">
   <div class="artifact-list" id="artifact-list"></div>
 </div>
 
@@ -546,7 +546,7 @@ function switchTab(name, btn) {
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
   if (name === 'memory')    loadMemory();
-  if (name === 'artifacts') loadArtifacts();
+  if (name === 'coremem')   loadCoreMem();
   if (name === 'import')    { loadImportStatus(); pollBatchStatus(); }
   if (name === 'oplog')     loadOplog();
   if (name === 'files')     loadFiles();
@@ -681,14 +681,14 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-// ── Artifacts ─────────────────────────────────────────────────────────
-async function loadArtifacts() {
+// ── CoreMem (UserCoreMemory) ───────────────────────────────────────────
+async function loadCoreMem() {
   const list = document.getElementById('artifact-list');
   list.innerHTML = '<div class="empty">読み込み中...</div>';
   try {
-    const res = await apiFetch('/api/artifacts');
+    const res = await apiFetch('/api/coremem');
     const items = await res.json();
-    if (!items.length) { list.innerHTML = '<div class="empty">アーティファクトなし</div>'; return; }
+    if (!items.length) { list.innerHTML = '<div class="empty">UserCoreMemoryなし</div>'; return; }
     list.innerHTML = items.map(a => {
       const date = (a.updated_at || '').slice(0, 16).replace('T', ' ');
       const ver  = a.version != null ? String(a.version).padStart(3, '0') : '---';
@@ -709,14 +709,14 @@ async function deleteArtifact(name, event) {
   event.stopPropagation();
   if (!confirm(`「${name}」を削除しますか？（全バージョン削除）`)) return;
   try {
-    await apiFetch('/api/artifacts/' + name, { method: 'DELETE' });
-    loadArtifacts();
+    await apiFetch('/api/coremem/' + name, { method: 'DELETE' });
+    loadCoreMem();
   } catch {}
 }
 
 async function openArtifact(name) {
   try {
-    const res = await apiFetch('/api/artifacts/' + name);
+    const res = await apiFetch('/api/coremem/' + name);
     const a = await res.json();
     document.getElementById('modal-title').textContent = a.name || name;
     document.getElementById('modal-meta').textContent =

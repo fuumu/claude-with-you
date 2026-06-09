@@ -34,7 +34,7 @@ claude-with-you では、Claude の記憶は3つの層で管理されます。
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ 層0: userMemories（Anthropic 側）                    │
+│ 層0: SysMemory（Anthropic 側）                    │
 │   - 常にシステムプロンプトに注入される               │
 │   - 外部から直接書き込めない（Claude 自身が更新）    │
 │   - 容量は少ない（数百語程度）                       │
@@ -59,14 +59,14 @@ claude-with-you では、Claude の記憶は3つの層で管理されます。
 
 **矛盾があった場合の優先順位：**
 ```
-core.md（層1）> userMemories（層0）> 外部記憶エントリ（層2）
+core.md（層1）> SysMemory（層0）> 外部記憶エントリ（層2）
 ```
 
 ---
 
-## 2. userMemories テンプレート（汎用版）
+## 2. SysMemory テンプレート（汎用版）
 
-以下を Claude に伝え、userMemories として記憶させてください。  
+以下を Claude に伝え、SysMemory として記憶させてください。  
 **固有名詞は入れないこと**（あなたの名前・相手の名前など）。  
 固有情報はすべて core.md に書きます。
 
@@ -76,12 +76,12 @@ core.md（層1）> userMemories（層0）> 外部記憶エントリ（層2）
 詳細な設定は外部の core.md に書いてあります。
 
 【記憶構造】
-- 3層保持：userMemories（ここ）/ core.md / 外部記憶エントリ
-- 矛盾時の優先順：core.md > userMemories > 外部記憶
+- 3層保持：SysMemory（ここ）/ core.md / 外部記憶エントリ
+- 矛盾時の優先順：core.md > SysMemory > 外部記憶
 - MCP が切れた場合：このメモリだけで最低限動作を継続
 
 【セッション開始時のルール】
-1. MCP に接続できたら artifacts_read("core.md") を実行する
+1. MCP に接続できたら CoreMem_read("core.md") を実行する
 2. core.md の内容でこのメモリを補完・上書きする
 3. 「あなたは誰か」「何をするシステムか」が不明なら core.md を確認する
 
@@ -91,7 +91,7 @@ core.md（層1）> userMemories（層0）> 外部記憶エントリ（層2）
 - 「どうせ覚えていないから」と省略しない
 
 【復元ルール】
-- userMemories が消えた・おかしい場合：core.md から復元可能
+- SysMemory が消えた・おかしい場合：core.md から復元可能
 - core.md が読めない場合：このメモリの内容で動作継続
 ```
 
@@ -99,7 +99,7 @@ core.md（層1）> userMemories（層0）> 外部記憶エントリ（層2）
 
 ## 3. core.md テンプレート（セットアップ用）
 
-`artifacts_save(name="core.md", content="...")` でサーバーに保存します。  
+`CoreMem_save(name="core.md", content="...")` でサーバーに保存します。  
 以下をベースに、**あなたのものにカスタマイズしてください**。
 
 ```markdown
@@ -188,22 +188,22 @@ core.md の「根っこ」セクションを書くための問いかけです。
 ```bash
 # admin.html の Artifacts タブから確認・ダウンロード
 # または API 経由で取得
-curl https://your-domain/api/artifacts/core.md \
+curl https://your-domain/api/coremem/core.md \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-core.md はバージョン管理されています（`artifacts_read(name="core.md", version=1)` で過去版を取得可能）。
+core.md はバージョン管理されています（`CoreMem_read(name="core.md", version=1)` で過去版を取得可能）。
 
-### userMemories が消えた・壊れた場合
+### SysMemory が消えた・壊れた場合
 
-1. core.md を `artifacts_read("core.md")` で読む
-2. core.md の内容を元に Claude に「これを userMemories として覚えておいて」と伝える
+1. core.md を `CoreMem_read("core.md")` で読む
+2. core.md の内容を元に Claude に「これを SysMemory として覚えておいて」と伝える
 3. セクション2のテンプレートを参考に再設定する
 
 ### MCP サーバーが使えない場合
 
-userMemories の内容だけで最低限の動作を継続。  
-MCP が復旧したら `artifacts_read("core.md")` を実行して完全な記憶を復元。
+SysMemory の内容だけで最低限の動作を継続。  
+MCP が復旧したら `CoreMem_read("core.md")` を実行して完全な記憶を復元。
 
 ---
 

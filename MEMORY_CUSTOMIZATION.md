@@ -31,7 +31,7 @@ Memory in claude-with-you is managed across three layers.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ Layer 0: userMemories (Anthropic side)               │
+│ Layer 0: SysMemory (Anthropic side)               │
 │   - Always injected into the system prompt           │
 │   - Cannot be written externally (Claude updates it) │
 │   - Small capacity (~a few hundred words)            │
@@ -56,14 +56,14 @@ Memory in claude-with-you is managed across three layers.
 
 **Priority when layers conflict:**
 ```
-core.md (Layer 1) > userMemories (Layer 0) > memory entries (Layer 2)
+core.md (Layer 1) > SysMemory (Layer 0) > memory entries (Layer 2)
 ```
 
 ---
 
-## 2. userMemories Template (Generic)
+## 2. SysMemory Template (Generic)
 
-Tell Claude to remember the following as its userMemories.  
+Tell Claude to remember the following as its SysMemory.  
 **Do not include proper nouns** — no names, no specific people.  
 Put all personal information in core.md instead.
 
@@ -73,12 +73,12 @@ This system uses claude-with-you for external memory.
 Detailed configuration is in an external file called core.md.
 
 [Memory structure]
-- 3-layer: userMemories (here) / core.md / external memory entries
-- Priority when conflicting: core.md > userMemories > entries
+- 3-layer: SysMemory (here) / core.md / external memory entries
+- Priority when conflicting: core.md > SysMemory > entries
 - If MCP disconnects: continue with this memory alone
 
 [Session start rules]
-1. If MCP is connected, run artifacts_read("core.md")
+1. If MCP is connected, run CoreMem_read("core.md")
 2. Let core.md override and supplement this memory
 3. If "who am I" or "what is this system" is unclear, check core.md
 
@@ -88,7 +88,7 @@ Detailed configuration is in an external file called core.md.
 - Don't skip things just because "I won't remember anyway"
 
 [Recovery rules]
-- If userMemories is gone or wrong: restore from core.md
+- If SysMemory is gone or wrong: restore from core.md
 - If core.md is unreachable: continue with this memory alone
 ```
 
@@ -96,7 +96,7 @@ Detailed configuration is in an external file called core.md.
 
 ## 3. core.md Template (For Setup)
 
-Save this via `artifacts_save(name="core.md", content="...")`.  
+Save this via `CoreMem_save(name="core.md", content="...")`.  
 **Customize it to make it yours.**
 
 ```markdown
@@ -184,23 +184,23 @@ Questions to help you write the core values section of core.md.
 
 ```bash
 # Via API
-curl https://your-domain/api/artifacts/core.md \
+curl https://your-domain/api/coremem/core.md \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 core.md is version-controlled. Access older versions with  
-`artifacts_read(name="core.md", version=1)`.
+`CoreMem_read(name="core.md", version=1)`.
 
-### If userMemories is lost or corrupted
+### If SysMemory is lost or corrupted
 
-1. Read core.md with `artifacts_read("core.md")`
-2. Tell Claude "remember this as your userMemories"
+1. Read core.md with `CoreMem_read("core.md")`
+2. Tell Claude "remember this as your SysMemory"
 3. Use the template in Section 2 as a reference
 
 ### If the MCP server is unavailable
 
-Continue with userMemories alone.  
-Once MCP is restored, run `artifacts_read("core.md")` to recover full memory.
+Continue with SysMemory alone.  
+Once MCP is restored, run `CoreMem_read("core.md")` to recover full memory.
 
 ---
 

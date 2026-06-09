@@ -50,11 +50,11 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.5, 15 tools):**
-- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — memory CRUD
+**MCP tools exposed (v3.6, 15 tools):**
+- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD
 - `memory_share` — generates 24h share URL for a memory entry
-- `artifacts_save` / `artifacts_read` / `artifacts_list` — versioned file storage
-- `conversation_search` / `conversation_share` / `conversation_read` — conversation log access
+- `CoreMem_save` / `CoreMem_read` / `CoreMem_list` — UserCoreMemory (NAS file store, versioned)
+- `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read
 
 **Batch summary API:**
@@ -66,7 +66,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 **MCP initialize instructions:**
 `/mcp` エンドポイントの initialize レスポンスに `instructions` フィールドが含まれる。
-接続時に Claude.ai へ「セッション開始時に `artifacts_read("core.md")` を実行して記憶を読み込む」旨を自動通知する。
+接続時に Claude.ai へ「セッション開始時に `CoreMem_read("core.md")` を実行して記憶を読み込む」旨を自動通知する。
 
 ## Dependencies
 

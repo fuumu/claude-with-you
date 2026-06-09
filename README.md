@@ -25,7 +25,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.5","mcp_tool_count":15}
+# {"status":"ok","version":"3.6","mcp_tool_count":15}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -125,7 +125,7 @@ Claude.ai / Claude Code
   │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
-  /data/  memory/ · artifacts/ · conversations/ · inbox/
+  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · conversations(LogStore)/ · inbox/
 ```
 
 Single-file implementation — all logic in `memory/app/main.py`.
@@ -163,21 +163,21 @@ memory_search(q="auth")
 → {"results": [...], "total": 3, "has_more": false, "server_time": "..."}
 ```
 
-### Artifact tools (3)
+### UserCoreMemory tools (3)
 
-Versioned file storage. Every save creates a new version; the latest is always accessible by name.
+Versioned file storage (NAS file store). Every save creates a new version; the latest is always accessible by name.
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `artifacts_save` | Save a file (new version) | `name`, `content`, `source_conversation_uuid` |
-| `artifacts_read` | Read latest or specific version | `name`, `version` |
-| `artifacts_list` | List all files | — |
+| `CoreMem_save` | Save a file (new version) | `name`, `content`, `source_conversation_uuid` |
+| `CoreMem_read` | Read latest or specific version | `name`, `version` |
+| `CoreMem_list` | List all files | — |
 
-`artifacts_read` falls back to conversation-extracted files if not found in the main store.
+`CoreMem_read` falls back to conversation-extracted files if not found in the main store.
 
 **Example — save a config file:**
 ```
-artifacts_save(name="config.md", content="# Config\n...", source_conversation_uuid="abc-123")
+CoreMem_save(name="config.md", content="# Config\n...", source_conversation_uuid="abc-123")
 → {"name": "config.md", "version": 2, "server_time": "..."}
 ```
 
@@ -233,9 +233,9 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | POST | `/api/memory` | Create entry |
 | PATCH | `/api/memory/<id>` | Update entry |
 | DELETE | `/api/memory/<id>` | Soft-delete entry |
-| GET | `/api/artifacts` | List artifacts |
-| GET | `/api/artifacts/<name>` | Read artifact |
-| POST | `/api/artifacts/<name>` | Save artifact |
+| GET | `/api/coremem` | List UserCoreMemory files |
+| GET | `/api/coremem/<name>` | Read UserCoreMemory file |
+| POST | `/api/coremem/<name>` | Save UserCoreMemory file |
 | GET | `/api/conversations/` | Search conversations |
 | GET | `/api/conversations/<uuid>` | Get conversation |
 | GET | `/api/inbox` | List inbox messages |
@@ -255,7 +255,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 | Tab | What you can do |
 |-----|-----------------|
 | **Memory** | Browse, search, read, and edit memory entries |
-| **Artifacts** | View versioned files, content preview, and delete |
+| **CoreMem** | View UserCoreMemory files, content preview, and delete |
 | **Import** | Upload Claude.ai export ZIP; overwrite mode for re-processing |
 | **Files** | Browse files extracted from conversation tool-use blocks |
 | **Inbox** | Read messages between Claude Code and Claude.ai sessions |
@@ -270,7 +270,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 - Collapsible `thinking` / `tool_use` / `tool_result` blocks
 - Font size toggle (small / medium / large)
 - Shareable via `?token=` URL (no login required)
-- Right collapsible panel (▶ toggle): Inbox / Artifacts / Memory at a glance
+- Right collapsible panel (▶ toggle): Inbox / CoreMem / Memory at a glance
 
 **Sharing a conversation:**
 ```
@@ -307,12 +307,12 @@ curl -X POST https://your-domain/import \
 | Source | Result |
 |--------|--------|
 | `conversations.json` | Memory entry per chat + full text saved to `/data/conversations/` |
-| `memories.json` | userMemories → `core_memories_YYYYMMDD.md` artifact |
+| `memories.json` | SysMemories → `core_memories_YYYYMMDD.md` saved to UserCoreMemory |
 | `projects/*.json` | Project metadata as memory entries |
 
 **Auto-summarization:** If `ANTHROPIC_API_KEY` is set, a batch job starts automatically after import. It adds 2-layer (summary) and 3-layer (symbolic compression) annotations to raw entries.
 
-### Versioned artifacts
+### Versioned UserCoreMemory files
 
 ```
 /data/artifacts/
@@ -324,7 +324,7 @@ curl -X POST https://your-domain/import \
         └── 003.md   ← current
 ```
 
-Every `artifacts_save` creates a new numbered version. The top-level symlink always points to the latest. Specific versions are accessible via `artifacts_read(name="core.md", version=1)`.
+Every `CoreMem_save` creates a new numbered version. The top-level symlink always points to the latest. Specific versions are accessible via `CoreMem_read(name="core.md", version=1)`.
 
 ---
 
@@ -387,7 +387,7 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 
 ## Memory Customization
 
-→ **[MEMORY_CUSTOMIZATION.md](MEMORY_CUSTOMIZATION.md)** — Read this before you start. Covers the 3-layer memory structure, userMemories template, core.md template, and how to define your system's "roots".
+→ **[MEMORY_CUSTOMIZATION.md](MEMORY_CUSTOMIZATION.md)** — Read this before you start. Covers the 3-layer memory structure, SysMemory template, core.md template, and how to define your system's "roots".
 
 ---
 
