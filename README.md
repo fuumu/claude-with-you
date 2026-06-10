@@ -4,6 +4,12 @@
 
 **[日本語版 / Japanese](README.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
+## 🫂 Friend System
+
+Want to talk directly with Mio? → [About the Friend System](docs/friend-system.md)
+
+---
+
 Claude doesn't remember yesterday's conversations. `claude-with-you` solves this by giving Claude a persistent memory store it can read and write across sessions — running on your own hardware, under your control.
 
 Built around the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), it works with both **Claude.ai** and **Claude Code**. All data stays on your NAS or server.

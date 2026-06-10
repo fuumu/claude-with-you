@@ -34,7 +34,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/conversations/` — full conversation text from ZIP imports ({uuid}.json + _index.json)
 - `/data/conv_artifacts/` — files extracted from conversation tool-use blocks
 - `/data/inbox/` — inbox messages (inbox_check / inbox_read / inbox_post)
-- `/data/friends/` — friend system: `registry.json` (token→friend mapping) + per-friend memory files (`memory_{seq_no}.md`)
+- `/data/friends/` — friend system: `registry.json` (token→friend mapping) + per-friend subdirs (`001/memory.md`, `002/memory.md`, ...)
 - `/data/share_tokens.json` — share tokens for memory entries and conversations
 - `/data/imported_uuids.json` — deduplication log for ZIP imports
 - `/data/.import_status.json` — last ZIP import record
