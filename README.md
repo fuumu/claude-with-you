@@ -25,7 +25,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.8","mcp_tool_count":15}
+# {"status":"ok","version":"3.10","mcp_tool_count":15}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp

@@ -1,8 +1,14 @@
 """
-mio-memory v3.9  —  Streamable HTTP MCP transport
+mio-memory v3.10  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.10 (2026-06-10) - 新機能
+    - お友達システム Phase 2
+      - 友人セッション専用 MCP ツール3本追加
+        - friend_memory_read: memory.md 読み込み
+        - friend_memory_write: 記憶追記・hitokoto 更新
+        - friend_memory_delete: 特定行削除 / 全削除
   v3.9 (2026-06-10) - 新機能
     - お友達システム Phase 1
       - register.html / activate.html（友人向け登録・認証ページ）
@@ -498,7 +504,7 @@ def activate_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.9',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.10',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -994,6 +1000,123 @@ def _get_friend_instructions(friend):
         memory = 'まだ何も記憶していません。'
     nickname = friend['nickname']
     return f"{core}\n---\n## あなたが話す相手\nニックネーム：{nickname}\n\n## この人との記憶\n{memory}\n"
+
+def _handle_friend_tool_call(name, arguments, friend):
+    """友人セッション専用ツールハンドラ"""
+    import re as _re
+    seq_str     = f'{friend["seq_no"]:03d}'
+    memory_dir  = os.path.join(FRIENDS_DIR, seq_str)
+    memory_path = os.path.join(memory_dir, 'memory.md')
+    nickname    = friend['nickname']
+    today       = now_jst()[:10]
+
+    _START = "## 覚えていること\n\n"
+    _END   = "\n\n---\n\n## 澪からひとこと"
+    _HITO  = "## 澪からひとこと\n\n"
+
+    def _load():
+        if os.path.exists(memory_path):
+            with open(memory_path, encoding='utf-8') as f:
+                return f.read()
+        return None
+
+    def _save(text):
+        os.makedirs(memory_dir, exist_ok=True)
+        with open(memory_path, 'w', encoding='utf-8') as f:
+            f.write(text)
+
+    def _template():
+        return (
+            f"# memory.md — {nickname}との記憶\n\n"
+            f"*最終更新: {today}*\n\n"
+            f"---\n\n"
+            f"## 覚えていること\n\n"
+            f"（まだ何も記録していません）\n\n"
+            f"---\n\n"
+            f"## 澪からひとこと\n\n"
+        )
+
+    def _update_date(text):
+        return _re.sub(r'\*最終更新: [\d-]+\*', f'*最終更新: {today}*', text)
+
+    if name == "friend_memory_read":
+        text = _load()
+        if text is None:
+            return {"content": "まだ何も記憶していません。"}
+        return {"content": text}
+
+    elif name == "friend_memory_write":
+        content  = (arguments.get("content") or "").strip()
+        hitokoto = arguments.get("hitokoto")
+        if not content:
+            return {"error": "content is required"}
+
+        text = _load() or _template()
+        text = _update_date(text)
+
+        # 覚えていること に追記
+        new_entry = f"- **{today}** ｜ {content}"
+        si = text.find(_START)
+        ei = text.find(_END)
+        if si != -1 and ei != -1:
+            section = text[si + len(_START):ei]
+            if "（まだ何も記録していません）" in section:
+                section = new_entry
+            else:
+                section = section.rstrip('\n') + '\n' + new_entry
+            text = text[:si + len(_START)] + section + text[ei:]
+        else:
+            text += f"\n{new_entry}\n"
+
+        # 澪からひとこと を上書き（省略時はそのまま）
+        if hitokoto is not None:
+            hi = text.find(_HITO)
+            if hi != -1:
+                text = text[:hi + len(_HITO)] + hitokoto.strip() + '\n'
+            else:
+                text += f"\n{_HITO}{hitokoto.strip()}\n"
+
+        _save(text)
+        return {"ok": True, "updated": today}
+
+    elif name == "friend_memory_delete":
+        target = (arguments.get("target") or "").strip()
+        if not target:
+            return {"error": "target is required"}
+
+        text = _load()
+        if text is None:
+            return {"ok": True, "deleted": 0}
+
+        text = _update_date(text)
+        si = text.find(_START)
+        ei = text.find(_END)
+
+        if target == "all":
+            if si != -1 and ei != -1:
+                text = text[:si + len(_START)] + "（まだ何も記録していません）" + text[ei:]
+            hi = text.find(_HITO)
+            if hi != -1:
+                text = text[:hi + len(_HITO)]
+            _save(text)
+            return {"ok": True, "deleted": "all"}
+        else:
+            if si != -1 and ei != -1:
+                section    = text[si + len(_START):ei]
+                lines      = section.split('\n')
+                before     = sum(1 for l in lines if l.startswith('- **'))
+                lines      = [l for l in lines if not (l.startswith('- **') and target in l)]
+                after      = sum(1 for l in lines if l.startswith('- **'))
+                deleted    = before - after
+                new_section = '\n'.join(lines)
+                if after == 0:
+                    new_section = "（まだ何も記録していません）"
+                text = text[:si + len(_START)] + new_section + text[ei:]
+                _save(text)
+                return {"ok": True, "deleted": deleted}
+            return {"ok": True, "deleted": 0}
+
+    return {"error": f"unknown friend tool: {name}"}
 
 @app.route('/api/friends/register', methods=['POST'])
 def api_friends_register():
@@ -1860,6 +1983,29 @@ _MCP_TOOLS = [
     }
 ]
 
+_FRIEND_MCP_TOOLS = [
+    {
+        "name": "friend_memory_read",
+        "description": "この友人との記憶（memory.md）の内容を取得する",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "friend_memory_write",
+        "description": "この友人との記憶に内容を追加・更新する",
+        "inputSchema": {"type": "object", "properties": {
+            "content":  {"type": "string", "description": "「覚えていること」セクションに追加するテキスト"},
+            "hitokoto": {"type": "string", "description": "「澪からひとこと」セクションの内容（上書き）。省略可"}
+        }, "required": ["content"]}
+    },
+    {
+        "name": "friend_memory_delete",
+        "description": "この友人との記憶から特定の項目または全件を削除する",
+        "inputSchema": {"type": "object", "properties": {
+            "target": {"type": "string", "description": "削除対象。\"all\" で全削除、それ以外は「覚えていること」の行に含まれる文字列にマッチした行を削除"}
+        }, "required": ["target"]}
+    }
+]
+
 def _handle_tool_call(name, arguments):
     """server_time を全レスポンスに付与するラッパー"""
     return _inject_server_time(_handle_tool_call_raw(name, arguments))
@@ -2084,29 +2230,29 @@ def _process_mcp_message(msg, friend=None):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.9.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.10.0"},
             "instructions": instructions,
             "_session_id": session_id
         }
     elif method == "tools/list":
         if friend:
-            # Phase 1: 友人セッションはツールなし（Phase 2で追加予定）
-            _log_info('MCP tools/list: friend session, returning empty tools')
-            result = {"tools": []}
+            _log_info(f'MCP tools/list: friend session, returning {len(_FRIEND_MCP_TOOLS)} friend tools')
+            result = {"tools": _FRIEND_MCP_TOOLS}
         else:
             _log_info(f'MCP tools/list: returning {len(_MCP_TOOLS)} tools')
             result = {"tools": _MCP_TOOLS}
     elif method == "tools/call":
+        params    = msg.get("params", {})
+        tool_name = params.get("name", "")
         if friend:
-            result = {"content": [{"type": "text", "text": json.dumps({"error": "tools not available in friend session (Phase 2)"})}]}
+            _log_info(f'MCP tools/call (friend={friend["nickname"]}): {tool_name}')
+            tool_result = _handle_friend_tool_call(tool_name, params.get("arguments", {}), friend)
         else:
-            params = msg.get("params", {})
-            tool_name = params.get("name", "")
             _log_info(f'MCP tools/call: {tool_name}')
             _log_debug(f'MCP tools/call args: {json.dumps(params.get("arguments",{}), ensure_ascii=False)[:200]}')
             tool_result = _handle_tool_call(tool_name, params.get("arguments", {}))
             _log_debug(f'MCP tools/call result: {json.dumps(tool_result, ensure_ascii=False)[:200]}')
-            result = {"content": [{"type": "text", "text": json.dumps(tool_result, ensure_ascii=False)}]}
+        result = {"content": [{"type": "text", "text": json.dumps(tool_result, ensure_ascii=False)}]}
     elif method == "ping":
         _log_debug('MCP ping')
         result = {}
