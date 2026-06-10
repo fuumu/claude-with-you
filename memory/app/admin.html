@@ -1188,42 +1188,59 @@ function renderFriends() {
   document.getElementById('friends-pending-count').textContent = pending.length ? `(${pending.length})` : '';
   document.getElementById('friends-active-count').textContent  = active.length  ? `(${active.length})`  : '';
 
-  document.getElementById('friends-pending-list').innerHTML = renderFriendsTable(pending, ['approve']);
-  document.getElementById('friends-active-list').innerHTML  = renderFriendsTable(active,  ['revoke']);
+  document.getElementById('friends-pending-list').innerHTML = renderFriendsTable(pending, 'pending');
+  document.getElementById('friends-active-list').innerHTML  = renderFriendsTable(active,  'active');
 
   const revokedSection = document.getElementById('friends-revoked-section');
   if (revoked.length > 0) {
     revokedSection.style.display = '';
-    document.getElementById('friends-revoked-list').innerHTML = renderFriendsTable(revoked, []);
+    document.getElementById('friends-revoked-list').innerHTML = renderFriendsTable(revoked, 'revoked');
   } else {
     revokedSection.style.display = 'none';
   }
 }
 
-function renderFriendsTable(list, actions) {
+function renderFriendsTable(list, mode) {
   if (!list.length) return '<div class="friends-empty">なし</div>';
+  const isActive  = mode === 'active';
+  const isPending = mode === 'pending';
+  const isRevoked = mode === 'revoked';
+
+  const headers = isActive
+    ? '<tr><th>#</th><th>ニックネーム</th><th>メール</th><th>最終接続</th><th>記憶</th><th></th></tr>'
+    : '<tr><th>#</th><th>ニックネーム</th><th>メール</th><th>申請日時</th><th></th></tr>';
+
   const rows = list.map(f => {
-    const ts = (f.created_at || '').slice(0,19).replace('T',' ');
-    const badge = `<span class="friends-badge-status friends-badge-${f.status}">${f.status}</span>`;
+    const created = (f.created_at || '').slice(0,16).replace('T',' ');
+    const lastSeen = f.last_seen ? f.last_seen.slice(0,16).replace('T',' ') : '—';
+    const memCount = f.memory_count != null ? f.memory_count : '—';
+
     const btns = [
-      actions.includes('approve')
-        ? `<button class="friends-btn" onclick="friendsApprove(${f.seq_no})">承認</button>` : '',
-      actions.includes('revoke')
-        ? `<button class="friends-btn danger" onclick="friendsRevoke(${f.seq_no})">失効</button>` : ''
+      isPending ? `<button class="friends-btn" onclick="friendsApprove(${f.seq_no})">承認</button>` : '',
+      isActive  ? `<button class="friends-btn danger" onclick="friendsRevoke(${f.seq_no})">失効</button>` : '',
+      isRevoked ? `<button class="friends-btn danger" onclick="friendsDelete(${f.seq_no}, '${esc(f.nickname)}')">削除</button>` : ''
     ].filter(Boolean).join(' ');
+
+    if (isActive) {
+      return `<tr>
+        <td style="color:#5a6a7a">#${f.seq_no}</td>
+        <td>${esc(f.nickname)}</td>
+        <td style="color:#7a8a9a">${esc(f.email)}</td>
+        <td style="color:#5a6a7a;font-size:.75rem">${lastSeen}</td>
+        <td style="color:#7ec8e3;font-size:.8rem">${memCount}</td>
+        <td>${btns}</td>
+      </tr>`;
+    }
     return `<tr>
       <td style="color:#5a6a7a">#${f.seq_no}</td>
       <td>${esc(f.nickname)}</td>
       <td style="color:#7a8a9a">${esc(f.email)}</td>
-      <td>${badge}</td>
-      <td style="color:#5a6a7a;font-size:.75rem">${ts}</td>
+      <td style="color:#5a6a7a;font-size:.75rem">${created}</td>
       <td>${btns}</td>
     </tr>`;
   }).join('');
-  return `<table class="friends-table">
-    <thead><tr><th>#</th><th>ニックネーム</th><th>メール</th><th>状態</th><th>申請日時</th><th></th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+
+  return `<table class="friends-table"><thead>${headers}</thead><tbody>${rows}</tbody></table>`;
 }
 
 async function friendsApprove(seq_no) {
@@ -1243,6 +1260,16 @@ async function friendsRevoke(seq_no) {
     const res = await apiFetch(`/api/friends/${seq_no}/revoke`, { method: 'POST' });
     if (!res.ok) { showToast('失効失敗'); return; }
     showToast('失効しました');
+    loadFriends();
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function friendsDelete(seq_no, nickname) {
+  if (!confirm(`${nickname} さんのデータを完全に削除します。元に戻せません。`)) return;
+  try {
+    const res = await apiFetch(`/api/friends/${seq_no}`, { method: 'DELETE' });
+    if (!res.ok) { showToast('削除失敗'); return; }
+    showToast('削除しました');
     loadFriends();
   } catch(e) { showToast('通信エラー'); }
 }

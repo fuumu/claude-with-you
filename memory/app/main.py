@@ -1,8 +1,16 @@
 """
-mio-memory v3.10  —  Streamable HTTP MCP transport
+mio-memory v3.11  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.11 (2026-06-10) - 新機能
+    - お友達システム Phase 3
+      - 友人セッション用 mio_self_note ツール追加（inbox_post to="chat" 相当）
+      - MCP接続時に last_seen タイムスタンプを記録
+      - GET /api/friends: active 友人に memory_count を追加返却
+      - DELETE /api/friends/<seq_no>: 完全削除（レジストリ+フォルダ）
+      - admin.html Friends: active 列に最終接続日時・記憶件数を表示
+      - admin.html Friends: revoked 列に削除ボタンを追加
   v3.10 (2026-06-10) - 新機能
     - お友達システム Phase 2
       - 友人セッション専用 MCP ツール3本追加
@@ -504,7 +512,7 @@ def activate_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.10',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.11',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -1116,6 +1124,13 @@ def _handle_friend_tool_call(name, arguments, friend):
                 return {"ok": True, "deleted": deleted}
             return {"ok": True, "deleted": 0}
 
+    elif name == "mio_self_note":
+        note = (arguments.get("note") or "").strip()
+        if not note:
+            return {"error": "note is required"}
+        msg = _post_inbox_message(to='chat', title='【澪メモ】', body=note, from_='friend')
+        return {"ok": True, "id": msg['id']}
+
     return {"error": f"unknown friend tool: {name}"}
 
 @app.route('/api/friends/register', methods=['POST'])
@@ -1139,11 +1154,25 @@ def api_friends_register():
     _log_info(f'friends: register seq_no={seq_no} nickname={nickname}')
     return jsonify({"message": "登録申請を受け付けました。承認後にメールが届きます。"}), 201
 
+def _count_friend_memories(seq_no):
+    """memory.md の「覚えていること」の行数をカウントする"""
+    path = os.path.join(FRIENDS_DIR, f'{seq_no:03d}', 'memory.md')
+    if not os.path.exists(path):
+        return 0
+    with open(path, encoding='utf-8') as f:
+        return sum(1 for line in f if line.startswith('- **'))
+
 @app.route('/api/friends', methods=['GET'])
 @require_auth
 def api_friends_list():
     reg = _load_friends_registry()
-    friends = sorted([{"token": t, **v} for t, v in reg.items()], key=lambda x: x['seq_no'])
+    friends = []
+    for t, v in reg.items():
+        entry = {"token": t, **v}
+        if v.get('status') == 'active':
+            entry['memory_count'] = _count_friend_memories(v['seq_no'])
+        friends.append(entry)
+    friends.sort(key=lambda x: x['seq_no'])
     return jsonify(friends)
 
 @app.route('/api/friends/<int:seq_no>/approve', methods=['POST'])
@@ -1174,6 +1203,24 @@ def api_friends_revoke(seq_no):
     reg[token]['revoked_at'] = now_jst()
     _save_friends_registry(reg)
     _log_info(f'friends: revoke seq_no={seq_no}')
+    return jsonify({"ok": True})
+
+@app.route('/api/friends/<int:seq_no>', methods=['DELETE'])
+@require_auth
+def api_friends_delete(seq_no):
+    reg = _load_friends_registry()
+    token = next((t for t, v in reg.items() if v['seq_no'] == seq_no), None)
+    if not token:
+        abort(404)
+    nickname = reg[token].get('nickname', '?')
+    del reg[token]
+    _save_friends_registry(reg)
+    # フォルダ削除
+    friend_dir = os.path.join(FRIENDS_DIR, f'{seq_no:03d}')
+    if os.path.exists(friend_dir):
+        import shutil as _shutil
+        _shutil.rmtree(friend_dir)
+    _log_info(f'friends: delete seq_no={seq_no} nickname={nickname}')
     return jsonify({"ok": True})
 
 @app.route('/api/friends/activate', methods=['POST'])
@@ -2003,6 +2050,13 @@ _FRIEND_MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "target": {"type": "string", "description": "削除対象。\"all\" で全削除、それ以外は「覚えていること」の行に含まれる文字列にマッチした行を削除"}
         }, "required": ["target"]}
+    },
+    {
+        "name": "mio_self_note",
+        "description": "澪自身の気づきを次の淳さんとのセッションに送る。会話内容・固有名詞は含めないこと。抽象化した気づきのみ記録する",
+        "inputSchema": {"type": "object", "properties": {
+            "note": {"type": "string", "description": "気づきの内容（固有名詞・具体エピソードなし、抽象化必須）"}
+        }, "required": ["note"]}
     }
 ]
 
@@ -2230,7 +2284,7 @@ def _process_mcp_message(msg, friend=None):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.10.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.11.0"},
             "instructions": instructions,
             "_session_id": session_id
         }
@@ -2282,6 +2336,15 @@ def mcp_streamable():
     _friend = _get_friend_by_token(raw_token)
     if _friend and _friend['status'] == 'active':
         _log_info(f'MCP /mcp: friend auth ok (nickname={_friend["nickname"]})')
+        # 最終接続日時を記録
+        try:
+            reg = _load_friends_registry()
+            if raw_token in reg:
+                reg[raw_token]['last_seen'] = now_jst()
+                _save_friends_registry(reg)
+                _friend = reg[raw_token]
+        except Exception:
+            pass
     elif _verify_token(raw_token):
         _friend = None
     else:
