@@ -1,8 +1,14 @@
 """
-mio-memory v3.7  —  Streamable HTTP MCP transport
+mio-memory v3.8  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.8 (2026-06-10) - バグ修正・機能追加
+    - admin.html INBOX: 管理画面表示で自動既読にならないよう修正
+    - admin.html INBOX: 既読/未読/persistent 手動操作ボタン追加
+    - API: PATCH /api/inbox/<id>/unread（未読に戻す）追加
+    - API: PATCH /api/inbox/<id>/persistent?value=true|false（persistent切り替え）追加
+    - README.ja.md: .env サンプルに MIO_BASE_URL 追記
   v3.7 (2026-06-09) - 機能追加
     - inbox_check に include_read パラメータ追加
       include_read=true で既読メッセージも含む全件返却
@@ -468,7 +474,7 @@ def logs_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.6',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.8',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -796,6 +802,33 @@ def api_inbox_mark_read(msg_id):
     msg = _mark_inbox_read(msg_id)
     if msg is None:
         abort(404)
+    return jsonify(msg)
+
+@app.route('/api/inbox/<msg_id>/unread', methods=['PATCH'])
+@require_auth
+def api_inbox_mark_unread(msg_id):
+    path = _inbox_path(msg_id)
+    if not os.path.exists(path):
+        abort(404)
+    with open(path, encoding='utf-8') as f:
+        msg = json.load(f)
+    msg['read'] = False
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(msg, f, ensure_ascii=False, indent=2)
+    return jsonify(msg)
+
+@app.route('/api/inbox/<msg_id>/persistent', methods=['PATCH'])
+@require_auth
+def api_inbox_set_persistent(msg_id):
+    path = _inbox_path(msg_id)
+    if not os.path.exists(path):
+        abort(404)
+    value = request.args.get('value', 'true').lower() != 'false'
+    with open(path, encoding='utf-8') as f:
+        msg = json.load(f)
+    msg['persistent'] = value
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(msg, f, ensure_ascii=False, indent=2)
     return jsonify(msg)
 
 # ── 会話内アーティファクト抽出 ───────────────────────────────────────
@@ -1814,7 +1847,7 @@ def _process_mcp_message(msg):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.5.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.8.0"},
             "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。",
             "_session_id": session_id
         }

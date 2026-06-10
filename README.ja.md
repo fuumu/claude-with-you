@@ -113,6 +113,7 @@ cp .env_sample .env
 
 ```env
 MIO_API_TOKEN=your_secret_token_here
+MIO_BASE_URL=https://memory.example.com   # Cloudflare Tunnel など外部公開 URL
 MIO_LOG_LEVEL=info
 # MIO_ALLOWED_ORIGINS=https://claude.ai  # 必要なら設定
 ```
@@ -127,7 +128,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.6","mcp_tool_count":15}
+# {"status":"ok","version":"3.8","mcp_tool_count":15}
 ```
 
 ### 5. Claude Code への登録

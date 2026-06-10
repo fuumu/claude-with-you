@@ -320,6 +320,10 @@
     .inbox-detail-meta { font-size:.78rem; color:#5a6a7a; margin-bottom:1rem; }
     .inbox-detail-body { font-size:.88rem; color:#b0c0d0; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
     .inbox-empty { color:#5a6a7a; font-size:.88rem; text-align:center; padding:2rem 0; }
+    .inbox-actions { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1rem; }
+    .inbox-action-btn { background:none; border:1px solid #2a3a5a; border-radius:4px; color:#7a8a9a; padding:.25rem .65rem; font-size:.78rem; cursor:pointer; transition:border-color .15s,color .15s; }
+    .inbox-action-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
+    .inbox-action-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
   </style>
 </head>
 <body>
@@ -462,6 +466,7 @@
   <div class="inbox-detail" id="inbox-detail">
     <div class="inbox-detail-title" id="inbox-detail-title"></div>
     <div class="inbox-detail-meta" id="inbox-detail-meta"></div>
+    <div class="inbox-actions" id="inbox-actions"></div>
     <div class="inbox-detail-body" id="inbox-detail-body"></div>
   </div>
 </div>
@@ -905,21 +910,8 @@ function renderInbox() {
   }).join('');
 }
 
-async function openInboxMessage(id) {
+function _renderInboxDetail(msg) {
   const detail = document.getElementById('inbox-detail');
-  const msg    = _inboxData.find(m => m.id === id);
-  if (!msg) return;
-
-  // 既読マーク（persistent 以外）
-  if (!msg.read && !msg.persistent) {
-    try {
-      await apiFetch(`/api/inbox/${id}/read`, { method: 'PATCH' });
-      msg.read = true;
-      updateInboxBadge();
-      renderInbox();
-    } catch(e) {}
-  }
-
   const ts  = (msg.created_at || '').slice(0, 19).replace('T', ' ');
   const badges = [
     msg.persistent ? '<span class="inbox-badge-persistent" style="font-size:.78rem">常駐</span>' : '',
@@ -930,8 +922,50 @@ async function openInboxMessage(id) {
   document.getElementById('inbox-detail-meta').textContent =
     `${msg.from || '?'} → ${msg.to || '?'} ・ ${ts}`;
   document.getElementById('inbox-detail-body').textContent = msg.body || '';
+
+  const actions = document.getElementById('inbox-actions');
+  const btns = [];
+  if (!msg.read)  btns.push(`<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(msg.id)}')">既読にする</button>`);
+  if (msg.read)   btns.push(`<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(msg.id)}')">未読に戻す</button>`);
+  if (!msg.persistent) btns.push(`<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(msg.id)}', true)">常駐ON</button>`);
+  if (msg.persistent)  btns.push(`<button class="inbox-action-btn danger" onclick="inboxSetPersistent('${esc(msg.id)}', false)">常駐OFF</button>`);
+  actions.innerHTML = btns.join('');
+
   detail.classList.add('open');
   detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function openInboxMessage(id) {
+  const msg = _inboxData.find(m => m.id === id);
+  if (!msg) return;
+  _renderInboxDetail(msg);
+}
+
+async function inboxMarkRead(id) {
+  try {
+    const res = await apiFetch(`/api/inbox/${id}/read`, { method: 'PATCH' });
+    const updated = await res.json();
+    Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
+    updateInboxBadge(); renderInbox(); _renderInboxDetail(updated);
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function inboxMarkUnread(id) {
+  try {
+    const res = await apiFetch(`/api/inbox/${id}/unread`, { method: 'PATCH' });
+    const updated = await res.json();
+    Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
+    updateInboxBadge(); renderInbox(); _renderInboxDetail(updated);
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function inboxSetPersistent(id, value) {
+  try {
+    const res = await apiFetch(`/api/inbox/${id}/persistent?value=${value}`, { method: 'PATCH' });
+    const updated = await res.json();
+    Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
+    updateInboxBadge(); renderInbox(); _renderInboxDetail(updated);
+  } catch(e) { showToast('通信エラー'); }
 }
 
 // ── Files ─────────────────────────────────────────────────────────────
