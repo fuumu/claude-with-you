@@ -311,6 +311,15 @@ def append_oplog(operation, entry_id, before, after):
 def _name_slug(name: str) -> str:
     return name.replace('.', '_').replace(' ', '_')
 
+def _validate_artifact_name(name: str) -> bool:
+    """パストラバーサル（../や絶対パス）を含む名前を弾く"""
+    if not name:
+        return False
+    if name.startswith('/'):
+        return False
+    norm = os.path.normpath(name)
+    return not (norm.startswith('..') or os.path.isabs(norm))
+
 def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None) -> dict:
     name_slug = _name_slug(name)
     ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
@@ -671,6 +680,8 @@ def api_coremem_list():
 @app.route('/api/coremem/<path:name>', methods=['GET'])
 @require_auth
 def api_coremem_read(name):
+    if not _validate_artifact_name(name):
+        abort(400)
     version = request.args.get('version', None)
     if version is not None:
         version = int(version)
@@ -682,6 +693,8 @@ def api_coremem_read(name):
 @app.route('/api/coremem/<path:name>', methods=['POST'])
 @require_auth
 def api_coremem_save(name):
+    if not _validate_artifact_name(name):
+        abort(400)
     data = request.get_json()
     if not data or 'content' not in data:
         abort(400)
@@ -691,6 +704,8 @@ def api_coremem_save(name):
 @app.route('/api/coremem/<path:name>', methods=['DELETE'])
 @require_auth
 def api_coremem_delete(name):
+    if not _validate_artifact_name(name):
+        abort(400)
     symlink_path = os.path.join(ARTIFACTS_DIR, name)
     if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
         abort(404)
@@ -2171,10 +2186,15 @@ def _handle_tool_call_raw(name, arguments):
         c = arguments.get("content", "")
         if not n:
             return {"error": "name is required"}
+        if not _validate_artifact_name(n):
+            return {"error": "invalid name"}
         return _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"))
 
     elif name == "CoreMem_read":
-        return _artifacts_read(arguments.get("name", ""), arguments.get("version"))
+        n = arguments.get("name", "")
+        if not _validate_artifact_name(n):
+            return {"error": "invalid name"}
+        return _artifacts_read(n, arguments.get("version"))
 
     elif name == "CoreMem_list":
         return _artifacts_list()
@@ -2183,6 +2203,8 @@ def _handle_tool_call_raw(name, arguments):
         n = arguments.get("name", "")
         if not n:
             return {"error": "name is required"}
+        if not _validate_artifact_name(n):
+            return {"error": "invalid name"}
         symlink_path = os.path.join(ARTIFACTS_DIR, n)
         if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
             return {"error": f"not found: {n}"}
