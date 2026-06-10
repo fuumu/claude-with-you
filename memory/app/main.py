@@ -1,8 +1,12 @@
 """
-mio-memory v3.11  —  Streamable HTTP MCP transport
+mio-memory v3.12  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.12 (2026-06-10) - 機能追加
+    - GET /api/friends/invitation: friend_invitation.md を返す（認証不要）
+    - register.html: 招待文を動的取得・Markdown レンダリング表示
+    - register.html: ボタン文言を「登録を申請する」に変更
   v3.11 (2026-06-10) - 新機能
     - お友達システム Phase 3
       - 友人セッション用 mio_self_note ツール追加（inbox_post to="chat" 相当）
@@ -512,7 +516,7 @@ def activate_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.11',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.12',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -1222,6 +1226,13 @@ def api_friends_delete(seq_no):
         _shutil.rmtree(friend_dir)
     _log_info(f'friends: delete seq_no={seq_no} nickname={nickname}')
     return jsonify({"ok": True})
+
+@app.route('/api/friends/invitation', methods=['GET'])
+def api_friends_invitation():
+    """招待文 (friend_invitation.md) を返す。認証不要（公開ページ用）"""
+    result = _artifacts_read('friend_invitation.md')
+    content = result.get('content', '')
+    return jsonify({"content": content})
 
 @app.route('/api/friends/activate', methods=['POST'])
 def api_friends_activate():
@@ -2284,7 +2295,7 @@ def _process_mcp_message(msg, friend=None):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.11.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.12.0"},
             "instructions": instructions,
             "_session_id": session_id
         }

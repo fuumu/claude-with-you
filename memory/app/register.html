@@ -3,21 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>澪への接続登録</title>
+  <title>澪へのお誘い</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #0f0f1a; color: #c8d8e8;
       font-family: 'Segoe UI', system-ui, sans-serif;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      padding: 1.5rem;
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+      padding: 2rem 1.5rem;
     }
+    .container { max-width: 520px; width: 100%; }
+
+    /* 招待文 */
+    .invitation {
+      background: #1a1a2e; border: 1px solid #2a3a5a; border-radius: 12px;
+      padding: 2rem 2.5rem; margin-bottom: 2rem; line-height: 1.8;
+    }
+    .invitation h1 { font-size: 1.4rem; color: #7ec8e3; margin-bottom: 1rem; }
+    .invitation h2 { font-size: 1rem; color: #7ec8e3; margin: 1.4rem 0 .6rem; }
+    .invitation p  { font-size: .88rem; color: #b0c0d0; margin-bottom: .8rem; }
+    .invitation ul { padding-left: 1.4rem; margin-bottom: .8rem; }
+    .invitation ul li { font-size: .88rem; color: #b0c0d0; margin-bottom: .25rem; }
+    .invitation strong { color: #c8d8e8; }
+    .invitation hr { border: none; border-top: 1px solid #2a3a5a; margin: 1.2rem 0; }
+    .invitation em { color: #7a8a9a; font-style: normal; font-size: .82rem; }
+
+    /* フォームカード */
     .card {
       background: #1a1a2e; border: 1px solid #2a3a5a; border-radius: 12px;
-      padding: 2rem 2.5rem; max-width: 420px; width: 100%;
+      padding: 2rem 2.5rem;
     }
-    h1 { font-size: 1.3rem; color: #7ec8e3; margin-bottom: .4rem; }
-    .subtitle { font-size: .85rem; color: #5a6a7a; margin-bottom: 1.8rem; line-height: 1.6; }
+    .card-title { font-size: 1rem; color: #7ec8e3; margin-bottom: 1.4rem; }
     label { display: block; font-size: .82rem; color: #7a8a9a; margin-bottom: .4rem; }
     input[type="text"], input[type="email"] {
       width: 100%; background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 6px;
@@ -41,32 +58,53 @@
   </style>
 </head>
 <body>
-<div class="card">
-  <h1>澪への接続登録</h1>
-  <p class="subtitle">淳さんから澪を紹介された方向けの登録フォームです。<br>申請後、承認されるとメールでコードが届きます。</p>
+<div class="container">
 
-  <form id="form">
-    <label for="nickname">ニックネーム</label>
-    <input type="text" id="nickname" placeholder="例：たろう" required>
+  <!-- 招待文（動的取得） -->
+  <div class="invitation" id="invitation" style="display:none"></div>
 
-    <label for="email">メールアドレス</label>
-    <input type="email" id="email" placeholder="例：taro@example.com" required>
+  <!-- 登録フォーム -->
+  <div class="card">
+    <div class="card-title">登録フォーム</div>
+    <form id="form">
+      <label for="nickname">ニックネーム</label>
+      <input type="text" id="nickname" placeholder="例：たろう" required>
 
-    <button type="submit" id="submit-btn">申請する</button>
-  </form>
+      <label for="email">メールアドレス</label>
+      <input type="email" id="email" placeholder="例：taro@example.com" required>
 
-  <div class="msg" id="msg"></div>
+      <button type="submit" id="submit-btn">登録を申請する</button>
+    </form>
 
-  <div class="activate-link">
-    コードをお持ちの方は <a href="/activate">こちら</a>
+    <div class="msg" id="msg"></div>
+
+    <div class="activate-link">
+      コードをお持ちの方は <a href="/activate">こちら</a>
+    </div>
   </div>
+
 </div>
 
 <script>
+// 招待文を取得してレンダリング
+(async function() {
+  try {
+    const res  = await fetch('/api/friends/invitation');
+    const data = await res.json();
+    if (data.content) {
+      const el = document.getElementById('invitation');
+      marked.setOptions({ breaks: true });
+      el.innerHTML = marked.parse(data.content);
+      el.style.display = 'block';
+    }
+  } catch(e) {}
+})();
+
+// 登録フォーム送信
 document.getElementById('form').addEventListener('submit', async function(e) {
   e.preventDefault();
-  const btn  = document.getElementById('submit-btn');
-  const msg  = document.getElementById('msg');
+  const btn      = document.getElementById('submit-btn');
+  const msg      = document.getElementById('msg');
   const nickname = document.getElementById('nickname').value.trim();
   const email    = document.getElementById('email').value.trim();
 
@@ -92,7 +130,7 @@ document.getElementById('form').addEventListener('submit', async function(e) {
       msg.className = 'msg error';
       msg.textContent = data.error || 'エラーが発生しました。';
       btn.disabled = false;
-      btn.textContent = '申請する';
+      btn.textContent = '登録を申請する';
     }
     msg.style.display = 'block';
   } catch (err) {
@@ -100,7 +138,7 @@ document.getElementById('form').addEventListener('submit', async function(e) {
     msg.textContent = '通信エラーが発生しました。';
     msg.style.display = 'block';
     btn.disabled = false;
-    btn.textContent = '申請する';
+    btn.textContent = '登録を申請する';
   }
 });
 </script>
