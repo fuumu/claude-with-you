@@ -303,6 +303,14 @@ conversation_share(uuid="abc-123")
 
 ### Import a Claude.ai export
 
+**Why import?**
+
+When you switch models or start a new session, past conversations disappear from Claude's view.
+ZIP import solves this: once your conversation history lives on your own server, it survives any model upgrade or platform change.
+
+You can search across everything with `conversation_search` and read any conversation in full with `conversation_read`.
+Your thinking history stays yours — not locked inside Claude.ai.
+
 1. In Claude.ai: Settings → Export Data → download the ZIP
 2. Upload via admin panel (Import tab) or API:
 
