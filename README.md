@@ -243,6 +243,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/coremem` | List UserCoreMemory files |
 | GET | `/api/coremem/<name>` | Read UserCoreMemory file |
 | POST | `/api/coremem/<name>` | Save UserCoreMemory file |
+| DELETE | `/api/coremem/<name>` | Delete UserCoreMemory file (all versions) |
 | GET | `/api/conversations/` | Search conversations |
 | GET | `/api/conversations/<uuid>` | Get conversation |
 | GET | `/api/inbox` | List inbox messages |
@@ -382,6 +383,8 @@ ngrok http 5002
 
 Note: ngrok URL changes on each restart unless you have a paid plan.
 
+> **Docker Desktop (Windows / Mac):** the bundled `docker-compose.yml` uses `network_mode: host` (intended for Synology NAS). Host networking does not expose ports on Docker Desktop — remove the `network_mode: host` line and add `ports: ["5002:5002"]` instead.
+
 ### Option 3: VPS + Certbot
 
 For a stable public URL on a cloud server (DigitalOcean, Linode, etc.).
@@ -409,7 +412,7 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `LM_STUDIO_PORT` | `1234` | LM Studio port |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails (Mail Send scope) |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
-| `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for registration links (falls back to `MIO_BASE_URL`) |
+| `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to `MIO_BASE_URL`) |
 
 ---
 
@@ -426,18 +429,22 @@ claude-with-you/
 ├── README.md               This file (English)
 ├── README.ja.md            Japanese detailed reference
 ├── CLAUDE.md               Claude Code instructions
+├── MEMORY_CUSTOMIZATION.md     Memory operation guide (English)
+├── MEMORY_CUSTOMIZATION.ja.md  Memory operation guide (Japanese, primary)
 ├── docker-compose.yml
 ├── .env_sample
 ├── docs/
 │   ├── design.md           MCP server design spec
 │   ├── setup.md            First-time setup guide
-│   └── talk-and-build.md   Claude.ai + Claude Code workflow
+│   ├── talk-and-build.md   Claude.ai + Claude Code workflow
+│   ├── friend-system.md    Friend system guide (ja: friend-system.ja.md)
+│   └── data_structure.md   Claude export ZIP data structure
 ├── scripts/
 │   └── generate_summary_layers.py
 └── memory/
     ├── Dockerfile
     ├── app/
-    │   ├── main.py         All server logic (~2300 lines, single file)
+    │   ├── main.py         All server logic (~2500 lines, single file)
     │   ├── admin.html      Web admin UI
     │   ├── logs.html       Conversation viewer
     │   ├── register.html   Friend registration page
@@ -454,8 +461,9 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.12)**
-- Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory
+**Implemented (v3.9–v3.13)**
+- Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
+- `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 
 ---
 

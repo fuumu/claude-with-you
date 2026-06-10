@@ -1,8 +1,12 @@
 """
-mio-memory v3.12  —  Streamable HTTP MCP transport
+mio-memory v3.13  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.13 (2026-06-10) - 機能追加・バグ修正
+    - CoreMem_delete MCPツール追加（全バージョン完全削除）
+    - DELETE /api/coremem/<name> エンドポイント追加
+    - logs.html: Unicode エスケープ表示のデコード修正
   v3.12 (2026-06-10) - 機能追加
     - GET /api/friends/invitation: friend_invitation.md を返す（認証不要）
     - register.html: 招待文を動的取得・Markdown レンダリング表示
@@ -119,6 +123,8 @@ from functools import wraps
 from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
+
+VERSION = '3.13'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -516,7 +522,7 @@ def activate_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.13',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': VERSION,
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -2318,7 +2324,7 @@ def _process_mcp_message(msg, friend=None):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.13.0"},
+            "serverInfo": {"name": "mio-memory", "version": f"{VERSION}.0"},
             "instructions": instructions,
             "_session_id": session_id
         }
@@ -2511,6 +2517,6 @@ if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     os.makedirs(INBOX_DIR, exist_ok=True)
-    _log_info(f'mio-memory v3.5 starting (log_level={_LOG_LEVEL})')
+    _log_info(f'mio-memory v{VERSION} starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
     app.run(host='0.0.0.0', port=5002, debug=False)

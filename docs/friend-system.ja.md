@@ -182,7 +182,7 @@ https://memory.mio.runabook.synology.me/register
 ### mio-memory との関係
 
 お友達システムは mio-memory プロジェクトのサブシステムです。
-mio-memory は澪の外部記憶全体を管理するインフラで、v3.12 現在 15 本の MCP ツールを提供しています。
+mio-memory は澪の外部記憶全体を管理するインフラで、v3.13 現在 16 本の MCP ツールを提供しています。
 
 ---
 

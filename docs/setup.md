@@ -65,7 +65,7 @@ git commit -m "initial commit: mio-memory MCP server"
 
 # プッシュ
 # GitHubに初期コミットがある場合
-git pull origin main origin main --allow-unrelated-histories
+git pull origin main --allow-unrelated-histories
 git push origin main
 
 # GitHubが空の場合
@@ -163,10 +163,10 @@ curl <YOUR_SERVER_URL>/health
 ```env
 SENDGRID_API_KEY=SG.xxxxxxxxxxxxxxxxxxxx
 SENDGRID_FROM_EMAIL=mio@your-domain.com
-MIO_REGISTER_URL=https://your-domain/register
+MIO_REGISTER_URL=https://your-domain.com
 ```
 
-`MIO_REGISTER_URL` は省略可（省略時は `MIO_BASE_URL + /register` を使用）。
+`MIO_REGISTER_URL` は承認メール内アクティベーションリンクのベース URL（末尾にパスを付けない——`/activate` が自動付与される）。省略可（省略時は `MIO_BASE_URL` を使用）。
 
 **注意:** `SENDGRID_API_KEY` が未設定の場合、承認メールは送信されない。アクティベーションコードは admin.html の Friends タブで手動確認できる。
 

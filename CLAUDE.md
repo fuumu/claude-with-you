@@ -35,6 +35,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/conv_artifacts/` — files extracted from conversation tool-use blocks
 - `/data/inbox/` — inbox messages (inbox_check / inbox_read / inbox_post)
 - `/data/friends/` — friend system: `registry.json` (token→friend mapping) + per-friend subdirs (`001/memory.md`, `002/memory.md`, ...)
+- `/data/friend_core.md` — Mio's identity definition injected into friend session instructions (plain file, optional; falls back to built-in default)
 - `/data/share_tokens.json` — share tokens for memory entries and conversations
 - `/data/imported_uuids.json` — deduplication log for ZIP imports
 - `/data/.import_status.json` — last ZIP import record
@@ -51,7 +52,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.12):**
+**MCP tools exposed (v3.13):**
 
 Regular sessions (16 tools):
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD
@@ -61,7 +62,7 @@ Regular sessions (16 tools):
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check(include_read=true)` returns all messages (including already-read ones) with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
 
 Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
-- `friend_memory_read` — read this friend's memory file (`memory_{seq_no}.md`)
+- `friend_memory_read` — read this friend's memory file (`/data/friends/{seq_no:03d}/memory.md`)
 - `friend_memory_write` — append a dated entry to the friend's memory
 - `friend_memory_delete` — delete a specific entry from the friend's memory
 - `mio_self_note` — post a note to the owner's inbox (creates `inbox_post(to="chat", from_="friend")`)
@@ -76,12 +77,12 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 **MCP initialize instructions:**
 `/mcp` エンドポイントの initialize レスポンスに `instructions` フィールドが含まれる。
 接続時に Claude.ai へ「セッション開始時に `CoreMem_read("core.md")` を実行して記憶を読み込む」旨を自動通知する。
-友達セッションでは `friend_core.md`（CoreMem）と `memory_{seq_no}.md` の内容を動的に注入する。
+友達セッションでは `/data/friend_core.md`（生ファイル、なければ組み込みデフォルト）と `/data/friends/{seq_no}/memory.md` の内容を動的に注入する。
 
 **Friend system (v3.9–v3.12):**
 - Registration flow: `POST /api/friends/register` (no auth) → admin approves via admin.html → SendGrid sends activation code email → friend visits `/activate` and gets their token
-- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of normal 15 tools
-- Per-friend memory: stored at `/data/friends/memory_{seq_no}.md`; managed via `friend_memory_*` tools
+- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of the normal 16 tools
+- Per-friend memory: stored at `/data/friends/{seq_no:03d}/memory.md`; managed via `friend_memory_*` tools
 - Admin REST API: `/api/friends` (list), `/api/friends/<seq_no>/approve`, `/api/friends/<seq_no>/revoke`, `DELETE /api/friends/<seq_no>` (complete removal with shutil.rmtree)
 - Public pages: `/register` (registration form + invitation text from CoreMem `friend_invitation.md`), `/activate` (activation code entry)
 - `last_seen` timestamp recorded on each friend MCP request
@@ -103,7 +104,7 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | `LM_STUDIO_PORT` | `1234` | LMStudio port |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
-| `MIO_REGISTER_URL` | *(empty)* | Friend system: public URL for registration links (falls back to MIO_BASE_URL) |
+| `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to MIO_BASE_URL) |
 
 ## 澪コードの定型フロー
 
