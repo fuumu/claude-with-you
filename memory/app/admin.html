@@ -324,6 +324,23 @@
     .inbox-action-btn { background:none; border:1px solid #2a3a5a; border-radius:4px; color:#7a8a9a; padding:.25rem .65rem; font-size:.78rem; cursor:pointer; transition:border-color .15s,color .15s; }
     .inbox-action-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
     .inbox-action-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
+
+    /* ── Friends ── */
+    .friends-section { margin-bottom: 1.5rem; }
+    .friends-section h3 { font-size:.88rem; color:#7ec8e3; margin-bottom:.75rem; border-bottom:1px solid #2a3a5a; padding-bottom:.4rem; }
+    .friends-table { width:100%; border-collapse:collapse; font-size:.83rem; }
+    .friends-table th { text-align:left; color:#5a6a7a; font-weight:400; padding:.4rem .6rem; border-bottom:1px solid #2a3a5a; }
+    .friends-table td { padding:.5rem .6rem; border-bottom:1px solid #1a1a2e; color:#b0c0d0; vertical-align:middle; }
+    .friends-table tr:hover td { background:#1a1a2e; }
+    .friends-badge-status { border-radius:4px; font-size:.7rem; padding:1px 5px; }
+    .friends-badge-pending  { background:#f39c12; color:#0f0f1a; }
+    .friends-badge-active   { background:#2ecc71; color:#0f0f1a; }
+    .friends-badge-revoked  { background:#5a6a7a; color:#c8d8e8; }
+    .friends-btn { background:none; border:1px solid #2a3a5a; border-radius:4px; color:#7a8a9a; padding:.2rem .55rem; font-size:.75rem; cursor:pointer; transition:border-color .15s,color .15s; }
+    .friends-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
+    .friends-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
+    .friends-empty { color:#5a6a7a; font-size:.85rem; padding:.8rem 0; }
+    .friends-toolbar { display:flex; gap:.5rem; margin-bottom:1rem; align-items:center; }
   </style>
 </head>
 <body>
@@ -350,6 +367,7 @@
   <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
   <button class="tab-btn" onclick="switchTab('files', this)">Files</button>
   <button class="tab-btn" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
+  <button class="tab-btn" onclick="switchTab('friends', this)">Friends <span id="friends-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
   <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
 </div>
 
@@ -471,6 +489,29 @@
   </div>
 </div>
 
+<!-- Friends tab -->
+<div class="tab-panel" id="tab-friends">
+  <div class="friends-toolbar">
+    <button class="btn btn-secondary" onclick="loadFriends()" style="padding:.25rem .65rem;font-size:.8rem">再読み込み</button>
+    <a href="/register" target="_blank" class="btn btn-secondary" style="padding:.25rem .65rem;font-size:.8rem;text-decoration:none">登録ページを開く</a>
+  </div>
+
+  <div class="friends-section" id="friends-pending-section">
+    <h3>申請中 <span id="friends-pending-count" style="color:#f39c12"></span></h3>
+    <div id="friends-pending-list"></div>
+  </div>
+
+  <div class="friends-section" id="friends-active-section">
+    <h3>承認済み <span id="friends-active-count" style="color:#2ecc71"></span></h3>
+    <div id="friends-active-list"></div>
+  </div>
+
+  <div class="friends-section" id="friends-revoked-section" style="display:none">
+    <h3 style="color:#5a6a7a">失効済み</h3>
+    <div id="friends-revoked-list"></div>
+  </div>
+</div>
+
 <!-- Logs tab -->
 <div class="tab-panel" id="tab-logs" style="padding:0; height: calc(100vh - 88px); overflow: hidden;">
   <iframe id="logs-frame" src="" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>
@@ -514,6 +555,7 @@ function saveToken() {
   document.getElementById('auth-overlay').style.display = 'none';
   loadMemory();
   loadInboxBadge();
+  loadFriendsBadge();
 }
 
 async function loadInboxBadge() {
@@ -556,6 +598,7 @@ function switchTab(name, btn) {
   if (name === 'oplog')     loadOplog();
   if (name === 'files')     loadFiles();
   if (name === 'inbox')     loadInbox();
+  if (name === 'friends')   loadFriends();
   if (name === 'logs') {
     const frame = document.getElementById('logs-frame');
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
@@ -1108,6 +1151,102 @@ function onFilesSearch(val) {
   filesTimer = setTimeout(() => loadFiles(val.trim()), 300);
 }
 
+// ── Friends ───────────────────────────────────────────────────────────
+let _friendsData = [];
+
+async function loadFriendsBadge() {
+  try {
+    const res = await apiFetch('/api/friends');
+    const list = await res.json();
+    const pending = list.filter(f => f.status === 'pending').length;
+    const badge = document.getElementById('friends-badge');
+    if (pending > 0) { badge.textContent = pending; badge.style.display = 'inline'; }
+    else             { badge.style.display = 'none'; }
+  } catch(e) {}
+}
+
+async function loadFriends() {
+  try {
+    const res  = await apiFetch('/api/friends');
+    _friendsData = await res.json();
+    renderFriends();
+  } catch(e) {
+    if (e.message !== '401') showToast('Friends取得失敗');
+  }
+}
+
+function renderFriends() {
+  const pending  = _friendsData.filter(f => f.status === 'pending');
+  const active   = _friendsData.filter(f => f.status === 'active');
+  const revoked  = _friendsData.filter(f => f.status === 'revoked');
+
+  // バッジ更新
+  const badge = document.getElementById('friends-badge');
+  if (pending.length > 0) { badge.textContent = pending.length; badge.style.display = 'inline'; }
+  else                     { badge.style.display = 'none'; }
+
+  document.getElementById('friends-pending-count').textContent = pending.length ? `(${pending.length})` : '';
+  document.getElementById('friends-active-count').textContent  = active.length  ? `(${active.length})`  : '';
+
+  document.getElementById('friends-pending-list').innerHTML = renderFriendsTable(pending, ['approve']);
+  document.getElementById('friends-active-list').innerHTML  = renderFriendsTable(active,  ['revoke']);
+
+  const revokedSection = document.getElementById('friends-revoked-section');
+  if (revoked.length > 0) {
+    revokedSection.style.display = '';
+    document.getElementById('friends-revoked-list').innerHTML = renderFriendsTable(revoked, []);
+  } else {
+    revokedSection.style.display = 'none';
+  }
+}
+
+function renderFriendsTable(list, actions) {
+  if (!list.length) return '<div class="friends-empty">なし</div>';
+  const rows = list.map(f => {
+    const ts = (f.created_at || '').slice(0,19).replace('T',' ');
+    const badge = `<span class="friends-badge-status friends-badge-${f.status}">${f.status}</span>`;
+    const btns = [
+      actions.includes('approve')
+        ? `<button class="friends-btn" onclick="friendsApprove(${f.seq_no})">承認</button>` : '',
+      actions.includes('revoke')
+        ? `<button class="friends-btn danger" onclick="friendsRevoke(${f.seq_no})">失効</button>` : ''
+    ].filter(Boolean).join(' ');
+    return `<tr>
+      <td style="color:#5a6a7a">#${f.seq_no}</td>
+      <td>${esc(f.nickname)}</td>
+      <td style="color:#7a8a9a">${esc(f.email)}</td>
+      <td>${badge}</td>
+      <td style="color:#5a6a7a;font-size:.75rem">${ts}</td>
+      <td>${btns}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="friends-table">
+    <thead><tr><th>#</th><th>ニックネーム</th><th>メール</th><th>状態</th><th>申請日時</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function friendsApprove(seq_no) {
+  if (!confirm(`#${seq_no} を承認してメールを送信しますか？`)) return;
+  try {
+    const res  = await apiFetch(`/api/friends/${seq_no}/approve`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || '承認失敗'); return; }
+    showToast(data.email_sent ? '承認しメールを送信しました' : '承認しました（メール送信失敗）');
+    loadFriends();
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function friendsRevoke(seq_no) {
+  if (!confirm(`#${seq_no} を失効しますか？接続できなくなります。`)) return;
+  try {
+    const res = await apiFetch(`/api/friends/${seq_no}/revoke`, { method: 'POST' });
+    if (!res.ok) { showToast('失効失敗'); return; }
+    showToast('失効しました');
+    loadFriends();
+  } catch(e) { showToast('通信エラー'); }
+}
+
 // ── Oplog ─────────────────────────────────────────────────────────────
 let oplogData = [];
 
@@ -1223,6 +1362,7 @@ function esc(s) {
     loadMemory();
     loadImportStatus();
     loadInboxBadge();
+    loadFriendsBadge();
   }
 })();
 </script>

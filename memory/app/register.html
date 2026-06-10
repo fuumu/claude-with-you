@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>澪への接続登録</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f0f1a; color: #c8d8e8;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      background: #1a1a2e; border: 1px solid #2a3a5a; border-radius: 12px;
+      padding: 2rem 2.5rem; max-width: 420px; width: 100%;
+    }
+    h1 { font-size: 1.3rem; color: #7ec8e3; margin-bottom: .4rem; }
+    .subtitle { font-size: .85rem; color: #5a6a7a; margin-bottom: 1.8rem; line-height: 1.6; }
+    label { display: block; font-size: .82rem; color: #7a8a9a; margin-bottom: .4rem; }
+    input[type="text"], input[type="email"] {
+      width: 100%; background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 6px;
+      color: #c8d8e8; padding: .55rem .8rem; font-size: .9rem;
+      transition: border-color .15s; margin-bottom: 1.1rem;
+    }
+    input:focus { outline: none; border-color: #7ec8e3; }
+    button[type="submit"] {
+      width: 100%; background: #7ec8e3; color: #0f0f1a; border: none; border-radius: 6px;
+      padding: .65rem; font-size: .95rem; font-weight: 600; cursor: pointer;
+      transition: opacity .15s;
+    }
+    button[type="submit"]:hover { opacity: .88; }
+    button[type="submit"]:disabled { opacity: .5; cursor: default; }
+    .msg { margin-top: 1.2rem; padding: .8rem 1rem; border-radius: 6px; font-size: .88rem; display: none; }
+    .msg.success { background: #1a3a2e; border: 1px solid #2ecc71; color: #2ecc71; }
+    .msg.error   { background: #3a1a1a; border: 1px solid #e74c3c; color: #e74c3c; }
+    .activate-link { margin-top: 1.5rem; text-align: center; font-size: .82rem; color: #5a6a7a; }
+    .activate-link a { color: #7ec8e3; text-decoration: none; }
+    .activate-link a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>澪への接続登録</h1>
+  <p class="subtitle">淳さんから澪を紹介された方向けの登録フォームです。<br>申請後、承認されるとメールでコードが届きます。</p>
+
+  <form id="form">
+    <label for="nickname">ニックネーム</label>
+    <input type="text" id="nickname" placeholder="例：たろう" required>
+
+    <label for="email">メールアドレス</label>
+    <input type="email" id="email" placeholder="例：taro@example.com" required>
+
+    <button type="submit" id="submit-btn">申請する</button>
+  </form>
+
+  <div class="msg" id="msg"></div>
+
+  <div class="activate-link">
+    コードをお持ちの方は <a href="/activate">こちら</a>
+  </div>
+</div>
+
+<script>
+document.getElementById('form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const btn  = document.getElementById('submit-btn');
+  const msg  = document.getElementById('msg');
+  const nickname = document.getElementById('nickname').value.trim();
+  const email    = document.getElementById('email').value.trim();
+
+  if (!nickname || !email) return;
+
+  btn.disabled = true;
+  btn.textContent = '送信中...';
+  msg.style.display = 'none';
+
+  try {
+    const res  = await fetch('/api/friends/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname, email })
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      msg.className = 'msg success';
+      msg.textContent = data.message || '登録申請を受け付けました。承認後にメールが届きます。';
+      document.getElementById('form').style.display = 'none';
+    } else {
+      msg.className = 'msg error';
+      msg.textContent = data.error || 'エラーが発生しました。';
+      btn.disabled = false;
+      btn.textContent = '申請する';
+    }
+    msg.style.display = 'block';
+  } catch (err) {
+    msg.className = 'msg error';
+    msg.textContent = '通信エラーが発生しました。';
+    msg.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '申請する';
+  }
+});
+</script>
+</body>
+</html>
