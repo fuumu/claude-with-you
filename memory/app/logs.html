@@ -521,6 +521,10 @@ function renderContentBlocks(content, role, mi) {
       let text = '';
       if (typeof inner === 'string') text = inner;
       else if (Array.isArray(inner)) text = inner.map(b => b.text || '').join('\n');
+      // JSON-in-JSON の二重エスケープをデコード（tool_search 等の返り値対策）
+      if (text.startsWith('{') || text.startsWith('[')) {
+        try { text = JSON.stringify(JSON.parse(text), null, 2); } catch(e) {}
+      }
       return mkCollapsible(id, '📤 tool_result', escHtml(text), false);
     }
     return '';

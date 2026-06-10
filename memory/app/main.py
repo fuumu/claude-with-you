@@ -516,7 +516,7 @@ def activate_html():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.12',
+    return jsonify({'status': 'ok', 'time': now_jst(), 'version': '3.13',
                     'mcp_tool_count': len(_MCP_TOOLS),
                     'mcp_tools': [t['name'] for t in _MCP_TOOLS]})
 
@@ -1984,6 +1984,13 @@ _MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "required": []}
     },
     {
+        "name": "CoreMem_delete",
+        "description": "UserCoreMemoryからファイルをバージョン履歴ごと完全削除する",
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "削除するファイル名（例: test_iframe.html）"}
+        }, "required": ["name"]}
+    },
+    {
         "name": "conversation_search",
         "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数）を返す",
         "inputSchema": {"type": "object", "properties": {
@@ -2166,6 +2173,22 @@ def _handle_tool_call_raw(name, arguments):
     elif name == "CoreMem_list":
         return _artifacts_list()
 
+    elif name == "CoreMem_delete":
+        n = arguments.get("name", "")
+        if not n:
+            return {"error": "name is required"}
+        symlink_path = os.path.join(ARTIFACTS_DIR, n)
+        if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
+            return {"error": f"not found: {n}"}
+        if os.path.islink(symlink_path) or os.path.exists(symlink_path):
+            os.remove(symlink_path)
+        name_slug = _name_slug(n)
+        versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
+        if os.path.isdir(versions_dir):
+            shutil.rmtree(versions_dir)
+        _log_info(f'CoreMem_delete via MCP: {n}')
+        return {"deleted": n, "server_time": now_jst()}
+
     elif name == "conversation_search":
         q         = arguments.get("q", "").lower()
         date_from = arguments.get("date_from", "")
@@ -2295,7 +2318,7 @@ def _process_mcp_message(msg, friend=None):
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "mio-memory", "version": "3.12.0"},
+            "serverInfo": {"name": "mio-memory", "version": "3.13.0"},
             "instructions": instructions,
             "_session_id": session_id
         }

@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.12","mcp_tool_count":15}
+# {"status":"ok","version":"3.13","mcp_tool_count":16}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -178,6 +178,7 @@ Versioned file storage (NAS file store). Every save creates a new version; the l
 | `CoreMem_save` | Save a file (new version) | `name`, `content`, `source_conversation_uuid` |
 | `CoreMem_read` | Read latest or specific version | `name`, `version` |
 | `CoreMem_list` | List all files | — |
+| `CoreMem_delete` | Delete a file and all its versions | `name` |
 
 `CoreMem_read` falls back to conversation-extracted files if not found in the main store.
 

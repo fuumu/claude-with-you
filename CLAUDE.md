@@ -53,10 +53,10 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 **MCP tools exposed (v3.12):**
 
-Regular sessions (15 tools):
+Regular sessions (16 tools):
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD
 - `memory_share` — generates 24h share URL for a memory entry
-- `CoreMem_save` / `CoreMem_read` / `CoreMem_list` — UserCoreMemory (NAS file store, versioned)
+- `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions)
 - `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check(include_read=true)` returns all messages (including already-read ones) with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
 
