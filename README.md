@@ -25,7 +25,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.11","mcp_tool_count":15}
+# {"status":"ok","version":"3.12","mcp_tool_count":15}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -125,7 +125,7 @@ Claude.ai / Claude Code
   │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
-  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · conversations(LogStore)/ · inbox/
+  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · conversations(LogStore)/ · inbox/ · friends/
 ```
 
 Single-file implementation — all logic in `memory/app/main.py`.
@@ -241,6 +241,15 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/inbox` | List inbox messages |
 | POST | `/api/inbox` | Post a message |
 | PATCH | `/api/inbox/<id>/read` | Mark as read |
+| PATCH | `/api/inbox/<id>/unread` | Mark as unread |
+| PATCH | `/api/inbox/<id>/persistent` | Toggle persistent flag |
+| POST | `/api/friends/register` | Submit friend registration (no auth) |
+| GET | `/api/friends` | List friends (admin auth) |
+| POST | `/api/friends/<seq_no>/approve` | Approve registration (admin auth) |
+| POST | `/api/friends/<seq_no>/revoke` | Revoke access (admin auth) |
+| DELETE | `/api/friends/<seq_no>` | Delete completely (admin auth) |
+| POST | `/api/friends/activate` | Validate activation code (no auth) |
+| GET | `/api/friends/invitation` | Get invitation text (no auth) |
 | POST | `/import` | Import ZIP file |
 | GET | `/health` | Health check |
 
@@ -261,6 +270,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 | **Inbox** | Read messages between Claude Code and Claude.ai sessions |
 | **Logs** | Search and read full conversation history |
 | **Oplog** | Audit log of all create/update/delete operations |
+| **Friends** | Manage friend registrations — approve requests, issue access tokens, view usage |
 
 ### Conversation viewer (`/logs.html`)
 
@@ -382,6 +392,9 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
 | `LM_STUDIO_HOST` | `192.168.10.32` | LM Studio host for local summarization |
 | `LM_STUDIO_PORT` | `1234` | LM Studio port |
+| `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails (Mail Send scope) |
+| `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
+| `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for registration links (falls back to `MIO_BASE_URL`) |
 
 ---
 
@@ -409,9 +422,11 @@ claude-with-you/
 └── memory/
     ├── Dockerfile
     ├── app/
-    │   ├── main.py         All server logic (~1900 lines, single file)
+    │   ├── main.py         All server logic (~2300 lines, single file)
     │   ├── admin.html      Web admin UI
     │   ├── logs.html       Conversation viewer
+    │   ├── register.html   Friend registration page
+    │   ├── activate.html   Activation page
     │   └── requirements.txt
     └── wheels/             Vendored Python wheels (offline build)
 ```
@@ -420,9 +435,12 @@ claude-with-you/
 
 ## Roadmap
 
+**Planned**
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
-- Friend system (v0.1 spec drafted)
+
+**Implemented (v3.9–v3.12)**
+- Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory
 
 ---
 

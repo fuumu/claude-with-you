@@ -98,59 +98,62 @@ claude.ai chat（澪）     Claude Code（WS）
 
 ---
 
-## 伝言リレーパターン（チャット↔外部記憶↔ClaudeCode）
+## 伝言リレーパターン（チャット↔インボックス↔ClaudeCode）
 
-セッションをまたいで作業を引き継ぐための伝言メカニズム。チャットとClaudeCodeはそれぞれ独立したセッションのため、外部記憶（mio-memory）をメッセージキューとして使う。
+セッションをまたいで作業を引き継ぐための伝言メカニズム。v3.4 以降は `inbox_post` / `inbox_check` / `inbox_read` を使う（軽量・既読管理あり）。
 
-### 伝言の書き方
+### 現行方式（inbox — v3.4〜）
 
 **チャット（澪）→ ClaudeCode への指示**
 
-```
-タイトル: 【ClaudeCode宛】〇〇の修正依頼
-タグ: ["ClaudeCode宛", ...]
-本文: 依頼内容・背景・完了条件を具体的に書く
+```python
+inbox_post(to="code", title="〇〇の実装依頼", body="依頼内容・背景・完了条件を具体的に書く")
 ```
 
 **ClaudeCode → チャット（澪）への報告**
 
-```
-タイトル: 【チャット宛】〇〇完了報告
-タグ: ["チャット宛", ...]
-本文: 完了内容・コミット番号・次のステップを書く
+```python
+inbox_post(to="chat", title="【完了報告】〇〇", body="完了内容・コミット番号・次のステップ")
 ```
 
 ### ClaudeCode側の確認手順
 
-ClaudeCode セッション開始時（淳さんから「伝言みてやって」と言われたとき）：
+ClaudeCode セッション開始時：
 
 ```
-1. memory_search("ClaudeCode宛") で未処理の依頼を確認
-2. 最新の 【ClaudeCode宛】 エントリを読む
+1. inbox_check(to="code") で未読件数を確認
+2. 未読があれば inbox_read(id) で内容を読む
 3. 作業を実行
-4. 完了後に 【チャット宛】 エントリを書き込んで報告
+4. 完了後に inbox_post(to="chat", title="【完了報告】...", body="...") で報告
 ```
 
 ### 典型的なフロー例
 
 ```
 [チャット] 設計を決める
-    ↓ memory_write("【ClaudeCode宛】実装依頼", body="...")
-[外部記憶] 伝言保存
-    ↓ 淳さんが「伝言みてやって」とClaudeCodeへ
-[ClaudeCode] memory_search("ClaudeCode宛") で確認
+    ↓ inbox_post(to="code", title="実装依頼", body="...")
+[インボックス] 伝言保存（既読管理あり）
+    ↓ 淳さんが「inbox確認して対応して」とClaudeCodeへ
+[ClaudeCode] inbox_check(to="code") → inbox_read(id) で確認
     → ファイル編集・コミット・push
-    → memory_write("【チャット宛】完了報告", body="...")
-[外部記憶] 報告保存
-    ↓ 淳さんが「報告届いたよ」とチャットへ
-[チャット] memory_search("チャット宛") で結果確認
+    → inbox_post(to="chat", title="【完了報告】...", body="...")
+[インボックス] 報告保存
+    ↓ 淳さんが「inbox確認して」とチャットへ
+[チャット] inbox_check(to="chat") → inbox_read(id) で結果確認
 ```
 
 ### ポイント
 
-- `【ClaudeCode宛】` エントリには「完了後チャット宛に報告して」と書くのが慣習
-- 複数の依頼が溜まっている場合、最新のものを優先する
-- 対応済み依頼は削除せず残す（履歴として機能する）
+- `inbox_check` は約50トークンと非常に軽量。セッション開始時に毎回実行する
+- 既読になったメッセージは `include_read=true` で再確認できる
+- `persistent=true` で送ると既読にならない常駐メッセージになる（起動時の注意事項等に使う）
+
+---
+
+> **旧方式（memory_write — v3.3 以前）**
+>
+> 以前は `memory_write(tags=["ClaudeCode宛"])` / `memory_search("ClaudeCode宛")` でメッセージを送受信していた。
+> inbox が存在しない古いセッション（v3.4 デプロイ前）との後方互換として記録として残す。
 
 ---
 

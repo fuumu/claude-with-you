@@ -140,6 +140,38 @@ curl <YOUR_SERVER_URL>/health
 
 ---
 
+## お友達システム セットアップ
+
+### SendGrid 設定
+
+お友達システムの承認メール送信に SendGrid を使用する。
+
+**1. SendGrid アカウント設定**
+
+1. [sendgrid.com](https://sendgrid.com) でアカウントを作成（無料プランで十分）
+2. Settings → API Keys → Create API Key
+3. Permissions: **Mail Send** のみで OK
+4. 生成されたキーをコピー（一度しか表示されない）
+
+**2. 送信元メールアドレスの認証**
+
+1. Settings → Sender Authentication → Single Sender Verification
+2. 送信元として使うメールアドレスを登録・確認
+
+**3. .env に設定**
+
+```env
+SENDGRID_API_KEY=SG.xxxxxxxxxxxxxxxxxxxx
+SENDGRID_FROM_EMAIL=mio@your-domain.com
+MIO_REGISTER_URL=https://your-domain/register
+```
+
+`MIO_REGISTER_URL` は省略可（省略時は `MIO_BASE_URL + /register` を使用）。
+
+**注意:** `SENDGRID_API_KEY` が未設定の場合、承認メールは送信されない。アクティベーションコードは admin.html の Friends タブで手動確認できる。
+
+---
+
 ## LMStudio セットアップ（WSで実行）
 
 `generate_summary_layers.py` を `--backend lmstudio` で使う場合の準備。

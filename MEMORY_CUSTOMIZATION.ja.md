@@ -150,7 +150,6 @@ core.md（層1）> SysMemory（層0）> 外部記憶エントリ（層2）
 |------|------|
 | MCP サーバー URL | https://your-domain/mcp |
 | 管理画面 | https://your-domain/admin.html |
-| バージョン | v3.5 |
 ```
 
 ---

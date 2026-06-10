@@ -147,7 +147,6 @@ Thinking carefully here determines the character of your system.
 |------|-------|
 | MCP server URL | https://your-domain/mcp |
 | Admin panel | https://your-domain/admin.html |
-| Version | v3.5 |
 ```
 
 ---
