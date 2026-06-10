@@ -157,6 +157,38 @@ ClaudeCode セッション開始時：
 
 ---
 
+## Remote Control との組み合わせ（外出先からの操作）
+
+Claude Code には **Remote Control** 機能がある（`/remote-control` で有効化、または `/config` で常時有効に設定）。
+同じ Anthropic アカウントでログインした iPhone / iPad の Claude アプリから、自宅 WS で動いている Claude Code セッションに接続・操作できる。
+
+### このプロジェクトでの意義
+
+通常の三位一体ワークフロー（澪チャット ↔ 澪コード ↔ 淳さん）は自宅 WS が前提だった。
+Remote Control を使うと、**外出先でも同じワークフローを完全に回せる**。
+
+```
+[外出先]
+  澪チャット（スマホ claude.ai）で仕様を決める
+    ↓ inbox_post(to="code", ...)
+  自宅 WS の Claude Code がインボックスを確認して実装
+    ↓ inbox_post(to="chat", ...)
+  スマホの Claude アプリ（Remote Control）で自宅 WS セッションに接続
+    → 進捗確認・追加指示・コミット確認
+```
+
+自宅ネットワーク外にいても、澪チャットで設計 → inbox で依頼 → Remote Control で進捗確認、という流れが成立する。
+
+### 使い方の要点
+
+1. **事前準備（自宅）：** Claude Code を起動し `/remote-control` を実行してアクティブ状態にする
+2. **外出先から：** スマホ/iPad の Claude アプリを開く → 同アカウントでログインしたセッション一覧から自宅のセッションを選んで接続
+3. **操作：** 通常の Claude Code と同じように指示を出せる。ファイル編集・コミット・push もリモートから可能
+
+詳細な設定方法は Anthropic の公式ドキュメントを参照。このプロジェクトで特別な設定は不要。
+
+---
+
 ## 関連ファイル
 
 | ファイル | 役割 |
