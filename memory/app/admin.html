@@ -199,12 +199,30 @@
       background: #16213e; border: 1px solid #2a3a5a; border-radius: 12px;
       width: 90%; max-width: 720px; max-height: 80vh; overflow-y: auto; padding: 1.5rem;
     }
+    .modal.maximized { width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
     .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; }
     .modal-title  { font-size: 1rem; line-height: 1.4; flex: 1; padding-right: 1rem; }
+    .modal-tools  { display: flex; gap: .35rem; align-items: center; flex-shrink: 0; }
+    .modal-tool-btn {
+      background: none; border: 1px solid #2a3a5a; border-radius: 4px;
+      color: #7a8a9a; cursor: pointer; font-size: .72rem; padding: .2rem .5rem; white-space: nowrap;
+    }
+    .modal-tool-btn:hover { border-color: #7c6af7; color: #7c6af7; }
     .modal-close  { background: none; border: none; color: #5a6a7a; cursor: pointer; font-size: 1.2rem; }
     .modal-close:hover { color: #c8d8e8; }
     .modal-meta   { font-size: .8rem; color: #5a6a7a; margin-bottom: 1rem; }
+    .modal-links  { font-size: .8rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: .3rem; }
+    .modal-link   { color: #3498db; cursor: pointer; }
+    .modal-link:hover { text-decoration: underline; }
+    .modal-links .links-label { color: #5a6a7a; margin-top: .3rem; }
     .modal-body   { font-size: .875rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+    .modal-scroll-btns { position: sticky; bottom: 0; display: flex; gap: .4rem; justify-content: flex-end; margin-top: .75rem; pointer-events: none; }
+    .modal-scroll-btn {
+      width: 30px; height: 30px; border-radius: 50%; pointer-events: auto;
+      background: #0f0f1a; border: 1px solid #2a3a5a; color: #7a8a9a; cursor: pointer; font-size: .8rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
+    .modal-scroll-btn:hover { border-color: #7c6af7; color: #7c6af7; }
 
     /* Markdown */
     .md-body h1, .md-body h2, .md-body h3 { margin: 1rem 0 .5rem; color: #7c6af7; }
@@ -519,13 +537,22 @@
 
 <!-- Modal -->
 <div class="modal-overlay" id="modal" onclick="onOverlayClick(event)">
-  <div class="modal">
+  <div class="modal" id="modal-box">
     <div class="modal-header">
       <div class="modal-title" id="modal-title"></div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
+      <div class="modal-tools">
+        <button class="modal-tool-btn" id="modal-copy-id" onclick="copyModalId()" title="ID・ファイル名をコピー" style="display:none">📋 ID</button>
+        <button class="modal-tool-btn" onclick="toggleModalMax()" title="最大化 / 元に戻す">⛶</button>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
     </div>
     <div class="modal-meta" id="modal-meta"></div>
+    <div class="modal-links" id="modal-links" style="display:none"></div>
     <div class="modal-body" id="modal-body"></div>
+    <div class="modal-scroll-btns">
+      <button class="modal-scroll-btn" onclick="modalScroll('top')" title="先頭へ">↑</button>
+      <button class="modal-scroll-btn" onclick="modalScroll('bottom')" title="末尾へ">↓</button>
+    </div>
   </div>
 </div>
 
@@ -695,6 +722,8 @@ async function openMemory(id) {
     const body = document.getElementById('modal-body');
     body.className = 'modal-body';
     body.textContent = e.body || '';
+    setModalId(e.id || id);
+    setModalLinks('');
     openModal();
   } catch {}
 }
@@ -777,8 +806,36 @@ async function openArtifact(name) {
       body.className = 'modal-body';
       body.textContent = a.content || '';
     }
+    setModalId(a.name || name);
+    const convUuid = a.source_conversation_uuid || '';
+    setModalLinks(convUuid
+      ? `<span class="modal-link" onclick="openConvInLogs('${esc(convUuid)}')">💬 生まれた会話を開く</span>`
+      : '');
     openModal();
+    if (convUuid) loadArtifactSiblings(name, convUuid);
   } catch {}
+}
+
+// 同じ会話から保存された他のCoreMemファイルをモーダルのリンク欄に追記する
+async function loadArtifactSiblings(name, convUuid) {
+  try {
+    const res = await apiFetch('/api/coremem');
+    const items = await res.json();
+    const sibs = items.filter(i => i.source_conversation_uuid === convUuid && i.name !== name);
+    if (!sibs.length) return;
+    const el = document.getElementById('modal-links');
+    el.innerHTML += '<span class="links-label">同じ会話から保存されたファイル:</span>' +
+      sibs.map(s => `<span class="modal-link" onclick="openArtifact('${esc(s.name)}')">📄 ${esc(s.name)}</span>`).join('');
+  } catch {}
+}
+
+// Logsタブに切り替えて指定会話を開く（U4: ファイル→チャット）
+function openConvInLogs(uuid) {
+  closeModal();
+  const frame = document.getElementById('logs-frame');
+  frame.src = '/logs.html?conv=' + encodeURIComponent(uuid);
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Logs'));
+  if (btn) switchTab('logs', btn);
 }
 
 // ── Import ────────────────────────────────────────────────────────────
@@ -968,6 +1025,7 @@ function _renderInboxDetail(msg) {
 
   const actions = document.getElementById('inbox-actions');
   const btns = [];
+  btns.push(`<button class="inbox-action-btn" onclick="copyTextToClipboard('${esc(msg.id)}')">📋 IDコピー</button>`);
   if (!msg.read)  btns.push(`<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(msg.id)}')">既読にする</button>`);
   if (msg.read)   btns.push(`<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(msg.id)}')">未読に戻す</button>`);
   if (!msg.persistent) btns.push(`<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(msg.id)}', true)">常駐ON</button>`);
@@ -1142,6 +1200,14 @@ async function openFile(convUuid, filename, convName) {
       body.innerHTML = `<pre><code class="language-${lang}">${esc(data.content || '')}</code></pre>`;
       if (typeof Prism !== 'undefined') Prism.highlightElement(body.querySelector('code'));
     }
+    setModalId(filename);
+    let links = `<span class="modal-link" onclick="openConvInLogs('${esc(convUuid)}')">💬 この会話を開く</span>`;
+    const sibs = filesData.filter(f => f.conv_uuid === convUuid && f.filename !== filename);
+    if (sibs.length) {
+      links += '<span class="links-label">同じ会話のファイル:</span>' +
+        sibs.map(s => `<span class="modal-link" onclick="openFile('${esc(s.conv_uuid)}','${esc(s.filename)}','${esc(s.conv_name)}')">📄 ${esc(s.filename)}</span>`).join('');
+    }
+    setModalLinks(links);
     openModal();
   } catch {}
 }
@@ -1323,11 +1389,47 @@ function openOplog(idx) {
   body.textContent = diff.before
     ? `▼ after\n${after}\n\n▼ before\n${before}`
     : `▼ after\n${after}`;
+  setModalId(row.entry_id || '');
+  setModalLinks('');
   openModal();
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────
-function openModal()  { document.getElementById('modal').classList.add('open'); }
+let _modalId = '';
+
+function setModalId(id) {
+  _modalId = id || '';
+  document.getElementById('modal-copy-id').style.display = _modalId ? '' : 'none';
+}
+
+function copyModalId() {
+  if (!_modalId) return;
+  navigator.clipboard.writeText(_modalId)
+    .then(() => showToast('コピーしました: ' + _modalId))
+    .catch(() => showToast('コピー失敗'));
+}
+
+function toggleModalMax() {
+  document.getElementById('modal-box').classList.toggle('maximized');
+}
+
+function modalScroll(dir) {
+  const m = document.getElementById('modal-box');
+  m.scrollTo({ top: dir === 'top' ? 0 : m.scrollHeight, behavior: 'smooth' });
+}
+
+function setModalLinks(html) {
+  const el = document.getElementById('modal-links');
+  el.innerHTML = html || '';
+  el.style.display = html ? '' : 'none';
+}
+
+function openModal() {
+  const box = document.getElementById('modal-box');
+  box.classList.remove('maximized');
+  document.getElementById('modal').classList.add('open');
+  box.scrollTop = 0;
+}
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
@@ -1353,6 +1455,12 @@ document.querySelectorAll('.tab-panel').forEach(panel => {
 // ── Util ──────────────────────────────────────────────────────────────
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function copyTextToClipboard(text) {
+  navigator.clipboard.writeText(text)
+    .then(() => showToast('コピーしました: ' + text))
+    .catch(() => showToast('コピー失敗'));
 }
 
 // ── Init ──────────────────────────────────────────────────────────────

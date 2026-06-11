@@ -1,8 +1,16 @@
 """
-mio-memory v3.13  —  Streamable HTTP MCP transport
+mio-memory v3.14  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.14 (2026-06-11) - UI改善（U3・U4）
+    - admin.html: 共通モーダル改善（先頭表示・スクロールボタン・最大化・IDコピー）
+      ※ Memory / CoreMem / Files / Oplog の4タブで共用
+    - admin.html: Inbox 詳細に IDコピー追加
+    - admin.html: CoreMem/Files モーダルに「会話を開く」「同じ会話のファイル」リンク（U4）
+    - logs.html: ?conv=<uuid> ディープリンク対応
+    - logs.html: 会話IDコピー・メッセージスクロールボタン・先頭表示リセット
+    - logs.html: 関連パネルに「このセッションで保存したファイル」一覧（U4）
   v3.13 (2026-06-10) - 機能追加・バグ修正
     - CoreMem_delete MCPツール追加（全バージョン完全削除）
     - DELETE /api/coremem/<name> エンドポイント追加
@@ -124,7 +132,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.13'
+VERSION = '3.14'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'

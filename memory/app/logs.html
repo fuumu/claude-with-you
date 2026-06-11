@@ -175,6 +175,28 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #21262d; border-radius: 3px; }
 
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%) translateY(1rem);
+      background: #238636; color: #fff; padding: .55rem 1.2rem; border-radius: 8px;
+      font-size: .85rem; opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none; z-index: 300;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* Messages scroll buttons */
+    .content { position: relative; }
+    .msg-scroll-btns {
+      position: absolute; right: 1.1rem; bottom: 1rem; display: none;
+      flex-direction: column; gap: .4rem; z-index: 50;
+    }
+    .msg-scroll-btns.visible { display: flex; }
+    .msg-scroll-btn {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: #161b22; border: 1px solid #30363d; color: #8b949e; cursor: pointer; font-size: .8rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.5);
+    }
+    .msg-scroll-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+
     /* Right slider panel */
     .right-panel {
       width: 36px; background: #010409; border-left: 1px solid #21262d;
@@ -279,6 +301,7 @@
         <div class="conv-header-title" id="conv-header-title"></div>
         <div class="conv-header-meta" id="conv-header-meta"></div>
       </div>
+      <button class="toggle-btn" onclick="copyConvId()" title="この会話のIDをコピー（澪に渡せます）">📋 ID</button>
       <button class="toggle-btn" id="thinking-toggle" onclick="toggleThinking()">🧠 思考を表示</button>
     </div>
     <div class="messages-wrap" id="messages-wrap">
@@ -287,9 +310,15 @@
         <span class="hint">左のリストから会話を選択してください</span>
       </div>
     </div>
+    <div class="msg-scroll-btns" id="msg-scroll-btns">
+      <button class="msg-scroll-btn" onclick="msgScroll('top')" title="先頭へ">↑</button>
+      <button class="msg-scroll-btn" onclick="msgScroll('bottom')" title="末尾へ">↓</button>
+    </div>
     <div class="related-panel" id="related-panel" style="display:none">
       <div class="related-header">関連記憶</div>
       <div id="related-items"></div>
+      <div class="related-header" id="conv-files-header" style="display:none">このセッションで保存したファイル</div>
+      <div id="conv-files-items"></div>
     </div>
   </div>
 
@@ -309,8 +338,10 @@
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <div class="modal-overlay" id="modal" onclick="onOverlayClick(event)">
-  <div class="modal">
+  <div class="modal" id="modal-box">
     <div class="modal-header">
       <div class="modal-title" id="modal-title"></div>
       <button class="modal-close" onclick="closeModal()">✕</button>
@@ -456,7 +487,29 @@ async function selectConv(uuid) {
   document.getElementById('conv-header-meta').textContent = `作成: ${created}　更新: ${updated}`;
 
   renderMessages(conv);
+  document.getElementById('messages-wrap').scrollTop = 0;
+  document.getElementById('msg-scroll-btns').classList.add('visible');
   loadRelated(conv);
+  loadConvFiles(uuid);
+}
+
+function copyConvId() {
+  if (!activeUuid) return;
+  navigator.clipboard.writeText(activeUuid)
+    .then(() => showToast('会話IDをコピーしました'))
+    .catch(() => showToast('コピー失敗'));
+}
+
+function msgScroll(dir) {
+  const wrap = document.getElementById('messages-wrap');
+  wrap.scrollTo({ top: dir === 'top' ? 0 : wrap.scrollHeight, behavior: 'smooth' });
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
 }
 
 function toggleThinking() {
@@ -612,6 +665,58 @@ async function loadRelated(conv) {
   }
 }
 
+// ── このセッションで保存したファイル（U4: チャット→ファイル）──────────
+let _convFiles = [];
+
+async function loadConvFiles(uuid) {
+  const header = document.getElementById('conv-files-header');
+  const items  = document.getElementById('conv-files-items');
+  header.style.display = 'none';
+  items.innerHTML = '';
+  _convFiles = [];
+  if (!getToken() || !uuid) return;
+
+  // CoreMem（source_conversation_uuid 一致）
+  try {
+    const res = await apiFetch('/api/coremem');
+    const cm  = await res.json();
+    (Array.isArray(cm) ? cm : []).filter(a => a.source_conversation_uuid === uuid)
+      .forEach(a => _convFiles.push({ label: a.name, type: 'coremem', name: a.name }));
+  } catch {}
+
+  // 会話内アーティファクト（conv_uuid 一致）
+  try {
+    const res = await apiFetch('/api/conv-artifacts');
+    const fa  = await res.json();
+    (Array.isArray(fa) ? fa : []).filter(f => f.conv_uuid === uuid)
+      .forEach(f => _convFiles.push({ label: f.filename, type: 'conv', name: f.filename, conv: f.conv_uuid }));
+  } catch {}
+
+  if (!_convFiles.length) return;
+  header.style.display = '';
+  items.innerHTML = _convFiles.map((f, i) => `
+    <div class="related-item" onclick="openConvFile(${i})">
+      <span class="related-title">📄 ${esc(f.label)}</span>
+      <span class="related-badge">${f.type === 'coremem' ? 'CoreMem' : '抽出'}</span>
+    </div>`).join('');
+}
+
+async function openConvFile(i) {
+  const f = _convFiles[i];
+  if (!f) return;
+  const path = f.type === 'coremem'
+    ? '/api/coremem/' + encodeURIComponent(f.name)
+    : `/api/conv-artifacts/${encodeURIComponent(f.conv)}/${encodeURIComponent(f.name)}`;
+  try {
+    const res  = await apiFetch(path);
+    const data = await res.json();
+    document.getElementById('modal-title').textContent = f.name;
+    document.getElementById('modal-meta').textContent  = f.type === 'coremem' ? 'CoreMem' : '会話内アーティファクト';
+    document.getElementById('modal-body').textContent  = data.content || '';
+    openModal();
+  } catch {}
+}
+
 async function openRelated(id) {
   try {
     const res = await apiFetch('/api/memory/' + encodeURIComponent(id));
@@ -626,7 +731,10 @@ async function openRelated(id) {
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────
-function openModal()  { document.getElementById('modal').classList.add('open'); }
+function openModal()  {
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('modal-box').scrollTop = 0;
+}
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
@@ -693,7 +801,10 @@ function setFontSize(size, btn) {
   // Normal: auto-load if token exists
   if (getToken()) {
     document.getElementById('auth-overlay').style.display = 'none';
-    loadConversations();
+    await loadConversations();
+    // ?conv=<uuid> ディープリンク（admin.html のファイル→会話ジャンプで使用）
+    const convParam = params.get('conv');
+    if (convParam) selectConv(convParam);
   }
 })();
 
