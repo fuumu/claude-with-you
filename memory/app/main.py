@@ -1,8 +1,16 @@
 """
-mio-memory v3.19  —  Streamable HTTP MCP transport
+mio-memory v3.20  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.20 (2026-06-11) - セッション起動コール削減（handoff 件1・件3）＋thinking対応
+    - 全MCPツールレスポンスに server_version フィールド追加（server_time と同レイヤー）
+    - inbox_check: persistent[] に常駐メッセージを本文ごと全件返す
+      （inbox_read の追加コール不要に）。non_persistent_unread_count /
+      non_persistent_unread_ids 追加。count / ids は互換のため残置
+    - conversation_read: include_thinking=true で thinking ブロックを
+      💭[thinking]マーカー付きで返す（各1500字まで・メッセージ上限2000字に緩和）。
+      省略時は従来動作＋thinkingブロック件数のヒントを末尾に付記
   v3.19 (2026-06-11) - メモリーサーチタブ（U5）
     - 階層検索ロジックを _hierarchical_search() に共通化（MCP/REST 両対応）
     - 新 GET /api/memory/hsearch エンドポイント（match_layer/summary/symbolic 付き）
@@ -172,7 +180,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.19'
+VERSION = '3.20'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -273,14 +281,14 @@ def now_jst():
     return datetime.now(JST).isoformat()
 
 def _inject_server_time(result):
-    """全MCPツールレスポンスにサーバー時刻を付与する"""
+    """全MCPツールレスポンスにサーバー時刻とバージョンを付与する"""
     st = now_jst()
     if isinstance(result, dict):
-        return {**result, 'server_time': st}
+        return {**result, 'server_time': st, 'server_version': VERSION}
     elif isinstance(result, list):
-        return {'data': result, 'server_time': st}
+        return {'data': result, 'server_time': st, 'server_version': VERSION}
     elif isinstance(result, str):
-        return {'text': result, 'server_time': st}
+        return {'text': result, 'server_time': st, 'server_version': VERSION}
     return result
 
 def _load_artifacts_meta() -> dict:
@@ -2379,14 +2387,15 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_read",
-        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む",
+        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）",
         "inputSchema": {"type": "object", "properties": {
-            "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"}
+            "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
+            "include_thinking": {"type": "boolean", "description": "trueの場合、thinkingブロックも💭[thinking]マーカー付きで含める（各1500字まで）。デフォルト: false"}
         }, "required": ["uuid"]}
     },
     {
         "name": "inbox_check",
-        "description": "インボックスの未読件数とIDリストを返す（軽量・約50トークン）。memory_searchでチャット宛を検索するより高速。include_read=trueで既読メッセージも含めて返す",
+        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージは persistent[] に本文ごと全件含まれるため inbox_read 不要。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す",
         "inputSchema": {"type": "object", "properties": {
             "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"},
             "include_read": {"type": "boolean", "description": "trueの場合、既読メッセージも含める。レスポンスにmessages[]（id+read+title）が追加される。デフォルト: false"}
@@ -2607,12 +2616,16 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "conversation_read":
         uid   = arguments.get("uuid", "")
+        include_thinking = bool(arguments.get("include_thinking", False))
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
         if not os.path.exists(fpath):
             return {"error": f"conversation not found: {uid}"}
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
         messages = conv.get('chat_messages', [])
+        # include_thinking 時はメッセージ上限を緩和（thinkingは長文になりがち）
+        msg_cap = 2000 if include_thinking else 500
+        thinking_found = 0
         lines = []
         for m in messages:
             role    = m.get('sender') or m.get('role') or '?'
@@ -2620,21 +2633,41 @@ def _handle_tool_call_raw(name, arguments):
             text    = ''
             if isinstance(content, list):
                 for c in content:
-                    if isinstance(c, dict) and c.get('type') == 'text':
+                    if not isinstance(c, dict):
+                        continue
+                    if c.get('type') == 'text':
                         text += c.get('text', '')
+                    elif c.get('type') == 'thinking':
+                        thinking_found += 1
+                        if include_thinking:
+                            tt = (c.get('thinking') or c.get('text') or '').strip()
+                            if tt:
+                                text += f'\n💭[thinking]\n{tt[:1500]}\n[/thinking]\n'
             else:
                 text = str(content)
             if text.strip():
-                lines.append(f'[{role}] {text[:500]}')
+                lines.append(f'[{role}] {text[:msg_cap]}')
         title  = conv.get('name') or conv.get('title') or '無題'
         result = f'# {title}\n\n' + '\n\n'.join(lines)
+        if thinking_found and not include_thinking:
+            result += f'\n\n---\n（この会話には thinking ブロックが {thinking_found} 件あります。include_thinking=true で取得できます）'
         return result
 
     elif name == "inbox_check":
         to           = arguments.get("to")
         include_read = bool(arguments.get("include_read", False))
         msgs = _load_inbox_messages(to=to, unread_only=not include_read)
-        result = {"count": len(msgs), "ids": [m['id'] for m in msgs]}
+        result = {"count": len(msgs), "ids": [m['id'] for m in msgs]}  # 互換用に残す
+        # v3.20: 非常駐の未読のみのカウント＋常駐メッセージは本文ごと全件返す
+        #        （inbox_read の追加コールを不要にしてセッション起動を軽くする）
+        non_persistent_unread = [m for m in msgs if not m.get('persistent') and not m.get('read')]
+        result["non_persistent_unread_count"] = len(non_persistent_unread)
+        result["non_persistent_unread_ids"]   = [m['id'] for m in non_persistent_unread]
+        result["persistent"] = [
+            {"id": m['id'], "title": m.get('title', ''), "body": m.get('body', ''),
+             "created_at": m.get('created_at', '')}
+            for m in msgs if m.get('persistent')
+        ]
         if include_read:
             unread_count = sum(1 for m in msgs if not m.get('read') or m.get('persistent'))
             result["unread_count"] = unread_count
