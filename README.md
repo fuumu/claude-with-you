@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.19","mcp_tool_count":17}
+# {"status":"ok","version":"3.21","mcp_tool_count":17}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -140,7 +140,7 @@ Single-file implementation — all logic in `memory/app/main.py`.
 
 ## Section A — MCP API Layer
 
-Claude calls these tools directly. All responses include `server_time` (JST).
+Claude calls these tools directly. All responses include `server_time` (JST) and `server_version` (v3.20+, e.g. `"3.21"` — lets clients auto-switch behavior by server capability).
 
 ### Memory tools (6)
 
@@ -176,7 +176,7 @@ Versioned file storage (NAS file store). Every save creates a new version; the l
 | Tool | Description | Key args |
 |------|-------------|----------|
 | `CoreMem_save` | Save a file (new version) | `name`, `content`, `source_conversation_uuid` |
-| `CoreMem_read` | Read latest or specific version | `name`, `version` |
+| `CoreMem_read` | Read latest or specific version; if `{stem}_manifest.md` exists, returns split files merged with `<!-- BEGIN/END: file -->` separators (v3.21) | `name`, `version` |
 | `CoreMem_list` | List all files | — |
 | `CoreMem_delete` | Delete a file and all its versions | `name` |
 
@@ -195,7 +195,7 @@ Browse and share past conversations imported from Claude.ai export ZIPs.
 | Tool | Description | Key args |
 |------|-------------|----------|
 | `conversation_search` | Search conversation titles | `q`, `limit` |
-| `conversation_read` | Read full conversation text | `uuid` |
+| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20) | `uuid`, `include_thinking` |
 | `conversation_share` | Generate 24h shareable URL | `uuid` |
 
 **Example — find a past discussion:**
@@ -213,7 +213,7 @@ Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `inbox_check` | Get unread count + IDs (~50 tokens); `include_read=true` returns all msgs with `messages[]` metadata | `to`, `include_read` |
+| `inbox_check` | Get unread count + IDs; `persistent[]` includes standing messages with full bodies (v3.20, no `inbox_read` needed), plus `non_persistent_unread_count`/`_ids`; `include_read=true` adds `messages[]` metadata | `to`, `include_read` |
 | `inbox_read` | Fetch a message and mark as read | `id` |
 | `inbox_post` | Send a message | `to`, `title`, `body`, `persistent` |
 

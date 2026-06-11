@@ -52,14 +52,16 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.15):**
+**MCP tools exposed (v3.21):**
+
+All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 
 Regular sessions (17 tools):
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD; `memory_search` is hierarchical (v3.17): stage 1 index-only (title+tags+keywords), stage 2 layer-2 summary, stage 3 full body; returns `summary` + `symbolic` (layer 3) instead of `body` (pass `full_body=true` for legacy behavior), each hit carries `match_layer`; same logic exposed via REST `GET /api/memory/hsearch` (v3.19, used by the admin.html Search tab)
 - `memory_share` — generates 24h share URL for a memory entry
-- `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions)
-- `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access
-- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check(include_read=true)` returns all messages (including already-read ones) with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
+- `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions); `CoreMem_read` supports split+merge (v3.21): if `{stem}_manifest.md` (with an `order:` list) exists it takes precedence and returns the listed files concatenated with `<!-- BEGIN/END: file -->` separators plus a `manifest` map (file → `##` headings); writes must target individual split files without separators; REST `GET /api/coremem/<name>` merges too (`?raw=true` to bypass)
+- `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access; `conversation_read(include_thinking=true)` includes thinking blocks with 💭[thinking] markers (v3.20; default response appends a hint with the thinking-block count if any exist)
+- `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check` returns `persistent[]{id, title, body, created_at}` with full bodies (v3.20, no `inbox_read` calls needed for standing messages) plus `non_persistent_unread_count`/`non_persistent_unread_ids`; `inbox_check(include_read=true)` additionally returns all messages with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
 - `batch_run_summary_layers` — start the summary-layer batch (2層要約/3層シンボリック圧縮/4層キーワード) for raw entries and keywords backfill; `status_only=true` returns progress + `raw_pending`/`keywords_pending` counts without starting
 
 Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):

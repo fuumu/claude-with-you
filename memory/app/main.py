@@ -1,8 +1,14 @@
 """
-mio-memory v3.20  —  Streamable HTTP MCP transport
+mio-memory v3.21  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.21 (2026-06-11) - CoreMem 分割+マージ読み込み（handoff 件2）
+    - {stem}_manifest.md（order リスト）があれば分割ファイルを順に結合して返す
+      （CoreMem_read / GET /api/coremem/<name> 共通、manifest が direct ファイルより優先）
+    - 各ファイルは <!-- BEGIN: xxx.md --> ～ <!-- END: xxx.md --> セパレータで囲む
+    - レスポンスに merged / files / manifest（ファイル→##見出しリスト）/ missing を付与
+    - version 指定時・REST ?raw=true 時は従来どおり direct ファイルを返す
   v3.20 (2026-06-11) - セッション起動コール削減（handoff 件1・件3）＋thinking対応
     - 全MCPツールレスポンスに server_version フィールド追加（server_time と同レイヤー）
     - inbox_check: persistent[] に常駐メッセージを本文ごと全件返す
@@ -180,7 +186,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.20'
+VERSION = '3.21'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -451,6 +457,38 @@ def _artifacts_read(name: str, version=None) -> dict:
             if entry_meta.get('source_conversation_uuid'):
                 result['source_conversation_uuid'] = entry_meta['source_conversation_uuid']
             return result
+
+def _coremem_read_merged(name: str):
+    """CoreMem 分割+マージ読み込み（v3.21）。
+    {stem}_manifest.md があれば order 順に各ファイルを BEGIN/END セパレータ付きで
+    結合して返す。manifest がない・order が空なら None（呼び出し元が従来読みにフォールバック）"""
+    stem, ext = os.path.splitext(name)
+    if ext != '.md' or stem.endswith('_manifest'):
+        return None
+    manifest_name = f'{stem}_manifest.md'
+    mres = _artifacts_read(manifest_name)
+    if 'error' in mres:
+        return None
+    order = re.findall(r'^\s*-\s*(\S+)', mres.get('content', ''), re.M)
+    order = [f for f in order if _validate_artifact_name(f) and f != name and f != manifest_name]
+    if not order:
+        return None
+    parts, mapping, missing = [], {}, []
+    for fname in order:
+        r = _artifacts_read(fname)
+        if 'error' in r:
+            missing.append(fname)
+            continue
+        content = (r.get('content') or '').strip()
+        parts.append(f'<!-- BEGIN: {fname} -->\n{content}\n<!-- END: {fname} -->')
+        mapping[fname] = [l[3:].strip() for l in content.splitlines() if l.startswith('## ')]
+    result = {
+        'name': name, 'version': None, 'merged': True, 'files': order,
+        'content': '\n\n'.join(parts), 'manifest': mapping,
+    }
+    if missing:
+        result['missing'] = missing
+    return result
 
 def _artifacts_list() -> list:
     if not os.path.exists(ARTIFACTS_DIR):
@@ -760,6 +798,11 @@ def api_coremem_read(name):
     version = request.args.get('version', None)
     if version is not None:
         version = int(version)
+    # v3.21: マージ読み込み（MCP CoreMem_read と同等）。?raw=true で無効化
+    if version is None and request.args.get('raw', 'false').lower() != 'true':
+        merged = _coremem_read_merged(name)
+        if merged is not None:
+            return jsonify(merged)
     result = _artifacts_read(name, version)
     if 'error' in result:
         abort(404)
@@ -2339,7 +2382,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "CoreMem_read",
-        "description": "UserCoreMemoryからファイルを読み込む。versionを省略すると最新版を返す",
+        "description": "UserCoreMemoryからファイルを読み込む。versionを省略すると最新版を返す。{stem}_manifest.md が存在する場合は分割ファイルを <!-- BEGIN/END: ファイル名 --> セパレータ付きでマージして返す（書き込み時はセパレータを含めず対象ファイルのみ CoreMem_save すること）",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2550,6 +2593,12 @@ def _handle_tool_call_raw(name, arguments):
         n = arguments.get("name", "")
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
+        # v3.21: {stem}_manifest.md があれば分割ファイルをマージして返す
+        #        （manifest が direct ファイルより優先 — version 指定時は従来読み）
+        if arguments.get("version") is None:
+            merged = _coremem_read_merged(n)
+            if merged is not None:
+                return merged
         return _artifacts_read(n, arguments.get("version"))
 
     elif name == "CoreMem_list":
