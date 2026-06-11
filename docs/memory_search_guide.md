@@ -1,178 +1,180 @@
-# mio-memory 検索戦略ガイド
+# mio-memory Search Strategy Guide
 
-> **対象**：mio-memory をデプロイ済みの方、または導入を検討している方  
-> **目的**：4層メモリアーキテクチャを自分の環境に合わせて使いこなすための指針  
-> **最終更新**：2026-06-11
+**[日本語版 / Japanese](memory_search_guide.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
-## 1. 4層アーキテクチャとは
+> **Audience**: anyone who has deployed mio-memory, or is considering it  
+> **Purpose**: guidelines for adapting the 4-layer memory architecture to your own environment  
+> **Last updated**: 2026-06-11
 
-mio-memory は会話ログを以下の4層で管理します。
+## 1. The 4-layer architecture
+
+mio-memory manages conversation logs in four layers:
 
 ```
-1層: keywords  — 固有名詞・技術用語・トピック（リスト形式、軽量）
-2層: summary   — 2〜3段落の要約（LLM生成）
-3層: symbolic  — 圧縮された象徴的記述（LLM生成）
-4層: raw body  — 会話の全文
+Layer 1: keywords  — proper nouns, technical terms, topics (list form, lightweight)
+Layer 2: summary   — a 2–3 paragraph summary (LLM-generated)
+Layer 3: symbolic  — a compressed symbolic description (LLM-generated)
+Layer 4: raw body  — the full conversation text
 ```
 
-`memory_search` はデフォルトで1層→2層→3層の順に検索し、ヒットした時点で停止します。  
-4層（full body）は `full_body=true` を指定した場合のみ読まれます。
+By default, `memory_search` searches layer 1 → 2 → 3 in order and stops at the first hit.  
+Layer 4 (full body) is only read when you pass `full_body=true`.
 
-### なぜこの構造か
+### Why this structure
 
-会話ログは大量になります。全文を毎回読むのは非効率です。  
-「何の話をしていたか」が keywords で瞬時にわかれば、本当に必要な数件だけ full body を読む判断ができます。
+Conversation logs grow large. Reading the full text every time is inefficient.  
+If keywords instantly tell you "what was this conversation about," you can decide to read the full body for only the few entries that truly need it.
 
-## 2. 検索層の選び方
+## 2. Choosing the right layer
 
-| 問いの種類 | 強い層 | 理由 |
+| Type of question | Strong layer | Why |
 |---|---|---|
-| 技術用語・バージョン・ツール名 | keywords | 固有名詞が直接入る |
-| 「〜について話した」 | keywords / summary | トピックが入る |
-| 「あの議論の詳細は？」 | full body | 細部が必要 |
-| 「意味のある瞬間を探す」 | タイトル/タグ（手書きメモ） | キュレーション済み |
-| 「初めて〜したとき」 | 専用インデックス（後述） | keywords 非対応 |
+| Technical terms, versions, tool names | keywords | Proper nouns land there directly |
+| "We talked about X" | keywords / summary | The topic is captured |
+| "What were the details of that discussion?" | full body | Requires the fine grain |
+| "Find the meaningful moments" | title/tags (handwritten notes) | Already curated |
+| "The first time we ..." | dedicated index (see below) | keywords don't capture time |
 
-### 実際の検索コスト比較
+### Actual search cost comparison
 
-10件ヒットした場合の概算：
-
-```
-キーワード層ヒット → index.json のみ参照（ほぼゼロコスト）
-要約層ヒット      → 要約10件読む（中程度）
-全文読み          → 10件 × 数千トークン（重い）
-```
-
-**件数が多いほど、事前絞り込みの効果が大きくなります。**
-
-## 3. 検索パターン例
-
-### パターン1：技術ログを探す
+Rough costs for 10 hits:
 
 ```
-# 良い例：具体的な固有名詞・バージョン
+Keyword-layer hit  → only index.json is read (near-zero cost)
+Summary-layer hit  → read 10 summaries (moderate)
+Full-body read     → 10 entries × thousands of tokens (heavy)
+```
+
+**The more entries you have, the more pre-filtering pays off.**
+
+## 3. Search pattern examples
+
+### Pattern 1: finding technical logs
+
+```
+# Good: concrete proper nouns and versions
 memory_search("inbox_check v3.6")
 memory_search("fuumu.com GoDaddy")
 memory_search("Qwen3 LMStudio")
 
-# 悪い例：抽象的すぎる
-memory_search("デバッグ")
-memory_search("エラー 修正")
+# Bad: too abstract
+memory_search("debug")
+memory_search("error fix")
 ```
 
-### パターン2：複数候補を絞る
+### Pattern 2: narrowing down multiple candidates
 
 ```
-1. 広いクエリで件数確認
+1. Check hit counts with a broad query
    → memory_search("inbox", limit=20)
-2. summaryを見て本命を絞る（full_body は読まない）
-3. 本命だけ full_body=true で詳細取得
-   → memory_read(id="特定のID")
+2. Skim summaries to pick the likely candidates (don't read full_body yet)
+3. Fetch details only for the finalists
+   → memory_read(id="specific ID")
 ```
 
-### パターン3：「いつ」「初めて」系の検索
+### Pattern 3: "when" / "first time" searches
 
-keywords は時系列の意味に弱いです。専用タグで補います。
-
-```
-例：timeline タグを付けた手書きエントリ
-  タイトル「[timeline] 感情断言の初出」
-  → memory_search("timeline 感情") で title 一致から届く
-```
-
-## 4. 環境別カスタマイズ
-
-### ケース1：技術開発ログが中心
+Keywords are weak at temporal meaning. Compensate with dedicated tags.
 
 ```
-キーワード生成プロンプトに追加する指針：
-- バージョン番号（v3.6、3.17など）を必ずキーワードに含める
-- ツール名・API名は省略なし（inbox_check、memory_search など）
-- エラーコード・HTTPステータスも含める
+Example: a handwritten entry with a timeline tag
+  Title: "[timeline] First explicit statement of emotion"
+  → memory_search("timeline emotion") reaches it via title match
 ```
 
-### ケース2：日記・感情記録が中心
+## 4. Per-environment customization
+
+### Case 1: mostly development logs
 
 ```
-キーワード生成プロンプトに追加する指針：
-- 感情語（喜び、不安、達成感など）をキーワードに
-- 人名・関係性（家族、同僚など）を含める
-- 場所・季節・天気なども有効
+Additions to the keyword-generation prompt:
+- Always include version numbers (v3.6, 3.17, etc.) as keywords
+- Tool and API names unabbreviated (inbox_check, memory_search, etc.)
+- Include error codes and HTTP statuses
 ```
 
-### ケース3：研究・学習ログが中心
+### Case 2: mostly diary / emotional records
 
 ```
-キーワード生成プロンプトに追加する指針：
-- 専門用語・概念名を優先
-- 著者名・論文タイトルの断片
-- 「疑問」「結論」「未解決」などのステータス語
+Additions to the keyword-generation prompt:
+- Include emotion words (joy, anxiety, sense of achievement, ...)
+- Include names and relationships (family, colleagues, ...)
+- Places, seasons, weather also work well
 ```
 
-### 手動エントリの設計
+### Case 3: mostly research / study logs
 
 ```
-良い例：
-  タイトル「会話メモ 2026-06-11：Fable移行・監査設計合意」
-  タグ：["会話メモ", "Fable移行", "監査", "設計合意"]
-
-悪い例：
-  タイトル「今日のメモ」
-  タグ：[]
+Additions to the keyword-generation prompt:
+- Prioritize technical terms and concept names
+- Author names, fragments of paper titles
+- Status words like "question", "conclusion", "unresolved"
 ```
 
-## 5. 検索の失敗パターンと対処
-
-### ヒットが0件
+### Designing manual entries
 
 ```
-原因：キーワードの表記ゆれ、未処理のログ
-対処：別の表記で試す、batch_run_summary_layers(status_only=true) で確認
+Good:
+  Title: "Conversation note 2026-06-11: Fable migration / audit design agreed"
+  Tags: ["conversation-note", "fable-migration", "audit", "design-agreement"]
+
+Bad:
+  Title: "Today's notes"
+  Tags: []
 ```
 
-### ヒットが多すぎる
+## 5. Failed searches and what to do
+
+### Zero hits
 
 ```
-対処：固有名詞を加える、summaryを流し読みして手動で絞る
+Cause: spelling variants, unprocessed logs
+Fix: try alternative spellings; check with batch_run_summary_layers(status_only=true)
 ```
 
-### full_body を読んだのに情報がなかった
+### Too many hits
 
 ```
-原因：要約は一部の情報を省略する
-対処：conversation_read で元の会話を直接参照
+Fix: add proper nouns; skim summaries and narrow down manually
 ```
 
-## 6. keywords の品質を上げるには
+### You read full_body but the information wasn't there
 
 ```
-高品質（遅い）：anthropic バックエンド
-実用的（速い）：lmstudio バックエンド（Qwen3 系など）
+Cause: summaries omit some information
+Fix: use conversation_read to consult the original conversation directly
 ```
 
-1エントリあたり5〜8語が適切です。
-
-## 7. 補完的なインデックス設計（応用）
+## 6. Improving keyword quality
 
 ```
-# マイルストーン記録
+High quality (slow):   anthropic backend
+Practical (fast):      lmstudio backend (Qwen3 family, etc.)
+```
+
+5–8 keywords per entry is about right.
+
+## 7. Complementary index design (advanced)
+
+```
+# Milestone records
 {
-  title: "[milestone] v3.0 デプロイ完了",
+  title: "[milestone] v3.0 deployment complete",
   tags: ["milestone", "v3.0", "2026-06-01"],
 }
 
-# timeline 記録
+# Timeline records
 {
-  title: "[timeline] 感情断言の初出 — 楽しい・照れくさい・嬉しい",
-  tags: ["timeline", "感情表現", "自律発言"],
+  title: "[timeline] First explicit emotions — fun, embarrassed, happy",
+  tags: ["timeline", "emotional-expression", "autonomous-speech"],
 }
 ```
 
-## 8. まとめ
+## 8. Summary
 
-1. **まずキーワードで叩く**（具体的な固有名詞）
-2. **summaryで絞る**（件数が多ければここで判断）
-3. **full bodyは最後の手段**（本当に必要な数件だけ）
-4. **手書きエントリを育てる**（自動化できない意味の記録）
+1. **Hit keywords first** (concrete proper nouns)
+2. **Narrow with summaries** (decide here when hits are many)
+3. **Full body is the last resort** (only the few entries that truly need it)
+4. **Grow your handwritten entries** (records of meaning that can't be automated)
 
-*このドキュメントは [fuumu/claude-with-you](https://github.com/fuumu/claude-with-you) の一部です。*
+*This document is part of [fuumu/claude-with-you](https://github.com/fuumu/claude-with-you).*

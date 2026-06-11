@@ -1,81 +1,81 @@
-# mio-memory とは
+# What is mio-memory
 
-Claude との対話を蓄積・検索・参照できる、**自分だけの外部記憶システム**です。  
-Synology NAS（または同等のサーバー）上で動作し、MCP を通じて Claude に接続します。
+**[日本語版 / Japanese](mio_memory_overview.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
-## どんな問題を解決するか
+A **personal external memory system** that lets you accumulate, search, and reference your conversations with Claude.  
+It runs on a Synology NAS (or any comparable server) and connects to Claude via MCP.
 
-Claude はセッションをまたいで記憶を持ちません。  
-昨日話したことを今日のセッションで参照するには、毎回自分で貼り直すか、あきらめるしかありませんでした。
+## What problem does it solve
 
-mio-memory はこの問題に対して：
+Claude has no memory across sessions.  
+To reference yesterday's conversation in today's session, you had to paste it back in manually — or give up.
 
-- 過去の会話を自動でインデックス化し
-- Claude 自身が必要なときに検索・参照できる
+mio-memory addresses this by:
 
-という仕組みを提供します。
+- automatically indexing your past conversations, and
+- letting Claude itself search and reference them whenever needed.
 
-## こんな人に向いている
+## Who is it for
 
-**記録が増えてきた人**  
-会話ログが数百件を超えると、「あの話どこだっけ」が頻発します。  
-全文検索だけでは重く、mio-memory の4層構造が効いてきます。
+**People whose records keep growing**  
+Once your conversation logs pass a few hundred entries, "where was that discussion again?" becomes a daily problem.  
+Full-text search alone is heavy — that's where mio-memory's 4-layer structure pays off.
 
-**長期的なプロジェクトを Claude と進めている人**  
-開発ログ、設計の変遷、意思決定の経緯——これらが時系列で蓄積・検索できると、  
-「前回どう判断したか」を毎回説明しなくてよくなります。
+**People running long-term projects with Claude**  
+Development logs, design evolution, decision history — when these accumulate and stay searchable over time,  
+you no longer have to re-explain "how we decided last time" in every session.
 
-**Claude との対話そのものを資産にしたい人**  
-哲学的な対話、感情の変化、学びの記録——会話ログを単なる一時的なものではなく、  
-蓄積されていくドキュメントとして扱えます。
+**People who treat their dialogues with Claude as an asset**  
+Philosophical discussions, emotional shifts, learning records — conversation logs stop being ephemeral  
+and become a growing body of documents.
 
-## 何ができるか
+## What it can do
 
-| 機能 | 説明 |
+| Feature | Description |
 |---|---|
-| 会話ログの自動インポート | Claude.ai からエクスポートした ZIP を取り込む |
-| 4層要約・キーワード生成 | LLM（ローカル or Anthropic API）で自動処理 |
-| 階層的検索 | keywords → summary → full body の順に検索、必要最小限のコストで到達 |
-| 手動メモの保存 | 重要な瞬間・設計決定・TODO を自分で書き込める |
-| 会話の全文参照 | UUID 指定で元の会話を直接読む |
-| inbox システム | Claude Code からチャットへの完了報告・伝言を受け取る |
+| Automatic conversation import | Ingest the ZIP exported from Claude.ai |
+| 4-layer summaries & keywords | Generated automatically by an LLM (local or Anthropic API) |
+| Hierarchical search | Searches keywords → summary → full body in order, reaching results at minimal cost |
+| Manual notes | Save important moments, design decisions, and TODOs yourself |
+| Full conversation access | Read the original conversation directly by UUID |
+| Inbox system | Receive completion reports and messages from Claude Code in chat |
 
-## 使い始めるまでの流れ
+## Getting started
 
-1. **デプロイ**：NAS の Docker コンテナで mio-memory を起動
-2. **ZIP インポート**：Claude.ai からエクスポートした会話を取り込む
-3. **バッチ処理**：LLM で要約・キーワードを生成（夜間自動または手動）
-4. **Claude に接続**：Claude.ai の MCP 設定で接続、すぐに使い始められる
+1. **Deploy**: start mio-memory in a Docker container on your NAS
+2. **Import a ZIP**: ingest conversations exported from Claude.ai
+3. **Batch processing**: generate summaries and keywords with an LLM (nightly automatic or manual)
+4. **Connect Claude**: add the server in Claude.ai's MCP settings and start using it right away
 
-詳細は [セットアップガイド](./setup.md) を参照してください。
+See the [setup guide](./setup.md) for details.
 
-## ドキュメント一覧
+## Documentation
 
-### 検索・参照
-- [**検索戦略ガイド**](./memory_search_guide.md)  
-  4層をどう使い分けるか。検索パターン例、環境別カスタマイズ、失敗パターンへの対処。  
-  → ログが増えてきて「うまく見つけられない」と感じたときに読む。
+### Search & reference
+- [**Search Strategy Guide**](./memory_search_guide.md)  
+  How to use the 4 layers effectively. Search pattern examples, per-environment customization, and how to handle failed searches.  
+  → Read this when your logs have grown and you feel like you "can't find things anymore."
 
-### 設計・アーキテクチャ
-- [データ構造リファレンス](./data_structure.md)
-- [設計ドキュメント](./design.md)
+### Design & architecture
+- [Data Structure Reference](./data_structure.md)
+- [Design Document](./design.md)
 
-## 何が「ローカル」か
+## What "local" means here
 
-mio-memory はあなたのサーバー上で動きます。  
-**会話ログはあなたのハードウェアの外に出ません。**
+mio-memory runs on your own server.  
+**Your conversation logs never leave your hardware.**
 
-LLM による要約・キーワード生成は：
-- **LMStudio（ローカル）**：完全にオフライン、ただし処理速度はモデルによる
-- **Anthropic API**：高品質だがコストが発生する
+For LLM-based summary and keyword generation you can choose:
+- **LMStudio (local)**: fully offline; processing speed depends on your model
+- **Anthropic API**: higher quality, but incurs cost
 
-どちらを使うかは用途と環境に合わせて選べます。
+Pick whichever fits your use case and environment.
 
-## カスタマイズについて
+## On customization
 
-mio-memory はあなたのデータ・用途・好みに合わせて育てていくシステムです。  
-どのキーワードを重視するか、どんな手書きメモを残すか——使いながら調整してください。
+mio-memory is a system you grow to fit your data, your use cases, and your preferences.  
+Which keywords to emphasize, what handwritten notes to keep — tune it as you go.
 
-→ [検索戦略ガイド](./memory_search_guide.md) に具体的なカスタマイズ例があります。
+→ The [Search Strategy Guide](./memory_search_guide.md) has concrete customization examples.
 
-*このドキュメントは [fuumu/claude-with-you](https://github.com/fuumu/claude-with-you) の一部です。*
+*This document is part of [fuumu/claude-with-you](https://github.com/fuumu/claude-with-you).*

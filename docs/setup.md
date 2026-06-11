@@ -1,57 +1,59 @@
-# セットアップ手順
+# Setup Guide
 
-## 現状
+**[日本語版 / Japanese](setup.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
-| 場所 | 状態 |
+## Starting point
+
+| Location | State |
 |------|------|
-| GitHub `<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>` | リポジトリあり（空または初期状態） |
-| NAS `<YOUR_NAS_PATH>` | 実ファイルあり |
-| WS | 何もない |
+| GitHub `<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>` | Repository exists (empty or initial state) |
+| NAS `<YOUR_NAS_PATH>` | Actual files exist |
+| WS (workstation) | Nothing yet |
 
 ---
 
-## Phase 1：NAS → GitHub
+## Phase 1: NAS → GitHub
 
-WSからNASにSSH（`<YOUR_NAS_USER>` ユーザー）して以下を実行。
+SSH from the WS into the NAS (as the `<YOUR_NAS_USER>` user) and run the following.
 
-### 1-0. GitHub認証（SSH鍵）
+### 1-0. GitHub authentication (SSH key)
 
 ```bash
-# SSH鍵生成（NASユーザーのホームディレクトリに作成される）
+# Generate an SSH key (created in the NAS user's home directory)
 ssh-keygen -t ed25519 -C "mio-nas"
-# → <YOUR_NAS_HOME>/.ssh/id_ed25519(.pub) が作成される
-# プロンプトは3回Enterのみ（保存先・パスフレーズ・確認）
+# → <YOUR_NAS_HOME>/.ssh/id_ed25519(.pub) is created
+# Just press Enter at all 3 prompts (location, passphrase, confirmation)
 
-# Synologyはパーミッションが広すぎるので修正（必須）
+# Synology permissions are too open by default — fix them (required)
 chmod 600 ~/.ssh/id_ed25519
 chmod 700 ~/.ssh
 
-# 公開鍵を表示
+# Show the public key
 cat ~/.ssh/id_ed25519.pub
 ```
 
-↑ターミナルに表示された文字列をコピーして、**同じWSのブラウザ**でGitHubに登録。  
-Settings → SSH and GPG keys → New SSH key → 貼り付けて保存。  
-（ファイル転送不要——ターミナルとブラウザが同じ画面にある）
+Copy the string shown in the terminal and register it on GitHub **in a browser on the same WS**.  
+Settings → SSH and GPG keys → New SSH key → paste and save.  
+(No file transfer needed — the terminal and browser are on the same screen.)
 
 ```bash
-# 接続確認
+# Verify the connection
 ssh -T git@github.com
-# "Hi <YOUR_GITHUB_USERNAME>! You've successfully authenticated..." が出ればOK
+# OK if you see "Hi <YOUR_GITHUB_USERNAME>! You've successfully authenticated..."
 ```
 
-### 1-1. リポジトリ設定
+### 1-1. Repository setup
 
 ```bash
 cd <YOUR_NAS_PATH>
 
-# git初期化
+# Initialize git
 git init
 
-# リモート登録（SSH形式）
+# Register the remote (SSH form)
 git remote add origin git@github.com:<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git
 
-# .gitignore作成
+# Create .gitignore
 cat > .gitignore << 'EOF'
 .env
 memory/data/
@@ -59,67 +61,67 @@ __pycache__/
 *.pyc
 EOF
 
-# ステージング・コミット
+# Stage and commit
 git add .
 git commit -m "initial commit: mio-memory MCP server"
 
-# プッシュ
-# GitHubに初期コミットがある場合
+# Push
+# If GitHub already has an initial commit
 git pull origin main --allow-unrelated-histories
 git push origin main
 
-# GitHubが空の場合
+# If GitHub is empty
 # git push -u origin main
 ```
 
 ---
 
-## Phase 2：WS準備
+## Phase 2: WS preparation
 
-PowerShellで実行。
+Run in PowerShell.
 
-### 2-0. GitHub認証（GitHub CLI）
+### 2-0. GitHub authentication (GitHub CLI)
 
 ```powershell
-# GitHub CLIインストール
+# Install GitHub CLI
 winget install GitHub.cli
-# wingetがない場合は https://cli.github.com からインストーラーをDL
+# If winget is unavailable, download the installer from https://cli.github.com
 
-# 認証（ブラウザが開くのでGitHubアカウントでログイン）
+# Authenticate (a browser opens — log in with your GitHub account)
 gh auth login
 ```
 
-### 2-1. 開発環境セットアップ
+### 2-1. Development environment setup
 
 ```powershell
-# 作業フォルダ作成
+# Create the working folder
 New-Item -ItemType Directory -Path <YOUR_LOCAL_PATH>
 Set-Location <YOUR_LOCAL_PATH>
 
-# Claude Codeインストール（Node.js 18以上が前提）
+# Install Claude Code (requires Node.js 18+)
 npm install -g @anthropic-ai/claude-code
 
-# リポジトリ取得
+# Clone the repository
 git clone https://github.com/<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git
 Set-Location <YOUR_REPO_NAME>
 
-# Claude Code起動確認
+# Verify Claude Code starts
 claude
 ```
 
 ---
 
-## Phase 3：作業開始
+## Phase 3: Start working
 
-WSのリポジトリディレクトリでClaude Codeセッションを起動すれば、澪がファイルの読み書き・コミット・プッシュを担当する。
+Start a Claude Code session in the WS repository directory, and Mio takes care of reading/writing files, committing, and pushing.
 
-淳さんの役割：方針・確認・承認。
+Jun's role: direction, review, approval.
 
 ---
 
-## Phase 4：NASへのデプロイ（コード更新時）
+## Phase 4: Deploying to the NAS (on code updates)
 
-WSからNASにSSHして以下を実行。
+SSH from the WS into the NAS and run:
 
 ```bash
 cd <YOUR_NAS_PATH>
@@ -129,36 +131,36 @@ git pull origin main
 sudo docker-compose up -d --build memory
 ```
 
-ヘルスチェック：
+Health check:
 
 ```bash
 curl <YOUR_SERVER_URL>/health
-# {"status": "ok", "version": "3.x", ...} が返ればOK
+# OK if {"status": "ok", "version": "3.x", ...} is returned
 ```
 
-> **注意：** NASでは `docker-compose` に `sudo` が必要。`git pull` は `origin main` を明示する（upstream未設定のため）。
+> **Note:** on the NAS, `docker-compose` requires `sudo`. Always spell out `origin main` for `git pull` (no upstream is configured).
 
 ---
 
-## お友達システム セットアップ
+## Friend system setup
 
-### SendGrid 設定
+### SendGrid configuration
 
-お友達システムの承認メール送信に SendGrid を使用する。
+The friend system uses SendGrid to send approval emails.
 
-**1. SendGrid アカウント設定**
+**1. SendGrid account setup**
 
-1. [sendgrid.com](https://sendgrid.com) でアカウントを作成（無料プランで十分）
+1. Create an account at [sendgrid.com](https://sendgrid.com) (the free plan is sufficient)
 2. Settings → API Keys → Create API Key
-3. Permissions: **Mail Send** のみで OK
-4. 生成されたキーをコピー（一度しか表示されない）
+3. Permissions: **Mail Send** only is fine
+4. Copy the generated key (it is shown only once)
 
-**2. 送信元メールアドレスの認証**
+**2. Verify the sender email address**
 
 1. Settings → Sender Authentication → Single Sender Verification
-2. 送信元として使うメールアドレスを登録・確認
+2. Register and verify the email address you will send from
 
-**3. .env に設定**
+**3. Configure .env**
 
 ```env
 SENDGRID_API_KEY=SG.xxxxxxxxxxxxxxxxxxxx
@@ -166,48 +168,48 @@ SENDGRID_FROM_EMAIL=mio@your-domain.com
 MIO_REGISTER_URL=https://your-domain.com
 ```
 
-`MIO_REGISTER_URL` は承認メール内アクティベーションリンクのベース URL（末尾にパスを付けない——`/activate` が自動付与される）。省略可（省略時は `MIO_BASE_URL` を使用）。
+`MIO_REGISTER_URL` is the base URL for the activation link in approval emails (no trailing path — `/activate` is appended automatically). Optional (falls back to `MIO_BASE_URL`).
 
-**注意:** `SENDGRID_API_KEY` が未設定の場合、承認メールは送信されない。アクティベーションコードは admin.html の Friends タブで手動確認できる。
+**Note:** if `SENDGRID_API_KEY` is unset, approval emails are not sent. Activation codes can be viewed manually in the Friends tab of admin.html.
 
 ---
 
-## LMStudio セットアップ（WSで実行）
+## LMStudio setup (run on the WS)
 
-`generate_summary_layers.py` を `--backend lmstudio` で使う場合の準備。
+Preparation for running `generate_summary_layers.py` with `--backend lmstudio`.
 
-### 1. Anthropic互換エンドポイントを有効化
+### 1. Enable the Anthropic-compatible endpoint
 
-1. LMStudio を起動
-2. 左サイドバーの **Developer** タブ（`</>`アイコン）を開く
-3. **Server** を `Running` にする
-4. **Anthropic-compatible** が有効になっていることを確認（チェックボックスまたはトグル）
-5. ポート番号が `1234` になっていることを確認
+1. Start LMStudio
+2. Open the **Developer** tab in the left sidebar (the `</>` icon)
+3. Set **Server** to `Running`
+4. Confirm **Anthropic-compatible** is enabled (checkbox or toggle)
+5. Confirm the port is `1234`
 
-### 2. Windowsファイアウォールでポート1234を開放
+### 2. Open port 1234 in the Windows firewall
 
-管理者権限のPowerShellで実行：
+Run in an elevated PowerShell:
 
 ```powershell
 netsh advfirewall firewall add rule name="LMStudio" dir=in action=allow protocol=TCP localport=1234
 ```
 
-### 3. NASから接続確認
+### 3. Verify connectivity from the NAS
 
-NASにSSHして疎通テスト：
+SSH into the NAS and test:
 
 ```bash
 curl http://<YOUR_WS_IP>:1234/v1/models
-# LMStudioが応答すればOK
+# OK if LMStudio responds
 ```
 
 ---
 
-## Dockerビルド時のDNS問題（Synology NAS固有）
+## Docker build DNS issue (Synology NAS specific)
 
-### 症状
+### Symptom
 
-`python:3.11-slim` イメージのビルド中に `pip install` がDNS解決失敗で止まる：
+`pip install` stalls with DNS resolution failures while building the `python:3.11-slim` image:
 
 ```
 pip install anthropic
@@ -215,38 +217,38 @@ pip install anthropic
 socket.gaierror: [Errno -3] Temporary failure in name resolution
 ```
 
-### 原因
+### Cause
 
-Synology NASのDockerビルド環境はデフォルトのDNSが機能しない場合がある。
+The default DNS in Synology's Docker build environment sometimes doesn't work.
 
-### 解決策
+### Fix
 
-`docker-compose.yml` の `build:` セクションに `network: host` を追加すると、ビルド時にホストのDNS（インターネット疎通あり）を使うようになる：
+Add `network: host` to the `build:` section of `docker-compose.yml` so the build uses the host's DNS (which has internet connectivity):
 
 ```yaml
 services:
   memory:
     build:
       context: ./memory
-      network: host    ← これを追加
+      network: host    ← add this
 ```
 
 ---
 
-## network_mode: host 使用時の注意点
+## Notes on using network_mode: host
 
-コンテナからWSのLMStudio（`<YOUR_WS_IP>:1234`）に接続するため、`network_mode: host` を設定している。
+`network_mode: host` is set so the container can reach LMStudio on the WS (`<YOUR_WS_IP>:1234`).
 
-### 注意：`ports:` と `dns:` は不要
+### Note: `ports:` and `dns:` are unnecessary
 
-`network_mode: host` 使用時は `ports:` と `dns:` の設定が無視される（警告が出る場合もある）ため、**削除すること**：
+With `network_mode: host`, the `ports:` and `dns:` settings are ignored (and may produce warnings), so **remove them**:
 
 ```yaml
 services:
   memory:
     network_mode: host
-    # ports: は削除（network_mode: host では無効）
-    # dns: は削除（ホストのDNSを使うため不要）
+    # remove ports: (ineffective with network_mode: host)
+    # remove dns: (unneeded — the host's DNS is used)
     volumes:
       - ./memory/data:/data
       - ./scripts:/app/scripts:ro

@@ -1,5 +1,7 @@
 # お友達システム — 澪について
 
+**[English version](friend-system.md)** ← 日本語版（このファイル）が正。英語版はここから同期。
+
 *mio-memory project / fuumu.com*
 
 ---

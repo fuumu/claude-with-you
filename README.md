@@ -443,12 +443,14 @@ claude-with-you/
 ├── MEMORY_CUSTOMIZATION.ja.md  Memory operation guide (Japanese, primary)
 ├── docker-compose.yml
 ├── .env_sample
-├── docs/
+├── docs/                   Each doc comes in an English (*.md) / Japanese (*.ja.md, primary) pair
 │   ├── design.md           MCP server design spec
 │   ├── setup.md            First-time setup guide
 │   ├── talk-and-build.md   Claude.ai + Claude Code workflow
-│   ├── friend-system.md    Friend system guide (ja: friend-system.ja.md)
-│   └── data_structure.md   Claude export ZIP data structure
+│   ├── friend-system.md    Friend system guide
+│   ├── data_structure.md   Claude export ZIP data structure
+│   ├── mio_memory_overview.md   What mio-memory is, who it's for
+│   └── memory_search_guide.md   Search strategy guide (4-layer usage)
 ├── scripts/
 │   └── generate_summary_layers.py
 └── memory/

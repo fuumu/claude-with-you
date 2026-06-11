@@ -1,5 +1,7 @@
 # The Friend System — About Mio
 
+**[日本語版 / Japanese](friend-system.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
+
 *mio-memory project / fuumu.com*
 
 ---

@@ -142,13 +142,15 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | 変更内容 | 更新対象ドキュメント |
 |----------|---------------------|
 | MCPツール追加・削除 | README.ja.md（日本語版・正）と README.md（英語版）を両方更新 |
-| エンドポイント追加・変更 | docs/setup.md・docs/design.md |
-| バージョン変更 | README.ja.md・README.md・docs/setup.md（ヘルスチェック例） |
-| 新機能追加 | README.ja.md（機能一覧）・docs/design.md（設計） |
+| エンドポイント追加・変更 | docs/setup.ja.md・docs/design.ja.md（＋対応する英語版） |
+| バージョン変更 | README.ja.md・README.md・docs/setup.ja.md（ヘルスチェック例） |
+| 新機能追加 | README.ja.md（機能一覧）・docs/design.ja.md（設計）（＋対応する英語版） |
 | 記憶層・運用方針の変更 | MEMORY_CUSTOMIZATION.ja.md と MEMORY_CUSTOMIZATION.md も更新 |
 | TODO完了・新規追加 | README.ja.md（Roadmap/TODOセクション） |
 
 **注意：README.ja.md が正。README.md はそこから同期する。日本語版を先に更新すること。**
+
+**ドキュメントの言語対ルール：** docs/ 配下を含む全ドキュメントは日本語版（`*.ja.md`・正）と英語版（`*.md`）の対で管理する。片方だけの新規作成・更新は不可。日本語版を更新したら英語版も同期すること。
 
 更新後は変更ファイルをまとめて1コミットにすること。
 コミットメッセージ例: "add feature X, update docs"
