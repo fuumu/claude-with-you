@@ -566,7 +566,7 @@ function renderContentBlocks(content, role, mi) {
       return mkCollapsible(id, '🧠 思考', escHtml(block.thinking || ''), false);
     }
     if (block.type === 'tool_use') {
-      const inp = block.input ? JSON.stringify(block.input, null, 2) : '';
+      const inp = block.input ? decodeUniEsc(JSON.stringify(block.input, null, 2)) : '';
       return mkCollapsible(id, `⚙ ${escHtml(block.name || 'tool_use')}`, `<span class="tool-input">${escHtml(inp)}</span>`, false);
     }
     if (block.type === 'tool_result') {
@@ -578,6 +578,8 @@ function renderContentBlocks(content, role, mi) {
       if (text.startsWith('{') || text.startsWith('[')) {
         try { text = JSON.stringify(JSON.parse(text), null, 2); } catch(e) {}
       }
+      // JSONパースできなかった場合や入れ子文字列内に残る \uXXXX を表示用にデコード
+      text = decodeUniEsc(text);
       return mkCollapsible(id, '📤 tool_result', escHtml(text), false);
     }
     return '';
@@ -745,6 +747,11 @@ function esc(s) {
 }
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// \uXXXX エスケープ（サロゲートペア含む）を表示用に実文字へデコードする
+function decodeUniEsc(s) {
+  return String(s).replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
 }
 
 // ── Font size ─────────────────────────────────────────────────────────

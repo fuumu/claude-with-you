@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.21","mcp_tool_count":17}
+# {"status":"ok","version":"3.22","mcp_tool_count":18}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -188,15 +188,16 @@ CoreMem_save(name="config.md", content="# Config\n...", source_conversation_uuid
 → {"name": "config.md", "version": 2, "server_time": "..."}
 ```
 
-### Conversation tools (3)
+### Conversation tools (4)
 
-Browse and share past conversations imported from Claude.ai export ZIPs.
+Browse, share, and annotate past conversations imported from Claude.ai export ZIPs.
 
 | Tool | Description | Key args |
 |------|-------------|----------|
 | `conversation_search` | Search conversation titles | `q`, `limit` |
-| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20) | `uuid`, `include_thinking` |
+| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations` |
 | `conversation_share` | Generate 24h shareable URL | `uuid` |
+| `log_annotate` | Append-only audit annotation on a conversation; raw logs never change, stored in `/data/annotations/{uuid}.json` (v3.22) | `uuid`, `note`, `author`, `target` |
 
 **Example — find a past discussion:**
 ```

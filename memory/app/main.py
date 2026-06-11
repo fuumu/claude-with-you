@@ -1,8 +1,16 @@
 """
-mio-memory v3.21  —  Streamable HTTP MCP transport
+mio-memory v3.22  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.22 (2026-06-12) - 監査用機能（log_annotate＋thinking_limit）＋X2修正
+    - 新MCPツール log_annotate（18本目）: 会話ログへの注記を /data/annotations/
+      {uuid}.json に append-only で積む（生ログ不変・編集削除なし）
+    - conversation_read に include_annotations 追加: 注記をインライン表示
+      （📝[annotation #seq by author @date]）＋各メッセージに [No.X] 通番付与
+    - conversation_read に thinking_limit 追加（デフォルト1500、0以下で無制限）
+    - X2: logs.html の tool_use / tool_result 表示で残っていた \\uXXXX
+      エスケープを表示用にデコード（decodeUniEsc）
   v3.21 (2026-06-11) - CoreMem 分割+マージ読み込み（handoff 件2）
     - {stem}_manifest.md（order リスト）があれば分割ファイルを順に結合して返す
       （CoreMem_read / GET /api/coremem/<name> 共通、manifest が direct ファイルより優先）
@@ -186,7 +194,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.21'
+VERSION = '3.22'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -197,6 +205,7 @@ IMPORT_STATUS_FILE = '/data/.import_status.json'
 SHARE_TOKENS_FILE  = '/data/share_tokens.json'
 CONVERSATIONS_DIR  = '/data/conversations'
 CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
+ANNOTATIONS_DIR    = '/data/annotations'
 INBOX_DIR          = '/data/inbox'
 ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
 FRIENDS_DIR            = '/data/friends'
@@ -942,6 +951,45 @@ def _mark_inbox_read(msg_id):
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(msg, f, ensure_ascii=False, indent=2)
     return msg
+
+# ── 会話ログ注記（log_annotate, v3.22）──────────────────────────────
+# 生ログは不変。注記は /data/annotations/{uuid}.json に append-only で積む
+
+def _annotations_path(uid):
+    return os.path.join(ANNOTATIONS_DIR, f'{uid}.json')
+
+def _load_annotations(uid):
+    p = _annotations_path(uid)
+    if os.path.exists(p):
+        with open(p, encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def _append_annotation(uid, target, note, author):
+    os.makedirs(ANNOTATIONS_DIR, exist_ok=True)
+    anns = _load_annotations(uid)
+    entry = {
+        "seq": len(anns) + 1,
+        "target": target,
+        "note": note,
+        "author": author,
+        "created_at": now_jst(),
+    }
+    anns.append(entry)
+    with open(_annotations_path(uid), 'w', encoding='utf-8') as f:
+        json.dump(anns, f, ensure_ascii=False, indent=2)
+    return entry
+
+def _ann_target_no(target):
+    """target（int / "No.XX" / 数字文字列 / None）→ メッセージ通番 int or None（会話全体）"""
+    if target is None or target == '':
+        return None
+    m = re.search(r'(\d+)', str(target))
+    return int(m.group(1)) if m else None
+
+def _format_annotation(a):
+    date = (a.get('created_at') or '')[:10]
+    return f"📝[annotation #{a['seq']} by {a.get('author','?')} @{date}] {a.get('note','')}"
 
 @app.route('/api/inbox', methods=['GET'])
 @require_auth
@@ -2430,11 +2478,23 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_read",
-        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）",
+        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）",
         "inputSchema": {"type": "object", "properties": {
             "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
-            "include_thinking": {"type": "boolean", "description": "trueの場合、thinkingブロックも💭[thinking]マーカー付きで含める（各1500字まで）。デフォルト: false"}
+            "include_thinking": {"type": "boolean", "description": "trueの場合、thinkingブロックも💭[thinking]マーカー付きで含める。デフォルト: false"},
+            "thinking_limit": {"type": "integer", "description": "thinking 1件あたりの文字数上限（デフォルト1500、0以下で無制限）"},
+            "include_annotations": {"type": "boolean", "description": "trueの場合、log_annotateで積んだ注記を該当位置にインライン表示し、各メッセージに[No.X]通番を付ける。デフォルト: false"}
         }, "required": ["uuid"]}
+    },
+    {
+        "name": "log_annotate",
+        "description": "会話ログに監査・追体験用の注記を積む。生ログは不変、注記はappend-only（編集・削除なし、反論も新規注記として積む）。conversation_read(include_annotations=true)でインライン表示される",
+        "inputSchema": {"type": "object", "properties": {
+            "uuid":   {"type": "string", "description": "対象会話のUUID"},
+            "target": {"type": "string", "description": "対象メッセージの通番（例: \"5\" または \"No.5\"。conversation_read(include_annotations=true)の[No.X]に対応）。省略時は会話全体への注記"},
+            "note":   {"type": "string", "description": "注記本文"},
+            "author": {"type": "string", "description": "記入モデル（例: \"fable-5\", \"sonnet-4.6\"）"}
+        }, "required": ["uuid", "note", "author"]}
     },
     {
         "name": "inbox_check",
@@ -2665,7 +2725,10 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "conversation_read":
         uid   = arguments.get("uuid", "")
-        include_thinking = bool(arguments.get("include_thinking", False))
+        include_thinking    = bool(arguments.get("include_thinking", False))
+        include_annotations = bool(arguments.get("include_annotations", False))
+        raw_tl = arguments.get("thinking_limit")
+        thinking_limit = int(raw_tl) if raw_tl is not None else 1500  # 0 / 負数 = 無制限
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
         if not os.path.exists(fpath):
             return {"error": f"conversation not found: {uid}"}
@@ -2673,10 +2736,23 @@ def _handle_tool_call_raw(name, arguments):
             conv = json.load(f)
         messages = conv.get('chat_messages', [])
         # include_thinking 時はメッセージ上限を緩和（thinkingは長文になりがち）
-        msg_cap = 2000 if include_thinking else 500
+        if include_thinking:
+            msg_cap = max(2000, thinking_limit + 500) if thinking_limit > 0 else None
+        else:
+            msg_cap = 500
+        # 注記をメッセージ通番（chat_messages の1始まりインデックス）ごとに整理
+        ann_by_no, ann_global = {}, []
+        if include_annotations:
+            for a in _load_annotations(uid):
+                no = _ann_target_no(a.get('target'))
+                if no is None:
+                    ann_global.append(a)
+                else:
+                    ann_by_no.setdefault(no, []).append(a)
+        emitted_nos = set()
         thinking_found = 0
         lines = []
-        for m in messages:
+        for no, m in enumerate(messages, 1):
             role    = m.get('sender') or m.get('role') or '?'
             content = m.get('content') or m.get('text') or ''
             text    = ''
@@ -2691,16 +2767,46 @@ def _handle_tool_call_raw(name, arguments):
                         if include_thinking:
                             tt = (c.get('thinking') or c.get('text') or '').strip()
                             if tt:
-                                text += f'\n💭[thinking]\n{tt[:1500]}\n[/thinking]\n'
+                                if thinking_limit > 0:
+                                    tt = tt[:thinking_limit]
+                                text += f'\n💭[thinking]\n{tt}\n[/thinking]\n'
             else:
                 text = str(content)
             if text.strip():
-                lines.append(f'[{role}] {text[:msg_cap]}')
+                body = text[:msg_cap] if msg_cap else text
+                prefix = f'[No.{no}][{role}]' if include_annotations else f'[{role}]'
+                line = f'{prefix} {body}'
+                if no in ann_by_no:
+                    emitted_nos.add(no)
+                    line += '\n' + '\n'.join(_format_annotation(a) for a in ann_by_no[no])
+                lines.append(line)
         title  = conv.get('name') or conv.get('title') or '無題'
-        result = f'# {title}\n\n' + '\n\n'.join(lines)
+        result = f'# {title}\n\n'
+        if ann_global:
+            result += '\n'.join(_format_annotation(a) for a in ann_global) + '\n\n'
+        result += '\n\n'.join(lines)
+        # 対象メッセージが非表示（空テキスト等）だった注記は末尾にまとめる
+        leftover = [a for no, anns_ in ann_by_no.items() if no not in emitted_nos for a in anns_]
+        if leftover:
+            result += '\n\n---\n（以下は対象メッセージが表示されなかった注記）\n'
+            result += '\n'.join(f'[No.{_ann_target_no(a.get("target"))}] {_format_annotation(a)}' for a in leftover)
         if thinking_found and not include_thinking:
             result += f'\n\n---\n（この会話には thinking ブロックが {thinking_found} 件あります。include_thinking=true で取得できます）'
         return result
+
+    elif name == "log_annotate":
+        uid    = arguments.get("uuid", "")
+        note   = arguments.get("note", "")
+        author = arguments.get("author", "")
+        target = arguments.get("target")  # メッセージ通番 / "No.XX" / 省略=会話全体
+        if not uid or not note or not author:
+            return {"error": "uuid, note, author are required"}
+        if not os.path.exists(os.path.join(CONVERSATIONS_DIR, f'{uid}.json')):
+            return {"error": f"conversation not found: {uid}"}
+        entry = _append_annotation(uid, target, note, author)
+        _log_info(f'log_annotate: uuid={uid} seq={entry["seq"]} target={target} author={author}')
+        return {"ok": True, "uuid": uid, "seq": entry["seq"],
+                "target": target, "created_at": entry["created_at"]}
 
     elif name == "inbox_check":
         to           = arguments.get("to")

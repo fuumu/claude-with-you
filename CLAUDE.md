@@ -32,6 +32,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/artifacts/` — versioned file storage; top-level symlinks point to latest version
 - `/data/artifacts/_meta.json` — artifact ↔ conversation bidirectional link metadata
 - `/data/conversations/` — full conversation text from ZIP imports ({uuid}.json + _index.json)
+- `/data/annotations/` — append-only audit annotations per conversation ({uuid}.json, via `log_annotate`)
 - `/data/conv_artifacts/` — files extracted from conversation tool-use blocks
 - `/data/inbox/` — inbox messages (inbox_check / inbox_read / inbox_post)
 - `/data/friends/` — friend system: `registry.json` (token→friend mapping) + per-friend subdirs (`001/memory.md`, `002/memory.md`, ...)
@@ -56,11 +57,12 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 
-Regular sessions (17 tools):
+Regular sessions (18 tools):
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD; `memory_search` is hierarchical (v3.17): stage 1 index-only (title+tags+keywords), stage 2 layer-2 summary, stage 3 full body; returns `summary` + `symbolic` (layer 3) instead of `body` (pass `full_body=true` for legacy behavior), each hit carries `match_layer`; same logic exposed via REST `GET /api/memory/hsearch` (v3.19, used by the admin.html Search tab)
 - `memory_share` — generates 24h share URL for a memory entry
 - `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions); `CoreMem_read` supports split+merge (v3.21): if `{stem}_manifest.md` (with an `order:` list) exists it takes precedence and returns the listed files concatenated with `<!-- BEGIN/END: file -->` separators plus a `manifest` map (file → `##` headings); writes must target individual split files without separators; REST `GET /api/coremem/<name>` merges too (`?raw=true` to bypass)
-- `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access; `conversation_read(include_thinking=true)` includes thinking blocks with 💭[thinking] markers (v3.20; default response appends a hint with the thinking-block count if any exist)
+- `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access; `conversation_read(include_thinking=true)` includes thinking blocks with 💭[thinking] markers (v3.20; default response appends a hint with the thinking-block count if any exist); `thinking_limit` caps each thinking block (default 1500 chars, ≤0 = unlimited, v3.22); `include_annotations=true` shows audit annotations inline and prefixes each message with its `[No.X]` sequence number (v3.22)
+- `log_annotate` — append-only audit annotation on a conversation (`uuid`, `note`, `author` required; `target` = message number or "No.X", omitted = whole conversation); raw logs are never modified, annotations live in `/data/annotations/{uuid}.json`, no edit/delete (rebuttals are new annotations) (v3.22)
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check` returns `persistent[]{id, title, body, created_at}` with full bodies (v3.20, no `inbox_read` calls needed for standing messages) plus `non_persistent_unread_count`/`non_persistent_unread_ids`; `inbox_check(include_read=true)` additionally returns all messages with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
 - `batch_run_summary_layers` — start the summary-layer batch (2層要約/3層シンボリック圧縮/4層キーワード) for raw entries and keywords backfill; `status_only=true` returns progress + `raw_pending`/`keywords_pending` counts without starting
 
@@ -86,7 +88,7 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 **Friend system (v3.9–v3.12):**
 - Registration flow: `POST /api/friends/register` (no auth) → admin approves via admin.html → SendGrid sends activation code email → friend visits `/activate` and gets their token
-- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of the normal 17 tools
+- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of the normal 18 tools
 - Per-friend memory: stored at `/data/friends/{seq_no:03d}/memory.md`; managed via `friend_memory_*` tools
 - Admin REST API: `/api/friends` (list), `/api/friends/<seq_no>/approve`, `/api/friends/<seq_no>/revoke`, `DELETE /api/friends/<seq_no>` (complete removal with shutil.rmtree)
 - Public pages: `/register` (registration form + invitation text from CoreMem `friend_invitation.md`), `/activate` (activation code entry)

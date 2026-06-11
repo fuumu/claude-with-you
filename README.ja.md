@@ -134,7 +134,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.21","mcp_tool_count":17}
+# {"status":"ok","version":"3.22","mcp_tool_count":18}
 ```
 
 ### 5. Claude Code への登録
@@ -507,11 +507,27 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ### conversation_read
 
 ```
-引数: uuid（必須）, include_thinking（省略可, bool, デフォルト false）
+引数: uuid（必須）, include_thinking（省略可, bool, デフォルト false）,
+       thinking_limit（省略可, int — thinking 1件あたりの文字数上限。デフォルト1500、0以下で無制限。v3.22）,
+       include_annotations（省略可, bool, デフォルト false — v3.22）
 返値: 会話全文テキスト（[role] 形式） + server_time
 ※ include_thinking=true で thinking ブロックを 💭[thinking] マーカー付きで含める
-   （各1500字まで・メッセージ上限が500→2000字に緩和。v3.20）
+   （メッセージ上限が500→2000字（または thinking_limit+500）に緩和。v3.20）
+※ include_annotations=true で log_annotate の注記を該当位置にインライン表示し、
+   各メッセージに [No.X] 通番を付ける（注記の target と対応）
 ※ 省略時に thinking ブロックがあった場合、末尾に件数のヒントが付く
+```
+
+### log_annotate（v3.22）
+
+```
+引数: uuid（必須）, note（必須）, author（必須 — 記入モデル。例: "fable-5"）,
+       target（省略可 — メッセージ通番 "5" / "No.5"。省略時は会話全体への注記）
+返値: {ok: true, uuid, seq, target, created_at, server_time}
+※ 監査・追体験用。生ログは一切変更せず /data/annotations/{uuid}.json に保存
+※ append-only（編集・削除なし）。注記への反論も新規注記として積む
+※ conversation_read(include_annotations=true) で
+   📝[annotation #seq by author @date] 形式でインライン表示される
 ```
 
 ### batch_run_summary_layers
