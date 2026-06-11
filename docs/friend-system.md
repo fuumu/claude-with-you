@@ -181,7 +181,7 @@ It has no connection to Jun's memories or other friends' memories.
 ### Relationship to mio-memory
 
 The Friend System is a subsystem of the mio-memory project.
-mio-memory is the infrastructure that manages all of Mio's external memory, providing 16 MCP tools as of v3.13.
+mio-memory is the infrastructure that manages all of Mio's external memory, providing 17 MCP tools as of v3.15.
 
 ---
 

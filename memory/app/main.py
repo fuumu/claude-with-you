@@ -1,8 +1,14 @@
 """
-mio-memory v3.14  —  Streamable HTTP MCP transport
+mio-memory v3.15  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.15 (2026-06-11) - 要約バッチの起動改善（M1）
+    - バッチ自動起動条件を修正: ANTHROPIC_API_KEY 必須をやめ、
+      キーがなければ LMStudio バックエンドで自動起動するようにした
+    - batch_run_summary_layers MCPツール追加（17本目）
+      澪チャットからバッチ起動・進捗確認（status_only=true）が可能に
+    - POST /api/batch/start: backend 省略時の自動選択に対応
   v3.14 (2026-06-11) - UI改善（U3・U4）
     - admin.html: 共通モーダル改善（先頭表示・スクロールボタン・最大化・IDコピー）
       ※ Memory / CoreMem / Files / Oplog の4タブで共用
@@ -132,7 +138,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.14'
+VERSION = '3.15'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1596,12 +1602,14 @@ def import_zip():
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
 
-    # ANTHROPIC_API_KEY があれば要約バッチを自動起動
+    # インポート成功後、要約バッチを自動起動
+    # （ANTHROPIC_API_KEY があれば anthropic、なければ LMStudio バックエンドを使う）
     if imported > 0:
-        auto_key = os.environ.get('ANTHROPIC_API_KEY', '')
-        if auto_key and not _batch_status.get('running'):
-            t = threading.Thread(target=_run_summary_batch, args=(auto_key,), daemon=True)
-            t.start()
+        ok, info = _start_summary_batch()
+        if ok:
+            _log_info(f'auto summary batch started: backend={info["backend"]}')
+        else:
+            _log_info(f'auto summary batch not started: {info.get("error")}')
 
     return jsonify(result)
 
@@ -1730,6 +1738,40 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
         _log_info(f'batch summary done: processed={_batch_status["processed"]} skipped={_batch_status["skipped"]} errors={_batch_status["errors"]}')
 
 
+def _count_raw_entries():
+    """インデックス上の未処理(raw)エントリ数を返す。読めない場合は None"""
+    try:
+        with open(INDEX_FILE) as f:
+            idx = json.load(f)
+        return sum(1 for e in idx if 'raw' in (e.get('tags') or []) and not e.get('deleted'))
+    except Exception:
+        return None
+
+
+def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, lm_port=None):
+    """要約バッチをバックグラウンド起動する。
+
+    backend 省略時は ANTHROPIC_API_KEY があれば anthropic、なければ lmstudio を選ぶ。
+    戻り値: (ok, info dict)
+    """
+    if _batch_status.get('running'):
+        return False, {'error': 'already running', 'status': dict(_batch_status)}
+    api_key = api_key or os.environ.get('ANTHROPIC_API_KEY', '')
+    if not backend:
+        backend = 'anthropic' if api_key else 'lmstudio'
+    if backend == 'anthropic' and not api_key:
+        return False, {'error': 'ANTHROPIC_API_KEY required'}
+    lm_host = lm_host or os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = lm_port or os.environ.get('LM_STUDIO_PORT', '1234')
+    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port, force), daemon=True)
+    t.start()
+    info = {'started': True, 'backend': backend, 'force': force}
+    raw_count = _count_raw_entries()
+    if raw_count is not None:
+        info['raw_pending'] = raw_count
+    return True, info
+
+
 @app.route('/api/batch/status')
 @require_auth
 def api_batch_status():
@@ -1739,19 +1781,17 @@ def api_batch_status():
 @app.route('/api/batch/start', methods=['POST'])
 @require_auth
 def api_batch_start():
-    if _batch_status.get('running'):
-        return jsonify({'error': 'already running'}), 409
-    data     = request.get_json() or {}
-    backend  = data.get('backend', 'anthropic')
-    api_key  = data.get('api_key', '') or os.environ.get('ANTHROPIC_API_KEY', '')
-    lm_host  = data.get('lm_host', os.environ.get('LM_STUDIO_HOST', '192.168.10.32'))
-    lm_port  = data.get('lm_port', os.environ.get('LM_STUDIO_PORT', '1234'))
-    force    = bool(data.get('force', False))
-    if backend == 'anthropic' and not api_key:
-        return jsonify({'error': 'ANTHROPIC_API_KEY required'}), 400
-    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port, force), daemon=True)
-    t.start()
-    return jsonify({'started': True, 'backend': backend, 'force': force})
+    data = request.get_json() or {}
+    ok, info = _start_summary_batch(
+        backend=data.get('backend') or None,
+        force=bool(data.get('force', False)),
+        api_key=data.get('api_key') or None,
+        lm_host=data.get('lm_host') or None,
+        lm_port=data.get('lm_port') or None,
+    )
+    if not ok:
+        return jsonify(info), 409 if info.get('error') == 'already running' else 400
+    return jsonify(info)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2074,6 +2114,15 @@ _MCP_TOOLS = [
             "body":       {"type": "string", "description": "本文"},
             "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"}
         }, "required": ["to", "title", "body"]}
+    },
+    {
+        "name": "batch_run_summary_layers",
+        "description": "未処理(raw)エントリの2層要約・3層シンボリック圧縮を生成するバッチを起動する。status_only=trueで進捗確認のみ行う",
+        "inputSchema": {"type": "object", "properties": {
+            "backend":     {"type": "string", "description": "'lmstudio' または 'anthropic'（省略時は ANTHROPIC_API_KEY があれば anthropic、なければ lmstudio）"},
+            "force":       {"type": "boolean", "description": "summarized 済みエントリも再処理する（デフォルト: false）"},
+            "status_only": {"type": "boolean", "description": "バッチを起動せず、現在の進捗と未処理raw件数だけ返す"}
+        }, "required": []}
     }
 ]
 
@@ -2322,6 +2371,16 @@ def _handle_tool_call_raw(name, arguments):
         persistent = bool(arguments.get("persistent", False))
         msg = _post_inbox_message(to=to, title=title, body=body, from_='code', persistent=persistent)
         return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent}
+
+    elif name == "batch_run_summary_layers":
+        if arguments.get("status_only"):
+            return {**_batch_status, "raw_pending": _count_raw_entries(), "server_time": now_jst()}
+        ok, info = _start_summary_batch(
+            backend=arguments.get("backend") or None,
+            force=bool(arguments.get("force", False)),
+        )
+        info["server_time"] = now_jst()
+        return info
 
     return {"error": "unknown tool"}
 

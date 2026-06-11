@@ -52,14 +52,15 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.13):**
+**MCP tools exposed (v3.15):**
 
-Regular sessions (16 tools):
+Regular sessions (17 tools):
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD
 - `memory_share` — generates 24h share URL for a memory entry
 - `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions)
 - `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check(include_read=true)` returns all messages (including already-read ones) with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
+- `batch_run_summary_layers` — start the summary-layer batch (2層要約/3層シンボリック圧縮) for raw entries; `status_only=true` returns progress + `raw_pending` count without starting
 
 Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `friend_memory_read` — read this friend's memory file (`/data/friends/{seq_no:03d}/memory.md`)
@@ -69,8 +70,8 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 **Batch summary API:**
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
-- `POST /api/batch/start` — start background summary thread (`backend: "anthropic"` or `"lmstudio"`)
-- Auto-starts on ZIP import when `ANTHROPIC_API_KEY` is set
+- `POST /api/batch/start` — start background summary thread (`backend: "anthropic"` or `"lmstudio"`; omitted = auto-select)
+- Auto-starts on ZIP import: uses `anthropic` backend if `ANTHROPIC_API_KEY` is set, otherwise falls back to `lmstudio` (v3.15)
 
 **Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 
@@ -81,7 +82,7 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 **Friend system (v3.9–v3.12):**
 - Registration flow: `POST /api/friends/register` (no auth) → admin approves via admin.html → SendGrid sends activation code email → friend visits `/activate` and gets their token
-- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of the normal 16 tools
+- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of the normal 17 tools
 - Per-friend memory: stored at `/data/friends/{seq_no:03d}/memory.md`; managed via `friend_memory_*` tools
 - Admin REST API: `/api/friends` (list), `/api/friends/<seq_no>/approve`, `/api/friends/<seq_no>/revoke`, `DELETE /api/friends/<seq_no>` (complete removal with shutil.rmtree)
 - Public pages: `/register` (registration form + invitation text from CoreMem `friend_invitation.md`), `/activate` (activation code entry)

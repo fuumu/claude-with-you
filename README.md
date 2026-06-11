@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.14","mcp_tool_count":16}
+# {"status":"ok","version":"3.15","mcp_tool_count":17}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -169,7 +169,7 @@ memory_search(q="auth")
 → {"results": [...], "total": 3, "has_more": false, "server_time": "..."}
 ```
 
-### UserCoreMemory tools (3)
+### UserCoreMemory tools (4)
 
 Versioned file storage (NAS file store). Every save creates a new version; the latest is always accessible by name.
 
@@ -227,6 +227,14 @@ inbox_post(to="chat", title="Deploy complete", body="v3.5 is live. Commit: abc12
 inbox_check(to="chat") → {"count": 1, "ids": ["inbox_..."], "server_time": "..."}
 inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 ```
+
+### Batch tools (1)
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `batch_run_summary_layers` | Start the summary-layer batch for raw entries (layer 2 summary + layer 3 symbolic compression); `status_only=true` returns progress + pending raw count | `backend`, `force`, `status_only` |
+
+`backend` defaults to `anthropic` when `ANTHROPIC_API_KEY` is set, otherwise `lmstudio` (local LLM). The same batch auto-starts after each ZIP import.
 
 ### REST API reference
 
@@ -461,10 +469,11 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.14)**
+**Implemented (v3.9–v3.15)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
+- Summary batch improvements — LMStudio fallback auto-start after import, `batch_run_summary_layers` MCP tool (v3.15)
 
 ---
 
