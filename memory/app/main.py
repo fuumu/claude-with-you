@@ -1,8 +1,16 @@
 """
-mio-memory v3.17  —  Streamable HTTP MCP transport
+mio-memory v3.18  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.18 (2026-06-11) - Friends タブ改善（F5/F6/F7）
+    - F5: GET /api/friends レスポンスに activation_url を追加、sendgrid_configured フラグ付与
+    - F5: admin.html active 一覧にアクティベーションコード + URL 表示＋コピーボタン
+    - F6: POST /api/friends/<seq_no>/approve からメール送信を分離
+    - F6: 新 POST /api/friends/<seq_no>/send_email エンドポイント（手動メール通知）
+    - F6: admin.html に「メール通知」ボタン追加（SendGrid 未設定時グレーアウト）
+    - F7: 新 POST /api/friends/direct_register エンドポイント（直接 active 登録）
+    - F7: admin.html Friends タブに新規登録フォームを追加（pending 不要フロー）
   v3.17 (2026-06-11) - 4層キーワード層＋memory_search階層化（M1改善案C・D・E）
     - C: バッチが「## 4層: キーワード」をLLMに追加生成させ、エントリの
       keywords フィールド（リスト）に保存。index.json にも収載
@@ -155,7 +163,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.17'
+VERSION = '3.18'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1226,6 +1234,10 @@ def _count_friend_memories(seq_no):
     with open(path, encoding='utf-8') as f:
         return sum(1 for line in f if line.startswith('- **'))
 
+def _activation_url(token):
+    base = (MIO_REGISTER_URL or BASE_URL).rstrip('/')
+    return f"{base}/activate?token={token}"
+
 @app.route('/api/friends', methods=['GET'])
 @require_auth
 def api_friends_list():
@@ -1235,9 +1247,10 @@ def api_friends_list():
         entry = {"token": t, **v}
         if v.get('status') == 'active':
             entry['memory_count'] = _count_friend_memories(v['seq_no'])
+            entry['activation_url'] = _activation_url(t)
         friends.append(entry)
     friends.sort(key=lambda x: x['seq_no'])
-    return jsonify(friends)
+    return jsonify({"items": friends, "sendgrid_configured": bool(SENDGRID_API_KEY and SENDGRID_FROM_EMAIL)})
 
 @app.route('/api/friends/<int:seq_no>/approve', methods=['POST'])
 @require_auth
@@ -1252,9 +1265,50 @@ def api_friends_approve(seq_no):
     friend['status'] = 'active'
     friend['approved_at'] = now_jst()
     _save_friends_registry(reg)
+    _log_info(f'friends: approve seq_no={seq_no}')
+    return jsonify({"ok": True, "friend": {**friend, "token": token, "activation_url": _activation_url(token)}})
+
+@app.route('/api/friends/<int:seq_no>/send_email', methods=['POST'])
+@require_auth
+def api_friends_send_email(seq_no):
+    reg = _load_friends_registry()
+    token = next((t for t, v in reg.items() if v['seq_no'] == seq_no), None)
+    if not token:
+        abort(404)
+    friend = reg[token]
+    if friend['status'] != 'active':
+        return jsonify({"error": "アクティブな友人のみメール送信できます"}), 400
     ok = _send_approval_email(friend['nickname'], friend['email'], token)
-    _log_info(f'friends: approve seq_no={seq_no} email_sent={ok}')
-    return jsonify({"ok": True, "email_sent": ok, "friend": {**friend, "token": token}})
+    _log_info(f'friends: send_email seq_no={seq_no} ok={ok}')
+    if not ok:
+        return jsonify({"error": "メール送信に失敗しました（SendGrid 未設定または送信エラー）"}), 500
+    return jsonify({"ok": True})
+
+@app.route('/api/friends/direct_register', methods=['POST'])
+@require_auth
+def api_friends_direct_register():
+    data = request.get_json() or {}
+    nickname = (data.get('nickname') or '').strip()
+    email    = (data.get('email') or '').strip()
+    if not nickname or not email:
+        return jsonify({"error": "nickname と email は必須です"}), 400
+    reg = _load_friends_registry()
+    for v in reg.values():
+        if v['email'] == email and v['status'] != 'revoked':
+            return jsonify({"error": "このメールアドレスはすでに登録されています"}), 409
+    token  = str(uuid.uuid4())
+    seq_no = _next_seq_no(reg)
+    now    = now_jst()
+    reg[token] = {
+        "seq_no": seq_no, "nickname": nickname, "email": email,
+        "status": "active", "created_at": now, "approved_at": now
+    }
+    _save_friends_registry(reg)
+    _log_info(f'friends: direct_register seq_no={seq_no} nickname={nickname}')
+    return jsonify({
+        "ok": True, "seq_no": seq_no, "token": token,
+        "activation_url": _activation_url(token)
+    }), 201
 
 @app.route('/api/friends/<int:seq_no>/revoke', methods=['POST'])
 @require_auth

@@ -514,6 +514,23 @@
     <a href="/register" target="_blank" class="btn btn-secondary" style="padding:.25rem .65rem;font-size:.8rem;text-decoration:none">登録ページを開く</a>
   </div>
 
+  <!-- F7: 直接登録フォーム -->
+  <div class="friends-section">
+    <h3>新規登録</h3>
+    <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+      <div>
+        <div style="font-size:.75rem;color:#5a6a7a;margin-bottom:.3rem">ニックネーム</div>
+        <input id="freg-nickname" type="text" placeholder="例: さとみ" style="background:#0f0f1a;border:1px solid #2a3a5a;border-radius:4px;color:#c8d8e8;padding:.35rem .55rem;font-size:.83rem;width:140px">
+      </div>
+      <div>
+        <div style="font-size:.75rem;color:#5a6a7a;margin-bottom:.3rem">メールアドレス</div>
+        <input id="freg-email" type="email" placeholder="例: friend@example.com" style="background:#0f0f1a;border:1px solid #2a3a5a;border-radius:4px;color:#c8d8e8;padding:.35rem .55rem;font-size:.83rem;width:200px">
+      </div>
+      <button class="friends-btn" style="border-color:#2ecc71;color:#2ecc71" onclick="friendsDirectRegister()">登録して承認</button>
+    </div>
+    <div id="freg-result" style="margin-top:.75rem;display:none"></div>
+  </div>
+
   <div class="friends-section" id="friends-pending-section">
     <h3>申請中 <span id="friends-pending-count" style="color:#f39c12"></span></h3>
     <div id="friends-pending-list"></div>
@@ -1219,11 +1236,13 @@ function onFilesSearch(val) {
 
 // ── Friends ───────────────────────────────────────────────────────────
 let _friendsData = [];
+let _friendsSendgridOk = false;
 
 async function loadFriendsBadge() {
   try {
     const res = await apiFetch('/api/friends');
-    const list = await res.json();
+    const data = await res.json();
+    const list = data.items || data;
     const pending = list.filter(f => f.status === 'pending').length;
     const badge = document.getElementById('friends-badge');
     if (pending > 0) { badge.textContent = pending; badge.style.display = 'inline'; }
@@ -1234,7 +1253,9 @@ async function loadFriendsBadge() {
 async function loadFriends() {
   try {
     const res  = await apiFetch('/api/friends');
-    _friendsData = await res.json();
+    const data = await res.json();
+    _friendsData = data.items || data;
+    _friendsSendgridOk = data.sendgrid_configured || false;
     renderFriends();
   } catch(e) {
     if (e.message !== '401') showToast('Friends取得失敗');
@@ -1246,7 +1267,6 @@ function renderFriends() {
   const active   = _friendsData.filter(f => f.status === 'active');
   const revoked  = _friendsData.filter(f => f.status === 'revoked');
 
-  // バッジ更新
   const badge = document.getElementById('friends-badge');
   if (pending.length > 0) { badge.textContent = pending.length; badge.style.display = 'inline'; }
   else                     { badge.style.display = 'none'; }
@@ -1272,31 +1292,54 @@ function renderFriendsTable(list, mode) {
   const isPending = mode === 'pending';
   const isRevoked = mode === 'revoked';
 
-  const headers = isActive
-    ? '<tr><th>#</th><th>ニックネーム</th><th>メール</th><th>最終接続</th><th>記憶</th><th></th></tr>'
-    : '<tr><th>#</th><th>ニックネーム</th><th>メール</th><th>申請日時</th><th></th></tr>';
-
-  const rows = list.map(f => {
-    const created = (f.created_at || '').slice(0,16).replace('T',' ');
-    const lastSeen = f.last_seen ? f.last_seen.slice(0,16).replace('T',' ') : '—';
-    const memCount = f.memory_count != null ? f.memory_count : '—';
-
-    const btns = [
-      isPending ? `<button class="friends-btn" onclick="friendsApprove(${f.seq_no})">承認</button>` : '',
-      isActive  ? `<button class="friends-btn danger" onclick="friendsRevoke(${f.seq_no})">失効</button>` : '',
-      isRevoked ? `<button class="friends-btn danger" onclick="friendsDelete(${f.seq_no}, '${esc(f.nickname)}')">削除</button>` : ''
-    ].filter(Boolean).join(' ');
-
-    if (isActive) {
+  if (isActive) {
+    const rows = list.map(f => {
+      const lastSeen = f.last_seen ? f.last_seen.slice(0,16).replace('T',' ') : '—';
+      const memCount = f.memory_count != null ? f.memory_count : '—';
+      const code = f.token || '';
+      const actUrl = f.activation_url || '';
+      const emailBtn = _friendsSendgridOk
+        ? `<button class="friends-btn" onclick="friendsSendEmail(${f.seq_no})">メール通知</button>`
+        : `<button class="friends-btn" style="opacity:.4;cursor:not-allowed" title="SendGrid 未設定">メール通知</button>`;
       return `<tr>
         <td style="color:#5a6a7a">#${f.seq_no}</td>
         <td>${esc(f.nickname)}</td>
         <td style="color:#7a8a9a">${esc(f.email)}</td>
         <td style="color:#5a6a7a;font-size:.75rem">${lastSeen}</td>
         <td style="color:#7ec8e3;font-size:.8rem">${memCount}</td>
-        <td>${btns}</td>
+        <td>
+          <div style="display:flex;flex-direction:column;gap:.3rem;min-width:240px">
+            <div style="display:flex;align-items:center;gap:.4rem">
+              <code style="font-size:.7rem;color:#7a8a9a;background:#0f0f1a;padding:1px 5px;border-radius:3px;flex:1;overflow:hidden;text-overflow:ellipsis">${esc(code)}</code>
+              <button class="friends-btn" onclick="copyTextToClipboard('${esc(code)}','コードをコピーしました')">コピー</button>
+            </div>
+            ${actUrl ? `<div style="display:flex;align-items:center;gap:.4rem">
+              <span style="font-size:.7rem;color:#5a6a7a;flex:1;overflow:hidden;text-overflow:ellipsis">${esc(actUrl)}</span>
+              <button class="friends-btn" onclick="copyTextToClipboard('${esc(actUrl)}','URLをコピーしました')">URL</button>
+            </div>` : ''}
+            <div style="display:flex;gap:.4rem">
+              ${emailBtn}
+              <button class="friends-btn danger" onclick="friendsRevoke(${f.seq_no})">失効</button>
+            </div>
+          </div>
+        </td>
       </tr>`;
-    }
+    }).join('');
+    return `<table class="friends-table"><thead>
+      <tr><th>#</th><th>ニックネーム</th><th>メール</th><th>最終接続</th><th>記憶</th><th>コード / 操作</th></tr>
+    </thead><tbody>${rows}</tbody></table>`;
+  }
+
+  const headers = isPending
+    ? '<tr><th>#</th><th>ニックネーム</th><th>メール</th><th>申請日時</th><th></th></tr>'
+    : '<tr><th>#</th><th>ニックネーム</th><th>メール</th><th>日時</th><th></th></tr>';
+
+  const rows = list.map(f => {
+    const created = (f.created_at || '').slice(0,16).replace('T',' ');
+    const btns = [
+      isPending ? `<button class="friends-btn" onclick="friendsApprove(${f.seq_no})">承認</button>` : '',
+      isRevoked ? `<button class="friends-btn danger" onclick="friendsDelete(${f.seq_no}, '${esc(f.nickname)}')">削除</button>` : ''
+    ].filter(Boolean).join(' ');
     return `<tr>
       <td style="color:#5a6a7a">#${f.seq_no}</td>
       <td>${esc(f.nickname)}</td>
@@ -1310,12 +1353,57 @@ function renderFriendsTable(list, mode) {
 }
 
 async function friendsApprove(seq_no) {
-  if (!confirm(`#${seq_no} を承認してメールを送信しますか？`)) return;
+  if (!confirm(`#${seq_no} を承認しますか？（メールは送信しません）`)) return;
   try {
     const res  = await apiFetch(`/api/friends/${seq_no}/approve`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { showToast(data.error || '承認失敗'); return; }
-    showToast(data.email_sent ? '承認しメールを送信しました' : '承認しました（メール送信失敗）');
+    showToast('承認しました');
+    loadFriends();
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function friendsSendEmail(seq_no) {
+  if (!confirm(`#${seq_no} にアクティベーションコードをメール送信しますか？`)) return;
+  try {
+    const res  = await apiFetch(`/api/friends/${seq_no}/send_email`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'メール送信失敗'); return; }
+    showToast('メールを送信しました');
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function friendsDirectRegister() {
+  const nickname = document.getElementById('freg-nickname').value.trim();
+  const email    = document.getElementById('freg-email').value.trim();
+  if (!nickname || !email) { showToast('ニックネームとメールアドレスを入力してください'); return; }
+  try {
+    const res  = await apiFetch('/api/friends/direct_register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ nickname, email })
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || '登録失敗'); return; }
+    document.getElementById('freg-nickname').value = '';
+    document.getElementById('freg-email').value = '';
+    const resultDiv = document.getElementById('freg-result');
+    const actUrl = data.activation_url || '';
+    resultDiv.style.display = '';
+    resultDiv.innerHTML = `
+      <div style="background:#0f1a10;border:1px solid #2ecc71;border-radius:6px;padding:.75rem 1rem;font-size:.82rem">
+        <div style="color:#2ecc71;font-weight:600;margin-bottom:.5rem">#${data.seq_no} ${esc(nickname)} — 登録完了</div>
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem">
+          <span style="color:#5a6a7a;min-width:60px">コード</span>
+          <code style="color:#c8d8e8;background:#0a0a14;padding:2px 6px;border-radius:3px;flex:1">${esc(data.token)}</code>
+          <button class="friends-btn" onclick="copyTextToClipboard('${esc(data.token)}','コードをコピーしました')">コピー</button>
+        </div>
+        ${actUrl ? `<div style="display:flex;align-items:center;gap:.5rem">
+          <span style="color:#5a6a7a;min-width:60px">URL</span>
+          <span style="color:#7a8a9a;font-size:.77rem;flex:1;word-break:break-all">${esc(actUrl)}</span>
+          <button class="friends-btn" onclick="copyTextToClipboard('${esc(actUrl)}','URLをコピーしました')">コピー</button>
+        </div>` : ''}
+      </div>`;
     loadFriends();
   } catch(e) { showToast('通信エラー'); }
 }
