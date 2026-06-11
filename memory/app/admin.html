@@ -343,6 +343,34 @@
     .inbox-action-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
     .inbox-action-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
 
+    /* ── Memory Search (U5) ── */
+    .ms-main { display:flex; gap:.7rem; height:calc(100vh - 195px); min-height:300px; }
+    .ms-left { width:300px; flex:none; overflow-y:auto; border:1px solid #2a3a5a; border-radius:6px; background:#12121f; }
+    .ms-item { padding:.55rem .7rem; border-bottom:1px solid #1a1a2e; cursor:pointer; }
+    .ms-item:hover { background:#1a1a2e; }
+    .ms-item.sel { background:#1f2440; box-shadow:inset 3px 0 0 #7c6af7; }
+    .ms-item .t { font-size:.82rem; color:#c8d8e8; margin-bottom:.25rem; line-height:1.4; }
+    .ms-item .m { font-size:.7rem; color:#5a6a7a; display:flex; gap:.5rem; align-items:center; }
+    .ms-layer-badge { border-radius:3px; padding:0 5px; font-size:.65rem; }
+    .ms-layer-keyword { background:#2ecc71; color:#0f0f1a; }
+    .ms-layer-summary { background:#f39c12; color:#0f0f1a; }
+    .ms-layer-full    { background:#7c6af7; color:#fff; }
+    .ms-right { flex:1; display:flex; gap:4px; min-width:0; }
+    .ms-col { flex:0 0 36px; min-width:36px; overflow:hidden; border:1px solid #2a3a5a; border-radius:6px; background:#12121f; transition:flex .25s ease; display:flex; flex-direction:column; cursor:pointer; }
+    .ms-col.active { flex:1 1 auto; cursor:default; }
+    .ms-col-head { padding:.5rem .6rem; font-size:.76rem; color:#7ec8e3; white-space:nowrap; flex:none; }
+    .ms-col.active .ms-col-head { border-bottom:1px solid #2a3a5a; }
+    .ms-col:not(.active) .ms-col-head { writing-mode:vertical-rl; height:100%; padding:.7rem .45rem; }
+    .ms-col:not(.active):hover { border-color:#7ec8e3; }
+    .ms-col-body { padding:.7rem .85rem; overflow-y:auto; font-size:.83rem; color:#b0c0d0; line-height:1.65; display:none; word-break:break-word; }
+    .ms-col.active .ms-col-body { display:block; }
+    .ms-kw-chip { display:inline-block; background:#1a1a2e; border:1px solid #2a3a5a; border-radius:12px; padding:2px 9px; margin:2px 3px; font-size:.76rem; color:#9ec8e3; cursor:pointer; transition:border-color .15s; }
+    .ms-kw-chip:hover { border-color:#7ec8e3; }
+    .ms-kw-chip .cnt { color:#5a6a7a; font-size:.68rem; margin-left:4px; }
+    .ms-link { color:#9a8af7; cursor:pointer; text-decoration:underline; font-size:.78rem; }
+    .ms-link.dim { color:#5a6a7a; text-decoration:none; }
+    .ms-empty { color:#5a6a7a; font-size:.83rem; padding:.8rem; }
+
     /* ── Friends ── */
     .friends-section { margin-bottom: 1.5rem; }
     .friends-section h3 { font-size:.88rem; color:#7ec8e3; margin-bottom:.75rem; border-bottom:1px solid #2a3a5a; padding-bottom:.4rem; }
@@ -380,6 +408,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('memory', this)">Memory</button>
+  <button class="tab-btn" onclick="switchTab('msearch', this)">Search</button>
   <button class="tab-btn" onclick="switchTab('coremem', this)">CoreMem</button>
   <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
   <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
@@ -401,6 +430,38 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Memory Search tab (U5) -->
+<div class="tab-panel" id="tab-msearch">
+  <div class="search-bar" style="display:flex;gap:.5rem">
+    <input type="search" id="ms-query" placeholder="🔍 階層検索（keywords → summary → full body）..." onkeydown="if(event.key==='Enter')msSearch()" style="flex:1">
+    <button class="btn btn-secondary" onclick="msSearch()" style="padding:.35rem .9rem;font-size:.85rem">検索</button>
+  </div>
+  <div id="ms-status" style="font-size:.75rem;color:#5a6a7a;margin:.4rem 0 .6rem"></div>
+  <div class="ms-main">
+    <div class="ms-left" id="ms-results">
+      <div class="ms-empty">検索語を入力してください</div>
+    </div>
+    <div class="ms-right" id="ms-cols">
+      <div class="ms-col active" id="ms-col-keywords" onclick="msActivate('keywords')">
+        <div class="ms-col-head">Keywords</div>
+        <div class="ms-col-body" id="ms-body-keywords"><div class="ms-empty">検索するとキーワード一覧が表示されます</div></div>
+      </div>
+      <div class="ms-col" id="ms-col-summary" onclick="msActivate('summary')">
+        <div class="ms-col-head">Summary</div>
+        <div class="ms-col-body" id="ms-body-summary"><div class="ms-empty">エントリを選択してください</div></div>
+      </div>
+      <div class="ms-col" id="ms-col-symbolic" onclick="msActivate('symbolic')">
+        <div class="ms-col-head">Symbolic</div>
+        <div class="ms-col-body" id="ms-body-symbolic"><div class="ms-empty">エントリを選択してください</div></div>
+      </div>
+      <div class="ms-col" id="ms-col-raw" onclick="msActivate('raw')">
+        <div class="ms-col-head">Raw body</div>
+        <div class="ms-col-body" id="ms-body-raw"><div class="ms-empty">エントリを選択してください</div></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- CoreMem tab -->
 <div class="tab-panel" id="tab-coremem">
@@ -637,6 +698,7 @@ function switchTab(name, btn) {
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
   if (name === 'memory')    loadMemory();
+  if (name === 'msearch')   document.getElementById('ms-query').focus();
   if (name === 'coremem')   loadCoreMem();
   if (name === 'import')    { loadImportStatus(); pollBatchStatus(); }
   if (name === 'oplog')     loadOplog();
@@ -1232,6 +1294,131 @@ async function openFile(convUuid, filename, convName) {
 function onFilesSearch(val) {
   clearTimeout(filesTimer);
   filesTimer = setTimeout(() => loadFiles(val.trim()), 300);
+}
+
+// ── Memory Search (U5) ────────────────────────────────────────────────
+let msResults = [], msSelected = null, msEntryCache = {}, msKwSort = 'freq';
+const MS_SUMMARY_MARKER = '## 2層: 要約';
+
+async function msSearch() {
+  const q = document.getElementById('ms-query').value.trim();
+  if (!q) return;
+  const list = document.getElementById('ms-results');
+  list.innerHTML = '<div class="ms-empty">検索中...</div>';
+  try {
+    const res  = await apiFetch('/api/memory/hsearch?q=' + encodeURIComponent(q) + '&limit=50');
+    const data = await res.json();
+    msResults  = data.results || [];
+    msSelected = null;
+    document.getElementById('ms-status').textContent =
+      `${data.total} 件ヒット${data.has_more ? '（先頭50件を表示）' : ''}`;
+    msRenderResults();
+    msRenderKeywords();
+    msSetText('summary', '');
+    msSetText('symbolic', '');
+    msSetText('raw', '');
+    msActivate('keywords');
+  } catch(e) {
+    if (e.message !== '401') list.innerHTML = '<div class="ms-empty">検索失敗</div>';
+  }
+}
+
+function msRenderResults() {
+  const list = document.getElementById('ms-results');
+  if (!msResults.length) { list.innerHTML = '<div class="ms-empty">ヒットなし</div>'; return; }
+  list.innerHTML = msResults.map((r, i) => `
+    <div class="ms-item${msSelected === i ? ' sel' : ''}" onclick="msSelect(${i})">
+      <div class="t">${esc(r.title || '（無題）')}</div>
+      <div class="m">
+        <span class="ms-layer-badge ms-layer-${r.match_layer}">${r.match_layer}</span>
+        <span>${(r.created_at || '').slice(0, 10)}</span>
+      </div>
+    </div>`).join('');
+}
+
+async function msSelect(i) {
+  msSelected = i;
+  msRenderResults();
+  msRenderKeywords();
+  const r = msResults[i];
+  msSetText('summary',  r.summary  || '（要約なし）');
+  msSetText('symbolic', r.symbolic || '（シンボリック圧縮なし）');
+  msSetText('raw', '読み込み中...');
+  msActivate('summary');
+  try {
+    let entry = msEntryCache[r.id];
+    if (!entry) {
+      const res = await apiFetch('/api/memory/' + encodeURIComponent(r.id));
+      entry = await res.json();
+      msEntryCache[r.id] = entry;
+    }
+    const body = entry.body || '';
+    const im   = body.indexOf(MS_SUMMARY_MARKER);
+    const raw  = im !== -1 ? body.slice(0, im).trimEnd() : body;
+    msSetText('raw', raw || '（本文なし — 要約レイヤーのみのエントリ）');
+  } catch(e) {
+    msSetText('raw', '取得失敗');
+  }
+}
+
+function msSetText(col, text) {
+  const el = document.getElementById('ms-body-' + col);
+  let html = text
+    ? `<div style="white-space:pre-wrap">${esc(text)}</div>`
+    : '<div class="ms-empty">エントリを選択してください</div>';
+  if (col === 'summary' && text) {
+    html += `<div style="margin-top:.9rem"><span class="ms-link" onclick="event.stopPropagation();msActivate('raw')">Raw body を見る →</span></div>`;
+  }
+  if (col === 'raw' && text) {
+    html = `<div style="margin-bottom:.7rem"><span class="ms-link" onclick="event.stopPropagation();msActivate('summary')">← Summary に戻る</span></div>` + html;
+  }
+  el.innerHTML = html;
+}
+
+function msActivate(col) {
+  ['keywords', 'summary', 'symbolic', 'raw'].forEach(c =>
+    document.getElementById('ms-col-' + c).classList.toggle('active', c === col));
+}
+
+function msRenderKeywords() {
+  const el = document.getElementById('ms-body-keywords');
+  if (!msResults.length) {
+    el.innerHTML = '<div class="ms-empty">検索するとキーワード一覧が表示されます</div>';
+    return;
+  }
+  let html = '';
+  if (msSelected != null) {
+    const kws = msResults[msSelected].keywords || [];
+    html += '<div style="font-size:.72rem;color:#5a6a7a;margin-bottom:.35rem">選択エントリのキーワード</div>';
+    html += kws.length
+      ? kws.map(k => `<span class="ms-kw-chip" onclick="event.stopPropagation();msSearchKw('${esc(k)}')">${esc(k)}</span>`).join('')
+      : '<div style="color:#5a6a7a;font-size:.78rem">なし</div>';
+    html += '<hr style="border:none;border-top:1px solid #2a3a5a;margin:.8rem 0">';
+  }
+  const agg = {};
+  msResults.forEach(r => (r.keywords || []).forEach(k => {
+    if (!agg[k]) agg[k] = { count: 0, latest: '' };
+    agg[k].count++;
+    if ((r.created_at || '') > agg[k].latest) agg[k].latest = r.created_at || '';
+  }));
+  const keys = Object.keys(agg);
+  if (msKwSort === 'freq')   keys.sort((a, b) => agg[b].count - agg[a].count || a.localeCompare(b, 'ja'));
+  if (msKwSort === 'alpha')  keys.sort((a, b) => a.localeCompare(b, 'ja'));
+  if (msKwSort === 'recent') keys.sort((a, b) => agg[b].latest.localeCompare(agg[a].latest));
+  const sortLink = (key, label) =>
+    `<span class="ms-link${msKwSort === key ? '' : ' dim'}" onclick="event.stopPropagation();msSetKwSort('${key}')">${label}</span>`;
+  html += `<div style="font-size:.72rem;color:#5a6a7a;margin-bottom:.35rem">検索結果全体（${keys.length} 語）　ソート: ${sortLink('freq','頻度順')} / ${sortLink('alpha','文字列順')} / ${sortLink('recent','最新出現順')}</div>`;
+  html += keys.length
+    ? keys.map(k => `<span class="ms-kw-chip" onclick="event.stopPropagation();msSearchKw('${esc(k)}')">${esc(k)}<span class="cnt">${agg[k].count}</span></span>`).join('')
+    : '<div style="color:#5a6a7a;font-size:.78rem">キーワードなし（要約バッチ未処理のエントリのみ）</div>';
+  el.innerHTML = html;
+}
+
+function msSetKwSort(s) { msKwSort = s; msRenderKeywords(); }
+
+function msSearchKw(k) {
+  document.getElementById('ms-query').value = k;
+  msSearch();
 }
 
 // ── Friends ───────────────────────────────────────────────────────────

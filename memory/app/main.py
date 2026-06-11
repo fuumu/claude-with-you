@@ -1,8 +1,17 @@
 """
-mio-memory v3.18  —  Streamable HTTP MCP transport
+mio-memory v3.19  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.19 (2026-06-11) - メモリーサーチタブ（U5）
+    - 階層検索ロジックを _hierarchical_search() に共通化（MCP/REST 両対応）
+    - 新 GET /api/memory/hsearch エンドポイント（match_layer/summary/symbolic 付き）
+    - _extract_layer3() ヘルパー追加（3層シンボリック圧縮の抽出）
+    - MCP memory_search の結果に symbolic フィールド追加
+    - admin.html に Search タブ新設: 左ペイン検索結果一覧＋右ペイン4カラム
+      アコーディオンビューア（keywords / summary / symbolic / raw body）
+    - keywords カラム: 選択エントリのキーワード＋検索結果全体の集計
+      （頻度順・文字列順・最新出現順ソート、クリックで再検索）
   v3.18 (2026-06-11) - Friends タブ改善（F5/F6/F7）
     - F5: GET /api/friends レスポンスに activation_url を追加、sendgrid_configured フラグ付与
     - F5: admin.html active 一覧にアクティベーションコード + URL 表示＋コピーボタン
@@ -163,7 +172,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.18'
+VERSION = '3.19'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -613,6 +622,17 @@ def search():
     if limit:
         results = results[:limit]
     return jsonify(results)
+
+@app.route('/api/memory/hsearch')
+@require_auth
+def api_memory_hsearch():
+    """階層検索（MCP memory_search と同一ロジック）。admin.html メモリーサーチタブ用"""
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({"results": [], "total": 0, "has_more": False})
+    limit  = int(request.args.get('limit', 30))
+    offset = int(request.args.get('offset', 0))
+    return jsonify(_hierarchical_search(q, limit=limit, offset=offset, full_body=False))
 
 @app.route('/api/memory/tags')
 @require_auth
@@ -1714,6 +1734,93 @@ def _extract_summary(body: str) -> str:
     return seg.strip()
 
 
+def _extract_layer3(body: str) -> str:
+    """body から3層シンボリック圧縮セクションのテキストを取り出す。なければ空文字"""
+    if not body:
+        return ''
+    i = body.find(LAYER3_MARKER)
+    if i == -1:
+        return ''
+    seg = body[i:]
+    nl = seg.find('\n')
+    seg = seg[nl + 1:] if nl != -1 else ''
+    j = seg.find('\n## ')
+    if j != -1:
+        seg = seg[:j]
+    return seg.strip()
+
+
+def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False) -> dict:
+    """階層検索（1次:インデックス title+tags+keywords → 2次:2層要約 → 3次:全文）。
+    MCP memory_search と REST /api/memory/hsearch の共通実装"""
+    q = (q or '').lower()
+    index = []
+    if os.path.exists(INDEX_FILE):
+        with open(INDEX_FILE) as f:
+            index = json.load(f)
+    index = [e for e in index if not e.get('deleted')]
+
+    # 1次: インデックスのみで検索（title + tags + keywords）— bodyを読まない
+    matched = {}  # id -> match_layer（挿入順 = 優先順）
+    for e in index:
+        text = ' '.join([
+            str(e.get('title') or ''),
+            ' '.join(str(t) for t in (e.get('tags') or [])),
+            ' '.join(str(k) for k in (e.get('keywords') or [])),
+        ]).lower()
+        if q in text:
+            matched[e['id']] = 'keyword'
+
+    # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
+    target = offset + limit if limit > 0 else None
+    if target is None or len(matched) < target:
+        summary_hits, full_hits = [], []
+        for entry in load_all_entries():
+            eid = entry.get('id')
+            if entry.get('deleted') or eid in matched:
+                continue
+            body = str(entry.get('body') or '')
+            if q in _extract_summary(body).lower():
+                summary_hits.append(eid)
+            elif q in body.lower():
+                full_hits.append(eid)
+        for eid in summary_hits:
+            matched[eid] = 'summary'
+        for eid in full_hits:
+            matched[eid] = 'full'
+
+    ids    = list(matched.keys())
+    total  = len(ids)
+    sliced = ids[offset:offset + limit] if limit > 0 else ids[offset:]
+
+    # 返却はページ分だけ entry を読み、body の代わりに2層要約を返す（full_body=trueで全文）
+    results = []
+    for eid in sliced:
+        path = f'{DATA_DIR}/{eid}.json'
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            entry = json.load(f)
+        body = str(entry.get('body') or '')
+        item = {
+            'id': eid,
+            'title': entry.get('title', ''),
+            'tags': entry.get('tags', []),
+            'keywords': entry.get('keywords', []),
+            'created_at': entry.get('created_at', ''),
+            'updated_at': entry.get('updated_at', ''),
+            'importance': entry.get('importance', 'normal'),
+            'source_thread': entry.get('source_thread', ''),
+            'match_layer': matched[eid],
+            'summary': _extract_summary(body),
+            'symbolic': _extract_layer3(body),
+        }
+        if full_body:
+            item['body'] = entry.get('body', '')
+        results.append(item)
+    return {"results": results, "total": total, "has_more": (offset + len(sliced)) < total}
+
+
 def _parse_keywords_line(line: str) -> list:
     """カンマ・読点区切りのキーワード行をリスト化する（最大8個）"""
     parts = [p.strip().strip('、,。 　') for p in re.split(r'[,、]', line or '')]
@@ -2408,76 +2515,14 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "memory_search":
         try:
-            q       = str(arguments.get("q") or "").lower()
             raw_l   = arguments.get("limit")
             raw_o   = arguments.get("offset")
-            limit   = int(raw_l) if raw_l is not None else 10
-            offset  = int(raw_o) if raw_o is not None else 0
-            full_body = bool(arguments.get("full_body", False))
-
-            index = []
-            if os.path.exists(INDEX_FILE):
-                with open(INDEX_FILE) as f:
-                    index = json.load(f)
-            index = [e for e in index if not e.get('deleted')]
-
-            # 1次: インデックスのみで検索（title + tags + keywords）— bodyを読まない
-            matched = {}  # id -> match_layer（挿入順 = 優先順）
-            for e in index:
-                text = ' '.join([
-                    str(e.get('title') or ''),
-                    ' '.join(str(t) for t in (e.get('tags') or [])),
-                    ' '.join(str(k) for k in (e.get('keywords') or [])),
-                ]).lower()
-                if q in text:
-                    matched[e['id']] = 'keyword'
-
-            # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
-            target = offset + limit if limit > 0 else None
-            if target is None or len(matched) < target:
-                summary_hits, full_hits = [], []
-                for entry in load_all_entries():
-                    eid = entry.get('id')
-                    if entry.get('deleted') or eid in matched:
-                        continue
-                    body = str(entry.get('body') or '')
-                    if q in _extract_summary(body).lower():
-                        summary_hits.append(eid)
-                    elif q in body.lower():
-                        full_hits.append(eid)
-                for eid in summary_hits:
-                    matched[eid] = 'summary'
-                for eid in full_hits:
-                    matched[eid] = 'full'
-
-            ids    = list(matched.keys())
-            total  = len(ids)
-            sliced = ids[offset:offset + limit] if limit > 0 else ids[offset:]
-
-            # 返却はページ分だけ entry を読み、body の代わりに2層要約を返す（full_body=trueで全文）
-            results = []
-            for eid in sliced:
-                path = f'{DATA_DIR}/{eid}.json'
-                if not os.path.exists(path):
-                    continue
-                with open(path) as f:
-                    entry = json.load(f)
-                item = {
-                    'id': eid,
-                    'title': entry.get('title', ''),
-                    'tags': entry.get('tags', []),
-                    'keywords': entry.get('keywords', []),
-                    'created_at': entry.get('created_at', ''),
-                    'updated_at': entry.get('updated_at', ''),
-                    'importance': entry.get('importance', 'normal'),
-                    'source_thread': entry.get('source_thread', ''),
-                    'match_layer': matched[eid],
-                    'summary': _extract_summary(str(entry.get('body') or '')),
-                }
-                if full_body:
-                    item['body'] = entry.get('body', '')
-                results.append(item)
-            return {"results": results, "total": total, "has_more": (offset + len(sliced)) < total}
+            return _hierarchical_search(
+                str(arguments.get("q") or ""),
+                limit=int(raw_l) if raw_l is not None else 10,
+                offset=int(raw_o) if raw_o is not None else 0,
+                full_body=bool(arguments.get("full_body", False)),
+            )
         except Exception as exc:
             import traceback
             _log_error(f'memory_search error: {traceback.format_exc()}')

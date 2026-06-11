@@ -55,7 +55,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 **MCP tools exposed (v3.15):**
 
 Regular sessions (17 tools):
-- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD; `memory_search` is hierarchical (v3.17): stage 1 index-only (title+tags+keywords), stage 2 layer-2 summary, stage 3 full body; returns `summary` instead of `body` (pass `full_body=true` for legacy behavior), each hit carries `match_layer`
+- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD; `memory_search` is hierarchical (v3.17): stage 1 index-only (title+tags+keywords), stage 2 layer-2 summary, stage 3 full body; returns `summary` + `symbolic` (layer 3) instead of `body` (pass `full_body=true` for legacy behavior), each hit carries `match_layer`; same logic exposed via REST `GET /api/memory/hsearch` (v3.19, used by the admin.html Search tab)
 - `memory_share` — generates 24h share URL for a memory entry
 - `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions)
 - `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access

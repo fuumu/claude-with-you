@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.17","mcp_tool_count":17}
+# {"status":"ok","version":"3.19","mcp_tool_count":17}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -244,6 +244,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 |--------|------|-------------|
 | GET | `/api/memory/index` | List all entries |
 | GET | `/api/memory/search?q=...` | Search entries |
+| GET | `/api/memory/hsearch?q=...` | Hierarchical search (keywords→summary→full body, with match_layer/summary/symbolic) |
 | GET | `/api/memory/<id>` | Get one entry |
 | POST | `/api/memory` | Create entry |
 | PATCH | `/api/memory/<id>` | Update entry |
