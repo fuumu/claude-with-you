@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.16","mcp_tool_count":17}
+# {"status":"ok","version":"3.17","mcp_tool_count":17}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -150,7 +150,7 @@ Claude calls these tools directly. All responses include `server_time` (JST).
 | `memory_read` | Read one entry by ID | `id` |
 | `memory_write` | Create a new entry | `title`, `body`, `tags`, `importance` |
 | `memory_upsert` | Overwrite a fixed-ID entry | `id`, `title`, `body` |
-| `memory_search` | Full-text search with pagination | `q`, `limit` (default 10), `offset` |
+| `memory_search` | Hierarchical search (index keywords → summary → full text); returns `summary` + `match_layer` per hit | `q`, `limit` (default 10), `offset`, `full_body` |
 | `memory_share` | Generate 24h shareable URL | `id` |
 
 **Example — Claude saves a decision:**
@@ -469,12 +469,13 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.16)**
+**Implemented (v3.9–v3.17)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
 - Summary batch improvements — LMStudio fallback auto-start after import, `batch_run_summary_layers` MCP tool (v3.15)
 - Nightly auto-batch — daily raw-entry check and auto-run (`MIO_NIGHTLY_BATCH_HOUR`, v3.16)
+- Layer-4 keywords + hierarchical search — LLM-generated `keywords` field, 3-stage `memory_search` returning summaries (v3.17)
 
 ---
 

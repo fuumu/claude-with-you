@@ -55,12 +55,12 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 **MCP tools exposed (v3.15):**
 
 Regular sessions (17 tools):
-- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD
+- `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD; `memory_search` is hierarchical (v3.17): stage 1 index-only (title+tags+keywords), stage 2 layer-2 summary, stage 3 full body; returns `summary` instead of `body` (pass `full_body=true` for legacy behavior), each hit carries `match_layer`
 - `memory_share` — generates 24h share URL for a memory entry
 - `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions)
 - `conversation_search` / `conversation_share` / `conversation_read` — LogStore (conversation archives) access
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_check(include_read=true)` returns all messages (including already-read ones) with `messages[]{id, read, persistent, title, from, to}` and `unread_count`
-- `batch_run_summary_layers` — start the summary-layer batch (2層要約/3層シンボリック圧縮) for raw entries; `status_only=true` returns progress + `raw_pending` count without starting
+- `batch_run_summary_layers` — start the summary-layer batch (2層要約/3層シンボリック圧縮/4層キーワード) for raw entries and keywords backfill; `status_only=true` returns progress + `raw_pending`/`keywords_pending` counts without starting
 
 Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `friend_memory_read` — read this friend's memory file (`/data/friends/{seq_no:03d}/memory.md`)
@@ -72,7 +72,8 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
 - `POST /api/batch/start` — start background summary thread (`backend: "anthropic"` or `"lmstudio"`; omitted = auto-select)
 - Auto-starts on ZIP import: uses `anthropic` backend if `ANTHROPIC_API_KEY` is set, otherwise falls back to `lmstudio` (v3.15)
-- Nightly scheduler (v3.16): daemon thread checks raw count daily at `MIO_NIGHTLY_BATCH_HOUR` (JST, default 3) and auto-starts the batch with `MIO_NIGHTLY_BATCH_BACKEND` (default `lmstudio`); set hour to `off` to disable
+- Nightly scheduler (v3.16): daemon thread checks pending counts (raw + keywords-missing) daily at `MIO_NIGHTLY_BATCH_HOUR` (JST, default 3) and auto-starts the batch with `MIO_NIGHTLY_BATCH_BACKEND` (default `lmstudio`); set hour to `off` to disable
+- Layer generation (v3.17): the batch writes layer 2 (summary) + layer 3 (symbolic compression) into the entry `body` and layer 4 keywords into the entry `keywords` field (also included in `index.json`); entries with layers but no `keywords` field get a lightweight keywords-only backfill
 
 **Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 

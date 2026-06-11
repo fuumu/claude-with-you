@@ -1,8 +1,19 @@
 """
-mio-memory v3.16  —  Streamable HTTP MCP transport
+mio-memory v3.17  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.17 (2026-06-11) - 4層キーワード層＋memory_search階層化（M1改善案C・D・E）
+    - C: バッチが「## 4層: キーワード」をLLMに追加生成させ、エントリの
+      keywords フィールド（リスト）に保存。index.json にも収載
+    - C: 2層・3層生成済みで keywords 未生成のエントリには軽量プロンプトで
+      キーワードのみバックフィル（夜間バッチが自動処理）
+    - D: memory_search を階層化（1次:インデックス title+tags+keywords →
+      2次:2層要約 → 3次:全文）。結果は body の代わりに summary（2層要約）
+      を返す。full_body=true で従来どおり全文返却。match_layer 付与
+    - E: scripts/generate_summary_layers.py をサーバー版仕様に統一
+      （会話全文参照・4層生成・キーワードバックフィル対応）
+    - PATCH /api/memory/<id> が keywords フィールドを受け付けるように
   v3.16 (2026-06-11) - 夜間自動バッチ（M1改善案B）
     - 毎日 MIO_NIGHTLY_BATCH_HOUR 時（JST、デフォルト3時）に raw 残数を確認し、
       残っていれば要約バッチを自動起動するスケジューラスレッドを追加
@@ -132,6 +143,7 @@ import base64
 import secrets
 import time
 import uuid
+import re
 import zipfile
 import tempfile
 import logging
@@ -143,7 +155,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.16'
+VERSION = '3.17'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -305,12 +317,20 @@ def load_all_entries():
 
 def rebuild_index():
     entries = load_all_entries()
-    index = [{
-        'id': e['id'], 'title': e.get('title', ''),
-        'tags': e.get('tags', []), 'created_at': e.get('created_at', ''),
-        'importance': e.get('importance', 'normal'),
-        'deleted': e.get('deleted', False)
-    } for e in entries if not e.get('deleted')]
+    index = []
+    for e in entries:
+        if e.get('deleted'):
+            continue
+        item = {
+            'id': e['id'], 'title': e.get('title', ''),
+            'tags': e.get('tags', []), 'created_at': e.get('created_at', ''),
+            'importance': e.get('importance', 'normal'),
+            'deleted': e.get('deleted', False)
+        }
+        # 4層キーワード（フィールドが存在する場合のみ。未生成エントリと区別するため）
+        if 'keywords' in e:
+            item['keywords'] = e.get('keywords') or []
+        index.append(item)
     with open(INDEX_FILE, 'w') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
 
@@ -645,7 +665,7 @@ def update_entry(entry_id):
         entry = json.load(f)
     before = dict(entry)
     data = request.get_json()
-    for key in ('title', 'body', 'tags', 'source_thread', 'importance'):
+    for key in ('title', 'body', 'tags', 'source_thread', 'importance', 'keywords'):
         if key in data:
             entry[key] = data[key]
     entry['updated_at'] = now_jst()
@@ -1620,6 +1640,44 @@ def import_zip():
 
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
 
+# ── 要約レイヤー定数・ヘルパー ─────────────────────────────────────────
+SUMMARY_MARKER = '## 2層: 要約'
+LAYER3_MARKER  = '## 3層:'
+LAYER4_MARKER  = '## 4層:'
+
+
+def _extract_summary(body: str) -> str:
+    """body から2層要約セクションのテキストを取り出す。マーカーがなければ先頭300字"""
+    if not body:
+        return ''
+    i = body.find(SUMMARY_MARKER)
+    if i == -1:
+        return body[:300]
+    seg = body[i + len(SUMMARY_MARKER):]
+    j = seg.find('\n## ')
+    if j != -1:
+        seg = seg[:j]
+    return seg.strip()
+
+
+def _parse_keywords_line(line: str) -> list:
+    """カンマ・読点区切りのキーワード行をリスト化する（最大8個）"""
+    parts = [p.strip().strip('、,。 　') for p in re.split(r'[,、]', line or '')]
+    return [p for p in parts if p][:8]
+
+
+def _split_layers_and_keywords(llm_text: str):
+    """LLM出力を (bodyに保存する2層+3層部分, keywordsリスト) に分割する"""
+    text = (llm_text or '').strip()
+    i = text.find(LAYER4_MARKER)
+    if i == -1:
+        return text, []
+    body_part = text[:i].rstrip()
+    kw_lines = [l.strip() for l in text[i:].splitlines()[1:] if l.strip()]
+    keywords = _parse_keywords_line(kw_lines[0]) if kw_lines else []
+    return body_part, keywords
+
+
 def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                        lm_host: str = '192.168.10.32', lm_port: str = '1234',
                        force: bool = False):
@@ -1647,12 +1705,13 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                            ('raw' in (e.get('tags') or []) or 'summarized' in (e.get('tags') or []))
                            and not e.get('deleted')]
         else:
-            raw_entries = [e for e in index if 'raw' in (e.get('tags') or []) and not e.get('deleted')]
+            # 対象: raw（未要約）＋ summarized だが keywords 未生成（4層バックフィル）
+            raw_entries = [e for e in index if not e.get('deleted') and (
+                'raw' in (e.get('tags') or []) or
+                ('summarized' in (e.get('tags') or []) and 'keywords' not in e)
+            )]
         _batch_status['total'] = len(raw_entries)
         _log_info(f'batch summary start: backend={backend} force={force} entries={len(raw_entries)}')
-
-        SUMMARY_MARKER = '## 2層: 要約'
-        LAYER3_MARKER  = '## 3層:'
 
         for idx in raw_entries:
             entry_id = idx['id']
@@ -1664,9 +1723,37 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
             with open(path) as f:
                 entry = json.load(f)
             body = entry.get('body', '')
-            if not force and SUMMARY_MARKER in body and LAYER3_MARKER in body:
+            has_layers = SUMMARY_MARKER in body and LAYER3_MARKER in body
+
+            if not force and has_layers and 'keywords' in entry:
                 _batch_status['skipped'] += 1
                 continue
+
+            # 2層・3層は生成済みで keywords だけ欠けている → 軽量プロンプトでキーワードのみ生成
+            if not force and has_layers:
+                try:
+                    kw_prompt = (
+                        f'以下は会話の要約と圧縮表現です。検索に使うキーワードを3〜5個生成してください。\n\n'
+                        f'会話タイトル: {title}\n\n{_extract_summary(body)}\n\n'
+                        f'出力形式（1行、半角カンマ区切り、説明文は不要）:\nキーワード1, キーワード2, キーワード3'
+                    )
+                    msg = client.messages.create(
+                        model=model, max_tokens=100,
+                        messages=[{'role': 'user', 'content': kw_prompt}]
+                    )
+                    kw_text = msg.content[0].text.strip()
+                    kw_line = next((l.strip() for l in kw_text.splitlines() if l.strip()), '')
+                    entry['keywords']   = _parse_keywords_line(kw_line)
+                    entry['updated_at'] = now_jst()
+                    with open(path, 'w') as ef:
+                        json.dump(entry, ef, ensure_ascii=False, indent=2)
+                    _batch_status['processed'] += 1
+                    time.sleep(0.5)
+                except Exception as e:
+                    _log_error(f'batch keywords error {entry_id}: {e}')
+                    _batch_status['errors'] += 1
+                continue
+
             if SUMMARY_MARKER in body:
                 body = body[:body.index(SUMMARY_MARKER)].rstrip()
 
@@ -1702,7 +1789,8 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                     f'会話タイトル: {title}\n\n{conv_text[:3000]}\n\n'
                     f'以下の形式で出力してください（他の説明文は不要）:\n\n'
                     f'## 2層: 要約\n（会話の目的・内容・結論を2〜3文で。）\n\n'
-                    f'## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）'
+                    f'## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）\n\n'
+                    f'## 4層: キーワード\n（検索用キーワードを3〜5個、半角カンマ区切りで1行）'
                 )
             else:
                 prompt = (
@@ -1710,7 +1798,8 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                     f'会話タイトル: {title}\n\n'
                     f'以下の形式で出力してください（他の説明文は不要）:\n\n'
                     f'## 2層: 要約\n（会話の目的・内容・結論を2〜3文で推測。"〜についての会話" という形式でよい）\n\n'
-                    f'## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）'
+                    f'## 3層: シンボリック圧縮\n（15文字以内の超短縮キーワード。検索時の手がかりになる表現）\n\n'
+                    f'## 4層: キーワード\n（検索用キーワードを3〜5個、半角カンマ区切りで1行）'
                 )
 
             try:
@@ -1718,13 +1807,14 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                     model=model, max_tokens=400,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
-                layers   = msg.content[0].text.strip()
+                layers, keywords = _split_layers_and_keywords(msg.content[0].text)
                 new_body = (body.strip() + '\n\n' + layers).strip() if body.strip() else layers
                 tags     = [t for t in (entry.get('tags') or []) if t != 'raw']
                 if 'summarized' not in tags:
                     tags.append('summarized')
                 entry['body']       = new_body
                 entry['tags']       = tags
+                entry['keywords']   = keywords
                 entry['updated_at'] = now_jst()
                 with open(path, 'w') as ef:
                     json.dump(entry, ef, ensure_ascii=False, indent=2)
@@ -1743,14 +1833,19 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
         _log_info(f'batch summary done: processed={_batch_status["processed"]} skipped={_batch_status["skipped"]} errors={_batch_status["errors"]}')
 
 
-def _count_raw_entries():
-    """インデックス上の未処理(raw)エントリ数を返す。読めない場合は None"""
+def _count_pending_entries():
+    """インデックス上の未処理件数を返す: (raw件数, keywords未生成のsummarized件数)。読めない場合は (None, None)"""
     try:
         with open(INDEX_FILE) as f:
             idx = json.load(f)
-        return sum(1 for e in idx if 'raw' in (e.get('tags') or []) and not e.get('deleted'))
+        raw = sum(1 for e in idx if 'raw' in (e.get('tags') or []) and not e.get('deleted'))
+        kw  = sum(1 for e in idx if not e.get('deleted')
+                  and 'raw' not in (e.get('tags') or [])
+                  and 'summarized' in (e.get('tags') or [])
+                  and 'keywords' not in e)
+        return raw, kw
     except Exception:
-        return None
+        return None, None
 
 
 def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, lm_port=None):
@@ -1771,9 +1866,10 @@ def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, 
     t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port, force), daemon=True)
     t.start()
     info = {'started': True, 'backend': backend, 'force': force}
-    raw_count = _count_raw_entries()
+    raw_count, kw_count = _count_pending_entries()
     if raw_count is not None:
         info['raw_pending'] = raw_count
+        info['keywords_pending'] = kw_count
     return True, info
 
 
@@ -1796,13 +1892,13 @@ def _nightly_batch_loop():
                 nxt += timedelta(days=1)
             time.sleep((nxt - now).total_seconds())
 
-            raw = _count_raw_entries()
-            if raw:
+            raw, kw = _count_pending_entries()
+            if (raw or 0) + (kw or 0) > 0:
                 backend = os.environ.get('MIO_NIGHTLY_BATCH_BACKEND', 'lmstudio')
                 ok, info = _start_summary_batch(backend=backend)
-                _log_info(f'nightly batch: raw_pending={raw} started={ok} backend={info.get("backend")}')
+                _log_info(f'nightly batch: raw_pending={raw} keywords_pending={kw} started={ok} backend={info.get("backend")}')
             else:
-                _log_info('nightly batch: no raw entries, skipped')
+                _log_info('nightly batch: no pending entries, skipped')
         except Exception as e:
             _log_error(f'nightly batch loop error: {e}')
             time.sleep(3600)
@@ -2051,11 +2147,12 @@ _MCP_TOOLS = [
     },
     {
         "name": "memory_search",
-        "description": "キーワードで記憶を検索する。limit/offsetでページング可。{results, total, has_more}を返す",
+        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定",
         "inputSchema": {"type": "object", "properties": {
-            "q":      {"type": "string", "description": "検索キーワード"},
-            "limit":  {"type": "integer", "description": "最大取得件数（デフォルト10、0=無制限）"},
-            "offset": {"type": "integer", "description": "スキップ件数（デフォルト0）"}
+            "q":         {"type": "string", "description": "検索キーワード"},
+            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト10、0=無制限）"},
+            "offset":    {"type": "integer", "description": "スキップ件数（デフォルト0）"},
+            "full_body": {"type": "boolean", "description": "trueで従来どおりbody全文も返す（デフォルトfalse=要約のみ）"}
         }, "required": ["q"]}
     },
     {
@@ -2262,13 +2359,71 @@ def _handle_tool_call_raw(name, arguments):
             raw_o   = arguments.get("offset")
             limit   = int(raw_l) if raw_l is not None else 10
             offset  = int(raw_o) if raw_o is not None else 0
-            all_hits = [e for e in load_all_entries()
-                        if not e.get("deleted") and q in
-                        (str(e.get("title") or "") + str(e.get("body") or "") +
-                         " ".join(str(t) for t in (e.get("tags") or []))).lower()]
-            total  = len(all_hits)
-            sliced = all_hits[offset:offset + limit] if limit > 0 else all_hits[offset:]
-            return {"results": sliced, "total": total, "has_more": (offset + len(sliced)) < total}
+            full_body = bool(arguments.get("full_body", False))
+
+            index = []
+            if os.path.exists(INDEX_FILE):
+                with open(INDEX_FILE) as f:
+                    index = json.load(f)
+            index = [e for e in index if not e.get('deleted')]
+
+            # 1次: インデックスのみで検索（title + tags + keywords）— bodyを読まない
+            matched = {}  # id -> match_layer（挿入順 = 優先順）
+            for e in index:
+                text = ' '.join([
+                    str(e.get('title') or ''),
+                    ' '.join(str(t) for t in (e.get('tags') or [])),
+                    ' '.join(str(k) for k in (e.get('keywords') or [])),
+                ]).lower()
+                if q in text:
+                    matched[e['id']] = 'keyword'
+
+            # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
+            target = offset + limit if limit > 0 else None
+            if target is None or len(matched) < target:
+                summary_hits, full_hits = [], []
+                for entry in load_all_entries():
+                    eid = entry.get('id')
+                    if entry.get('deleted') or eid in matched:
+                        continue
+                    body = str(entry.get('body') or '')
+                    if q in _extract_summary(body).lower():
+                        summary_hits.append(eid)
+                    elif q in body.lower():
+                        full_hits.append(eid)
+                for eid in summary_hits:
+                    matched[eid] = 'summary'
+                for eid in full_hits:
+                    matched[eid] = 'full'
+
+            ids    = list(matched.keys())
+            total  = len(ids)
+            sliced = ids[offset:offset + limit] if limit > 0 else ids[offset:]
+
+            # 返却はページ分だけ entry を読み、body の代わりに2層要約を返す（full_body=trueで全文）
+            results = []
+            for eid in sliced:
+                path = f'{DATA_DIR}/{eid}.json'
+                if not os.path.exists(path):
+                    continue
+                with open(path) as f:
+                    entry = json.load(f)
+                item = {
+                    'id': eid,
+                    'title': entry.get('title', ''),
+                    'tags': entry.get('tags', []),
+                    'keywords': entry.get('keywords', []),
+                    'created_at': entry.get('created_at', ''),
+                    'updated_at': entry.get('updated_at', ''),
+                    'importance': entry.get('importance', 'normal'),
+                    'source_thread': entry.get('source_thread', ''),
+                    'match_layer': matched[eid],
+                    'summary': _extract_summary(str(entry.get('body') or '')),
+                }
+                if full_body:
+                    item['body'] = entry.get('body', '')
+                results.append(item)
+            return {"results": results, "total": total, "has_more": (offset + len(sliced)) < total}
         except Exception as exc:
             import traceback
             _log_error(f'memory_search error: {traceback.format_exc()}')
@@ -2410,7 +2565,8 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "batch_run_summary_layers":
         if arguments.get("status_only"):
-            return {**_batch_status, "raw_pending": _count_raw_entries(), "server_time": now_jst()}
+            raw, kw = _count_pending_entries()
+            return {**_batch_status, "raw_pending": raw, "keywords_pending": kw, "server_time": now_jst()}
         ok, info = _start_summary_batch(
             backend=arguments.get("backend") or None,
             force=bool(arguments.get("force", False)),
