@@ -1,8 +1,13 @@
 """
-mio-memory v3.15  —  Streamable HTTP MCP transport
+mio-memory v3.16  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.16 (2026-06-11) - 夜間自動バッチ（M1改善案B）
+    - 毎日 MIO_NIGHTLY_BATCH_HOUR 時（JST、デフォルト3時）に raw 残数を確認し、
+      残っていれば要約バッチを自動起動するスケジューラスレッドを追加
+    - バックエンドは MIO_NIGHTLY_BATCH_BACKEND（デフォルト lmstudio）
+    - MIO_NIGHTLY_BATCH_HOUR=off で無効化可能
   v3.15 (2026-06-11) - 要約バッチの起動改善（M1）
     - バッチ自動起動条件を修正: ANTHROPIC_API_KEY 必須をやめ、
       キーがなければ LMStudio バックエンドで自動起動するようにした
@@ -138,7 +143,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.15'
+VERSION = '3.16'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1772,6 +1777,37 @@ def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, 
     return True, info
 
 
+def _nightly_batch_loop():
+    """夜間自動バッチ: 毎日 MIO_NIGHTLY_BATCH_HOUR 時（JST）に raw 残数を確認し、あればバッチを起動する。
+
+    MIO_NIGHTLY_BATCH_HOUR を 'off' にすると無効化。
+    バックエンドは MIO_NIGHTLY_BATCH_BACKEND（デフォルト lmstudio = ローカルLLM・課金なし）。
+    """
+    while True:
+        try:
+            hour_s = os.environ.get('MIO_NIGHTLY_BATCH_HOUR', '3').strip().lower()
+            if hour_s in ('', 'off', 'none'):
+                time.sleep(3600)
+                continue
+            hour = max(0, min(23, int(hour_s)))
+            now  = datetime.now(JST)
+            nxt  = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            time.sleep((nxt - now).total_seconds())
+
+            raw = _count_raw_entries()
+            if raw:
+                backend = os.environ.get('MIO_NIGHTLY_BATCH_BACKEND', 'lmstudio')
+                ok, info = _start_summary_batch(backend=backend)
+                _log_info(f'nightly batch: raw_pending={raw} started={ok} backend={info.get("backend")}')
+            else:
+                _log_info('nightly batch: no raw entries, skipped')
+        except Exception as e:
+            _log_error(f'nightly batch loop error: {e}')
+            time.sleep(3600)
+
+
 @app.route('/api/batch/status')
 @require_auth
 def api_batch_status():
@@ -2608,4 +2644,6 @@ if __name__ == '__main__':
     os.makedirs(INBOX_DIR, exist_ok=True)
     _log_info(f'mio-memory v{VERSION} starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
+    threading.Thread(target=_nightly_batch_loop, daemon=True).start()
+    _log_info(f'nightly batch scheduler: hour={os.environ.get("MIO_NIGHTLY_BATCH_HOUR", "3")} backend={os.environ.get("MIO_NIGHTLY_BATCH_BACKEND", "lmstudio")}')
     app.run(host='0.0.0.0', port=5002, debug=False)

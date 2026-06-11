@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.15","mcp_tool_count":17}
+# {"status":"ok","version":"3.16","mcp_tool_count":17}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -469,11 +469,12 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.15)**
+**Implemented (v3.9–v3.16)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
 - Summary batch improvements — LMStudio fallback auto-start after import, `batch_run_summary_layers` MCP tool (v3.15)
+- Nightly auto-batch — daily raw-entry check and auto-run (`MIO_NIGHTLY_BATCH_HOUR`, v3.16)
 
 ---
 

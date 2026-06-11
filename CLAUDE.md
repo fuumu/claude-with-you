@@ -72,6 +72,7 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
 - `POST /api/batch/start` — start background summary thread (`backend: "anthropic"` or `"lmstudio"`; omitted = auto-select)
 - Auto-starts on ZIP import: uses `anthropic` backend if `ANTHROPIC_API_KEY` is set, otherwise falls back to `lmstudio` (v3.15)
+- Nightly scheduler (v3.16): daemon thread checks raw count daily at `MIO_NIGHTLY_BATCH_HOUR` (JST, default 3) and auto-starts the batch with `MIO_NIGHTLY_BATCH_BACKEND` (default `lmstudio`); set hour to `off` to disable
 
 **Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 
@@ -103,6 +104,8 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | `ANTHROPIC_API_KEY` | *(empty)* | If set, auto-starts summary batch after ZIP import |
 | `LM_STUDIO_HOST` | `192.168.10.32` | LMStudio host for manual batch runs |
 | `LM_STUDIO_PORT` | `1234` | LMStudio port |
+| `MIO_NIGHTLY_BATCH_HOUR` | `3` | Hour (JST, 0-23) for nightly summary batch; `off` disables |
+| `MIO_NIGHTLY_BATCH_BACKEND` | `lmstudio` | Backend for the nightly batch (`lmstudio` / `anthropic`) |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to MIO_BASE_URL) |
