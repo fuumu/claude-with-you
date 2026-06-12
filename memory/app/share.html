@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>共有された会話</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Helvetica Neue', 'Hiragino Sans', 'Yu Gothic', sans-serif;
+      background: #0d1117; color: #c9d1d9;
+      line-height: 1.75; font-size: .95rem;
+    }
+    .container { max-width: 760px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+    header { margin-bottom: 2rem; border-bottom: 1px solid #21262d; padding-bottom: 1.2rem; }
+    h1 { font-size: 1.25rem; color: #e6edf3; font-weight: 600; }
+    .meta { font-size: .75rem; color: #484f58; margin-top: .4rem; }
+    .notice { font-size: .72rem; color: #484f58; margin-top: .6rem; }
+
+    .msg { margin-bottom: 1.4rem; }
+    .msg-role { font-size: .72rem; font-weight: 600; margin-bottom: .35rem; letter-spacing: .03em; }
+    .msg.human .msg-role { color: #58a6ff; }
+    .msg.assistant .msg-role { color: #d2a8ff; }
+    .msg-body {
+      background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+      padding: .85rem 1.05rem; overflow-wrap: break-word;
+    }
+    .msg.human .msg-body { background: #11151c; }
+    .msg-body p { margin-bottom: .7em; }
+    .msg-body p:last-child { margin-bottom: 0; }
+    .msg-body pre {
+      background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+      padding: .7rem .9rem; overflow-x: auto; font-size: .82rem; margin: .7em 0;
+    }
+    .msg-body code { font-family: Consolas, Monaco, monospace; font-size: .85em; background: #0d1117; padding: .1em .35em; border-radius: 4px; }
+    .msg-body pre code { background: none; padding: 0; }
+    .msg-body ul, .msg-body ol { padding-left: 1.4em; margin-bottom: .7em; }
+    .msg-body blockquote { border-left: 3px solid #30363d; padding-left: .9em; color: #8b949e; margin: .7em 0; }
+    .msg-body h1, .msg-body h2, .msg-body h3 { font-size: 1.05em; margin: .9em 0 .45em; color: #e6edf3; }
+    .msg-body a { color: #58a6ff; }
+    .msg-body table { border-collapse: collapse; margin: .7em 0; font-size: .85em; }
+    .msg-body th, .msg-body td { border: 1px solid #30363d; padding: .3em .6em; }
+    .msg-body img { max-width: 100%; }
+
+    .state { text-align: center; padding: 5rem 1rem; color: #8b949e; }
+    .state .icon { font-size: 2.2rem; display: block; margin-bottom: .8rem; }
+    footer { margin-top: 3rem; border-top: 1px solid #21262d; padding-top: 1rem; font-size: .72rem; color: #484f58; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header id="header" style="display:none">
+      <h1 id="conv-title"></h1>
+      <div class="meta" id="conv-meta"></div>
+      <div class="notice">🔗 この会話は期間限定の共有リンクで公開されています（読み取り専用）</div>
+    </header>
+    <div id="content"><div class="state"><span class="icon">⏳</span>読み込み中...</div></div>
+    <footer id="footer" style="display:none">shared via mio-memory</footer>
+  </div>
+
+<script>
+const API = '';
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderMd(text) {
+  try {
+    return DOMPurify.sanitize(marked.parse(text || ''));
+  } catch(e) {
+    return '<p>' + esc(text || '') + '</p>';
+  }
+}
+
+function showState(icon, msg) {
+  document.getElementById('content').innerHTML =
+    `<div class="state"><span class="icon">${icon}</span>${esc(msg)}</div>`;
+}
+
+function extractText(m) {
+  const content = m.content || m.text || '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(c => c && c.type === 'text')
+      .map(c => c.text || '')
+      .join('\n');
+  }
+  return '';
+}
+
+(async function() {
+  const token = new URLSearchParams(location.search).get('token');
+  if (!token) { showState('🔒', 'このページは共有リンク経由でのみ閲覧できます'); return; }
+
+  let conv;
+  try {
+    const res = await fetch(API + '/api/conversations/view?token=' + encodeURIComponent(token));
+    if (res.status === 410) { showState('⏰', 'この共有リンクの有効期限が切れています'); return; }
+    if (!res.ok)            { showState('🔒', 'リンクが無効です'); return; }
+    conv = await res.json();
+  } catch(e) {
+    showState('⚠️', '読み込みエラー'); return;
+  }
+
+  const title = conv.name || conv.title || '（無題）';
+  document.title = title + ' — 共有された会話';
+  document.getElementById('conv-title').textContent = title;
+  const created = (conv.created_at || '').slice(0, 10);
+  const msgs = (conv.chat_messages || []);
+  document.getElementById('conv-meta').textContent = `${created}　${msgs.length} メッセージ`;
+  document.getElementById('header').style.display = '';
+  document.getElementById('footer').style.display = '';
+
+  const html = msgs.map(m => {
+    const role = m.sender || m.role || '?';
+    const text = extractText(m);
+    if (!text.trim()) return '';
+    const label = role === 'human' ? '👤 You' : '✨ Assistant';
+    return `<div class="msg ${esc(role)}">
+      <div class="msg-role">${label}</div>
+      <div class="msg-body">${renderMd(text)}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+
+  document.getElementById('content').innerHTML =
+    html || '<div class="state"><span class="icon">📭</span>表示できるメッセージがありません</div>';
+})();
+</script>
+</body>
+</html>

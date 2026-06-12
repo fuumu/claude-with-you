@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.22","mcp_tool_count":18}
+# {"status":"ok","version":"3.23","mcp_tool_count":18}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -128,6 +128,7 @@ Claude.ai / Claude Code
   │  ┌─── Web UI Layer ────────────┐ │
   │  │  /admin.html  Admin panel   │ │
   │  │  /logs.html   Chat viewer   │ │
+  │  │  /share.html  Shared viewer │ │
   │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
@@ -196,7 +197,7 @@ Browse, share, and annotate past conversations imported from Claude.ai export ZI
 |------|-------------|----------|
 | `conversation_search` | Search conversation titles | `q`, `limit` |
 | `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations` |
-| `conversation_share` | Generate 24h shareable URL | `uuid` |
+| `conversation_share` | Generate 24h shareable URL (`/share.html?token=` — standalone read-only viewer, v3.23) | `uuid` |
 | `log_annotate` | Append-only audit annotation on a conversation; raw logs never change, stored in `/data/annotations/{uuid}.json` (v3.22) | `uuid`, `note`, `author`, `target` |
 
 **Example — find a past discussion:**
@@ -304,7 +305,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 ```
 # Via MCP tool:
 conversation_share(uuid="abc-123")
-→ {"url": "https://your-domain/logs.html?token=xyz", "expires_at": "..."}
+→ {"url": "https://your-domain/share.html?token=xyz", "expires_at": "..."}
 
 # Anyone with the link can read the conversation for 24 hours
 ```

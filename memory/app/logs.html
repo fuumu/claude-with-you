@@ -302,6 +302,7 @@
         <div class="conv-header-meta" id="conv-header-meta"></div>
       </div>
       <button class="toggle-btn" onclick="copyConvId()" title="この会話のIDをコピー（澪に渡せます）">📋 ID</button>
+      <button class="toggle-btn" id="share-btn" onclick="shareConv()" title="24時間有効な共有リンクを生成">🔗 共有</button>
       <button class="toggle-btn" id="thinking-toggle" onclick="toggleThinking()">🧠 思考を表示</button>
     </div>
     <div class="messages-wrap" id="messages-wrap">
@@ -498,6 +499,53 @@ function copyConvId() {
   navigator.clipboard.writeText(activeUuid)
     .then(() => showToast('会話IDをコピーしました'))
     .catch(() => showToast('コピー失敗'));
+}
+
+// ── 会話共有（share.html への24hリンク生成）─────────────────────────
+async function shareConv() {
+  if (!activeUuid) return;
+  try {
+    const res  = await apiFetch('/api/conversations/share/' + encodeURIComponent(activeUuid), { method: 'POST' });
+    if (!res.ok) { showToast('共有リンク生成失敗'); return; }
+    const data = await res.json();
+    showSharePopup(data.url, data.expires_at);
+  } catch(e) {
+    if (e.message !== '401') showToast('通信エラー');
+  }
+}
+
+function showSharePopup(url, expiresAt) {
+  closeSharePopup();
+  const exp = (expiresAt || '').slice(0, 16).replace('T', ' ');
+  const div = document.createElement('div');
+  div.id = 'share-popup';
+  div.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;display:flex;align-items:center;justify-content:center';
+  div.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1.3rem 1.5rem;max-width:520px;width:90%" onclick="event.stopPropagation()">
+      <div style="font-size:.9rem;color:#e6edf3;margin-bottom:.8rem">🔗 共有リンクを作成しました</div>
+      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.7rem">
+        <input id="share-url-input" type="text" readonly value="${esc(url)}"
+          style="flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:.45rem .6rem;font-size:.78rem">
+        <button class="toggle-btn" onclick="copyShareUrl()">📋 コピー</button>
+      </div>
+      <div style="font-size:.74rem;color:#8b949e;margin-bottom:1rem">⏰ 有効期限: ${esc(exp)}（24時間）・閲覧は読み取り専用</div>
+      <div style="text-align:right"><button class="toggle-btn" onclick="closeSharePopup()">閉じる</button></div>
+    </div>`;
+  div.addEventListener('click', closeSharePopup);
+  document.body.appendChild(div);
+}
+
+function copyShareUrl() {
+  const input = document.getElementById('share-url-input');
+  if (!input) return;
+  navigator.clipboard.writeText(input.value)
+    .then(() => showToast('共有URLをコピーしました'))
+    .catch(() => { input.select(); document.execCommand('copy'); showToast('共有URLをコピーしました'); });
+}
+
+function closeSharePopup() {
+  const p = document.getElementById('share-popup');
+  if (p) p.remove();
 }
 
 function msgScroll(dir) {
@@ -778,6 +826,7 @@ function setFontSize(size, btn) {
   const token  = params.get('token');
   if (token) {
     document.getElementById('auth-overlay').style.display = 'none';
+    document.getElementById('share-btn').style.display = 'none';  // 共有閲覧モードでは再共有不可
     document.getElementById('load-status').textContent = '共有リンクから読み込み中...';
     try {
       const res = await fetch(API + '/api/conversations/view?token=' + encodeURIComponent(token));

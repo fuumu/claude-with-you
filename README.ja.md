@@ -134,7 +134,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.22","mcp_tool_count":18}
+# {"status":"ok","version":"3.23","mcp_tool_count":18}
 ```
 
 ### 5. Claude Code への登録
@@ -282,7 +282,7 @@ Claude.ai のエクスポート ZIP をインポートすると、全会話が `
 ]
 ```
 
-`conversation_share` で 24 時間有効な共有 URL を生成できる（`/logs.html?token=...`）。
+`conversation_share` で 24 時間有効な共有 URL を生成できる（`/share.html?token=...`、認証不要の読み取り専用ビューア。v3.23。旧 `/logs.html?token=` リンクも互換動作）。logs.html の会話ヘッダーの「🔗 共有」ボタンからも生成できる。
 
 **使用例：**
 ```

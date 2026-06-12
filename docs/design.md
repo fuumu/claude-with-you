@@ -194,7 +194,7 @@ For an `initialize` request to `/mcp`, the server returns:
 {
   "protocolVersion": "2025-11-25",
   "capabilities": { "tools": { "listChanged": false } },
-  "serverInfo": { "name": "mio-memory", "version": "3.22.0" },
+  "serverInfo": { "name": "mio-memory", "version": "3.23.0" },
   "instructions": "At session start, always run CoreMem_read(\"core.md\") to load your memory. ..."
 }
 ```
@@ -566,7 +566,8 @@ conversation_share(uuid: str)
 - Verifies `/data/conversations/{uuid}.json` exists
 - Generates a 24-hour token and stores it in `/data/share_tokens.json`
 - Returns `{ token, url, expires_at }`
-- `url` has the form `https://memory.mio.runabook.synology.me/logs.html?token=...`
+- `url` has the form `https://memory.mio.runabook.synology.me/share.html?token=...` (v3.23+; a standalone read-only viewer. Legacy `logs.html?token=` links keep working)
+- Also available from the "🔗 共有" button in the logs.html conversation header (popup with URL + expiry)
 
 ### Usage example
 

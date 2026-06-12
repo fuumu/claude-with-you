@@ -1,8 +1,16 @@
 """
-mio-memory v3.22  —  Streamable HTTP MCP transport
+mio-memory v3.23  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.23 (2026-06-12) - 会話共有UI（Logsタブ共有ボタン＋share.html）
+    - logs.html: 会話ヘッダーに「🔗 共有」ボタン追加 → POST /api/conversations/share
+      → URL・有効期限（24h）表示＋コピーのポップアップ。共有閲覧モードでは非表示
+    - 新規 share.html: 認証不要・トークン限定の独立読み取り専用ビューア
+      （ナビゲーションなし・メッセージのみ・marked.js レンダリング・noindex）
+    - 共有URLを share.html?token= 形式に変更（MCP conversation_share / REST 共通。
+      既存の logs.html?token= リンクも後方互換で動作継続）
+    - REST POST /api/conversations/share/<uuid> レスポンスに expires_at を追加
   v3.22 (2026-06-12) - 監査用機能（log_annotate＋thinking_limit）＋X2修正
     - 新MCPツール log_annotate（18本目）: 会話ログへの注記を /data/annotations/
       {uuid}.json に append-only で積む（生ログ不変・編集削除なし）
@@ -194,7 +202,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.22'
+VERSION = '3.23'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -597,8 +605,8 @@ def api_conversations_share(uuid):
     tokens     = _load_share_tokens()
     tokens[token] = {'conv_uuid': uuid, 'expires_at': expires_at}
     _save_share_tokens(tokens)
-    url = f'{BASE_URL}/logs.html?token={token}'
-    return jsonify({'token': token, 'url': url})
+    url = f'{BASE_URL}/share.html?token={token}'
+    return jsonify({'token': token, 'url': url, 'expires_at': expires_at})
 
 @app.route('/api/conversations/view')
 def api_conversations_view():
@@ -627,6 +635,10 @@ def admin_html():
 @app.route('/logs.html')
 def logs_html():
     return send_from_directory(os.path.dirname(__file__), 'logs.html')
+
+@app.route('/share.html')
+def share_html():
+    return send_from_directory(os.path.dirname(__file__), 'share.html')
 
 @app.route('/register')
 @app.route('/register.html')
@@ -2707,7 +2719,7 @@ def _handle_tool_call_raw(name, arguments):
         tokens     = _load_share_tokens()
         tokens[token] = {'conv_uuid': uid, 'expires_at': expires_at}
         _save_share_tokens(tokens)
-        url = f'{BASE_URL}/logs.html?token={token}'
+        url = f'{BASE_URL}/share.html?token={token}'
         return {"token": token, "url": url, "expires_at": expires_at}
 
     elif name == "memory_share":
