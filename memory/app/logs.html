@@ -506,7 +506,11 @@ function copyConvId() {
 async function shareConv() {
   if (!activeUuid) return;
   try {
-    const res = await apiFetch('/api/conversations/share/' + encodeURIComponent(activeUuid), { method: 'POST' });
+    const res = await apiFetch('/api/conversations/share/' + encodeURIComponent(activeUuid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       console.error('shareConv failed:', res.status, body);

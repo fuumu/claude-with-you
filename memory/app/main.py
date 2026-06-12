@@ -1,8 +1,13 @@
 """
-mio-memory v3.24  —  Streamable HTTP MCP transport
+mio-memory v3.25  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.25 (2026-06-12) - share HTTP 415 修正＋HTTPエラーログ
+    - logs.html shareConv: POST に Content-Type: application/json と body('{}') を付与
+    - サーバー側: share 系2エンドポイントの get_json を silent=True 化
+      （Content-Type なし POST でも 415 にならない二重防御）
+    - 405/415/500 を docker logs に出力する errorhandler 追加（JSONボディで返却）
   v3.24 (2026-06-12) - バグ修正2件（共有POST不達＋tags:null TypeError）
     - 共有リンク生成失敗の修正: logs.html の apiFetch が options を受け取らず
       POST 指定が無視されて GET 送信 → 405 になっていた。apiFetch(path, options) に拡張
@@ -211,7 +216,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.24'
+VERSION = '3.25'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -322,6 +327,18 @@ def _inject_server_time(result):
     elif isinstance(result, str):
         return {'text': result, 'server_time': st, 'server_version': VERSION}
     return result
+
+# ── HTTPエラーのログ出力（405/415/500 は docker logs に残す。v3.25）──
+@app.errorhandler(405)
+@app.errorhandler(415)
+def _log_client_error(e):
+    _log_error(f'HTTP {e.code} {request.method} {request.path}: {e.description}')
+    return jsonify({"error": e.name, "code": e.code}), e.code
+
+@app.errorhandler(500)
+def _log_server_error(e):
+    _log_error(f'HTTP 500 {request.method} {request.path}: {e}')
+    return jsonify({"error": "Internal Server Error", "code": 500}), 500
 
 def _load_artifacts_meta() -> dict:
     if os.path.exists(ARTIFACTS_META_FILE):
@@ -608,7 +625,8 @@ def api_conversations_share(uuid):
     fpath = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
     if not os.path.exists(fpath):
         abort(404)
-    expires_in = int((request.get_json() or {}).get('expires_in', 86400))
+    # silent=True: Content-Type なしの空 POST でも 415 にしない（v3.25）
+    expires_in = int((request.get_json(silent=True) or {}).get('expires_in', 86400))
     token      = secrets.token_urlsafe(24)
     expires_at = (datetime.now(tz=JST) + timedelta(seconds=expires_in)).isoformat()
     tokens     = _load_share_tokens()
@@ -905,7 +923,7 @@ def api_memory_share(entry_id):
     path = f'{DATA_DIR}/{entry_id}.json'
     if not os.path.exists(path):
         abort(404)
-    expires_in = int((request.get_json() or {}).get('expires_in', 86400))
+    expires_in = int((request.get_json(silent=True) or {}).get('expires_in', 86400))
     token      = secrets.token_urlsafe(24)
     expires_at = (datetime.now(tz=JST) + timedelta(seconds=expires_in)).isoformat()
     tokens     = _load_share_tokens()
