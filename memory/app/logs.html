@@ -380,9 +380,10 @@ document.getElementById('token-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') saveToken();
 });
 
-async function apiFetch(path) {
+async function apiFetch(path, options = {}) {
   const res = await fetch(API + path, {
-    headers: { 'Authorization': 'Bearer ' + getToken() }
+    ...options,
+    headers: { 'Authorization': 'Bearer ' + getToken(), ...(options.headers || {}) }
   });
   if (res.status === 401) { document.getElementById('auth-overlay').style.display = 'flex'; throw new Error('401'); }
   return res;
@@ -505,12 +506,17 @@ function copyConvId() {
 async function shareConv() {
   if (!activeUuid) return;
   try {
-    const res  = await apiFetch('/api/conversations/share/' + encodeURIComponent(activeUuid), { method: 'POST' });
-    if (!res.ok) { showToast('共有リンク生成失敗'); return; }
+    const res = await apiFetch('/api/conversations/share/' + encodeURIComponent(activeUuid), { method: 'POST' });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error('shareConv failed:', res.status, body);
+      showToast(`共有リンク生成失敗 (HTTP ${res.status})`);
+      return;
+    }
     const data = await res.json();
     showSharePopup(data.url, data.expires_at);
   } catch(e) {
-    if (e.message !== '401') showToast('通信エラー');
+    if (e.message !== '401') { console.error('shareConv error:', e); showToast('通信エラー'); }
   }
 }
 

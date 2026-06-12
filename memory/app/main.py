@@ -1,8 +1,17 @@
 """
-mio-memory v3.23  —  Streamable HTTP MCP transport
+mio-memory v3.24  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.24 (2026-06-12) - バグ修正2件（共有POST不達＋tags:null TypeError）
+    - 共有リンク生成失敗の修正: logs.html の apiFetch が options を受け取らず
+      POST 指定が無視されて GET 送信 → 405 になっていた。apiFetch(path, options) に拡張
+    - shareConv のエラー表示改善: HTTPステータスをトーストに表示、
+      レスポンス本文を console.error に出力。サーバー側にも share の info ログ追加
+    - tags: null 防御: memory_write / memory_upsert / POST /api/memory /
+      PATCH（tags・keywords）で null を [] に正規化（書き込み時の根本対策）。
+      読み取り側も rebuild_index / REST search / tags集計 / 階層検索の
+      `.get('tags', [])` を `or []` 化（既存の null 入りエントリにも耐性）
   v3.23 (2026-06-12) - 会話共有UI（Logsタブ共有ボタン＋share.html）
     - logs.html: 会話ヘッダーに「🔗 共有」ボタン追加 → POST /api/conversations/share
       → URL・有効期限（24h）表示＋コピーのポップアップ。共有閲覧モードでは非表示
@@ -202,7 +211,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.23'
+VERSION = '3.24'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -370,8 +379,8 @@ def rebuild_index():
         if e.get('deleted'):
             continue
         item = {
-            'id': e['id'], 'title': e.get('title', ''),
-            'tags': e.get('tags', []), 'created_at': e.get('created_at', ''),
+            'id': e['id'], 'title': e.get('title') or '',
+            'tags': e.get('tags') or [], 'created_at': e.get('created_at', ''),
             'importance': e.get('importance', 'normal'),
             'deleted': e.get('deleted', False)
         }
@@ -606,6 +615,7 @@ def api_conversations_share(uuid):
     tokens[token] = {'conv_uuid': uuid, 'expires_at': expires_at}
     _save_share_tokens(tokens)
     url = f'{BASE_URL}/share.html?token={token}'
+    _log_info(f'conversations_share: uuid={uuid} expires_at={expires_at}')
     return jsonify({'token': token, 'url': url, 'expires_at': expires_at})
 
 @app.route('/api/conversations/view')
@@ -680,8 +690,8 @@ def search():
     for entry in load_all_entries():
         if entry.get('deleted'):
             continue
-        text = (entry.get('title', '') + entry.get('body', '') +
-                ' '.join(entry.get('tags', []))).lower()
+        text = ((entry.get('title') or '') + (entry.get('body') or '') +
+                ' '.join(entry.get('tags') or [])).lower()
         if q in text:
             results.append(entry)
     if offset:
@@ -708,7 +718,7 @@ def get_tags():
     for entry in load_all_entries():
         if entry.get('deleted'):
             continue
-        for tag in entry.get('tags', []):
+        for tag in entry.get('tags') or []:
             counts[tag] = counts.get(tag, 0) + 1
     return jsonify(counts)
 
@@ -741,7 +751,7 @@ def create_entry():
     entry = {
         'id': entry_id, 'created_at': now_jst(), 'updated_at': now_jst(),
         'title': data.get('title', ''), 'body': data.get('body', ''),
-        'tags': data.get('tags', []), 'source_thread': data.get('source_thread', ''),
+        'tags': data.get('tags') or [], 'source_thread': data.get('source_thread', ''),
         'importance': data.get('importance', 'normal'), 'author': 'mio', 'deleted': False
     }
     with open(f'{DATA_DIR}/{entry_id}.json', 'w') as f:
@@ -762,7 +772,8 @@ def update_entry(entry_id):
     data = request.get_json()
     for key in ('title', 'body', 'tags', 'source_thread', 'importance', 'keywords'):
         if key in data:
-            entry[key] = data[key]
+            # tags/keywords は null をから配列に正規化（v3.24）
+            entry[key] = (data[key] or []) if key in ('tags', 'keywords') else data[key]
     entry['updated_at'] = now_jst()
     with open(path, 'w') as f:
         json.dump(entry, f, ensure_ascii=False, indent=2)
@@ -1916,8 +1927,8 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
         item = {
             'id': eid,
             'title': entry.get('title', ''),
-            'tags': entry.get('tags', []),
-            'keywords': entry.get('keywords', []),
+            'tags': entry.get('tags') or [],
+            'keywords': entry.get('keywords') or [],
             'created_at': entry.get('created_at', ''),
             'updated_at': entry.get('updated_at', ''),
             'importance': entry.get('importance', 'normal'),
@@ -2594,7 +2605,7 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "memory_write":
         ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-        tags = arguments.get("tags", [])
+        tags = arguments.get("tags") or []  # tags: null を正規化（v3.24）
         tag_slug = tags[0].replace(" ", "_")[:20] if tags else "note"
         entry_id = f"{ts}_{tag_slug}"
         entry = {
@@ -2625,7 +2636,7 @@ def _handle_tool_call_raw(name, arguments):
             "updated_at": now_jst(),
             "title": arguments.get("title", ""),
             "body": arguments.get("body", ""),
-            "tags": arguments.get("tags", []),
+            "tags": arguments.get("tags") or [],
             "source_thread": before.get("source_thread", "") if before else "",
             "importance": arguments.get("importance", "normal"),
             "author": "mio",
