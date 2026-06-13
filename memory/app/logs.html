@@ -50,8 +50,21 @@
     }
     .conv-item:hover { background: #161b22; }
     .conv-item.active { background: #1c2128; border-left: 2px solid #58a6ff; padding-left: calc(.7rem - 2px); }
-    .conv-title { font-size: .8rem; line-height: 1.35; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conv-title-row { display: flex; align-items: flex-start; gap: .35rem; }
+    .conv-title { font-size: .8rem; line-height: 1.35; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
     .conv-meta  { font-size: .68rem; color: #484f58; display: flex; justify-content: space-between; }
+    /* L1: お気に入り☆ */
+    .fav-star { background: none; border: none; cursor: pointer; font-size: .85rem; line-height: 1; color: #484f58; padding: 0; flex-shrink: 0; }
+    .fav-star:hover { color: #e3b341; }
+    .fav-star.on { color: #e3b341; }
+    /* L1: クイックアクセス（最近開いた会話） */
+    .quick-access { border-bottom: 1px solid #21262d; }
+    .qa-header { font-size: .66rem; color: #6e7681; padding: .35rem .7rem .2rem; display: flex; justify-content: space-between; align-items: center; }
+    .qa-item { padding: .3rem .7rem; cursor: pointer; font-size: .74rem; color: #adbac7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; gap: .3rem; align-items: center; }
+    .qa-item:hover { background: #161b22; }
+    .qa-item .qa-mark { color: #484f58; font-size: .7rem; flex-shrink: 0; }
+    .fav-filter-row { display: flex; align-items: center; gap: .35rem; font-size: .72rem; color: #adbac7; cursor: pointer; }
+    .fav-filter-row input { cursor: pointer; }
 
     /* Right pane */
     .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -196,6 +209,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.5);
     }
     .msg-scroll-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+    .msg-scroll-btn.close:hover { border-color: #e5534b; color: #e5534b; }
 
     /* Right slider panel */
     .right-panel {
@@ -278,6 +292,9 @@
           <label>最小件数</label>
           <input type="number" id="min-count" value="3" min="0" onchange="applyFilters()" style="width:55px">
         </div>
+        <div class="filter-row">
+          <label class="fav-filter-row"><input type="checkbox" id="fav-only" onchange="toggleFavFilter()"> ☆ お気に入りのみ表示</label>
+        </div>
         <div class="font-size-ctrl">
           <label>文字サイズ</label>
           <button class="fs-btn" data-size="small" onclick="setFontSize('small', this)">小</button>
@@ -286,6 +303,7 @@
         </div>
       </div>
     </div>
+    <div class="quick-access" id="quick-access" style="display:none"></div>
     <div class="conv-count" id="conv-count"></div>
     <div class="conv-list" id="conv-list">
       <div class="empty-state">
@@ -314,6 +332,7 @@
     <div class="msg-scroll-btns" id="msg-scroll-btns">
       <button class="msg-scroll-btn" onclick="msgScroll('top')" title="先頭へ">↑</button>
       <button class="msg-scroll-btn" onclick="msgScroll('bottom')" title="末尾へ">↓</button>
+      <button class="msg-scroll-btn close" onclick="closeConv()" title="この会話を閉じる">✕</button>
     </div>
     <div class="related-panel" id="related-panel" style="display:none">
       <div class="related-header">関連記憶</div>
@@ -442,23 +461,99 @@ function applyFilters() {
 function renderList() {
   const list  = document.getElementById('conv-list');
   const count = document.getElementById('conv-count');
-  count.textContent = filteredConvs.length ? `${filteredConvs.length} 件` : '';
+  renderQuickAccess();
 
-  if (!filteredConvs.length) {
-    list.innerHTML = '<div class="empty-state"><span class="icon">📭</span><span class="hint">該当なし</span></div>';
+  const favs = loadFavs();
+  let items = filteredConvs;
+  if (showFavOnly) items = items.filter(c => favs[c.uuid]);
+
+  count.textContent = items.length ? `${items.length} 件${showFavOnly ? '（☆）' : ''}` : '';
+
+  if (!items.length) {
+    list.innerHTML = `<div class="empty-state"><span class="icon">${showFavOnly ? '☆' : '📭'}</span><span class="hint">${showFavOnly ? 'お気に入りはまだありません' : '該当なし'}</span></div>`;
     return;
   }
 
-  list.innerHTML = filteredConvs.map(c => {
+  list.innerHTML = items.map(c => {
     const msgCount = c.message_count || 0;
     const date = (c.updated_at || c.created_at || '').slice(0, 10);
     const isActive = c.uuid === activeUuid;
+    const on = !!favs[c.uuid];
     return `
       <div class="conv-item${isActive ? ' active' : ''}" onclick="selectConv('${esc(c.uuid)}')">
-        <div class="conv-title">${esc(c.title || c.name || '（無題）')}</div>
+        <div class="conv-title-row">
+          <button class="fav-star${on ? ' on' : ''}" title="お気に入り" onclick="toggleFav('${esc(c.uuid)}', event)">${on ? '★' : '☆'}</button>
+          <span class="conv-title">${esc(c.title || c.name || '（無題）')}</span>
+        </div>
         <div class="conv-meta"><span>${date}</span><span>${msgCount}件</span></div>
       </div>`;
   }).join('');
+}
+
+// ── L1: お気に入り（☆）＋最近開いた会話（localStorage 永続） ───────────
+const FAV_KEY = 'mio_logs_favorites';   // { uuid: { title, ts } }
+const RECENT_KEY = 'mio_logs_recent';   // [ { uuid, title, ts } ] newest first
+let showFavOnly = false;
+
+function loadFavs()   { try { return JSON.parse(localStorage.getItem(FAV_KEY))   || {}; } catch { return {}; } }
+function loadRecent() { try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; } }
+
+function favTitleFor(uuid) {
+  const c = filteredConvs.find(x => x.uuid === uuid);
+  if (c) return c.title || c.name || '';
+  const cc = convCache.get(uuid);
+  return cc ? (cc.name || '') : '';
+}
+
+function toggleFav(uuid, ev) {
+  if (ev) ev.stopPropagation();
+  const f = loadFavs();
+  if (f[uuid]) delete f[uuid];
+  else f[uuid] = { title: favTitleFor(uuid), ts: Date.now() };
+  localStorage.setItem(FAV_KEY, JSON.stringify(f));
+  renderList();
+}
+
+function toggleFavFilter() {
+  showFavOnly = document.getElementById('fav-only').checked;
+  renderList();
+}
+
+function recordRecent(uuid, title) {
+  let r = loadRecent().filter(x => x.uuid !== uuid);
+  r.unshift({ uuid, title: title || '', ts: Date.now() });
+  r = r.slice(0, 8);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(r));
+}
+
+function renderQuickAccess() {
+  const box = document.getElementById('quick-access');
+  if (!box) return;
+  const recent = loadRecent().slice(0, 5);
+  if (showFavOnly || !recent.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = '';
+  box.innerHTML =
+    `<div class="qa-header"><span>🕓 最近開いた会話</span><span style="cursor:pointer" title="履歴をクリア" onclick="clearRecent()">×</span></div>` +
+    recent.map(x =>
+      `<div class="qa-item" onclick="selectConv('${esc(x.uuid)}')" title="${esc(x.title)}">
+         <span class="qa-mark">›</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.title || '（無題）')}</span>
+       </div>`).join('');
+}
+
+function clearRecent() {
+  localStorage.removeItem(RECENT_KEY);
+  renderQuickAccess();
+}
+
+function closeConv() {
+  activeUuid = null;
+  document.getElementById('conv-header').style.display = 'none';
+  document.getElementById('messages-wrap').innerHTML =
+    '<div class="empty-state"><span class="icon">💬</span><span class="hint">左のリストから会話を選択してください</span></div>';
+  document.getElementById('msg-scroll-btns').classList.remove('visible');
+  const rp = document.getElementById('related-panel');
+  if (rp) rp.style.display = 'none';
+  renderList();
 }
 
 // ── Conversation viewer ───────────────────────────────────────────────
@@ -488,6 +583,7 @@ async function selectConv(uuid) {
   const created = (conv.created_at || '').slice(0, 16).replace('T', ' ');
   document.getElementById('conv-header-meta').textContent = `作成: ${created}　更新: ${updated}`;
 
+  recordRecent(uuid, conv.name || '');  // L1: 最近開いた会話に記録
   renderMessages(conv);
   document.getElementById('messages-wrap').scrollTop = 0;
   document.getElementById('msg-scroll-btns').classList.add('visible');

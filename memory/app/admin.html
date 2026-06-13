@@ -12,11 +12,13 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    /* タブ系統別アクセントカラー（U7・仮置き。ここを変えれば一括で色が変わる） */
+    /* タブ系統別アクセントカラー（U7-b・仮置き。ここを変えれば一括で色が変わる） */
     :root {
-      --grp-memory: #7c6af7;  /* 🧠 記憶系：Memory・Search・CoreMem */
-      --grp-conv:   #2ecc71;  /* 💬 会話系：Logs・Inbox・Files */
-      --grp-other:  #e6913c;  /* 👥 その他：Import・Oplog・Friends */
+      --grp-ai:     #7c6af7;  /* 🤖 AIアシスタント：Memory・CoreMem・Inbox */
+      --grp-chat:   #2ecc71;  /* 💬 クロードチャット関連：Logs・Files・Import */
+      --grp-friend: #e6913c;  /* 👥 お友達システム：Friends */
+      --grp-sys:    #6aa0c7;  /* ⚙️ システム関連：Oplog */
+      --grp-solo:   #adbac7;  /* 単独：Search */
     }
     body { font-family: 'Helvetica Neue', sans-serif; background: #1a1a2e; color: #c8d8e8; height: 100vh; overflow: hidden; }
 
@@ -44,8 +46,31 @@
       padding: .75rem 1.5rem; display: flex; align-items: center; justify-content: space-between;
     }
     header h1 { font-size: 1rem; color: #7c6af7; }
+    .header-right { display: flex; align-items: center; gap: 1rem; }
     #token-status { font-size: .8rem; color: #5a6a7a; cursor: pointer; }
     #token-status:hover { color: #7c6af7; }
+    .hdr-icon-btn { background: none; border: none; cursor: pointer; font-size: 1.05rem; line-height: 1; padding: .15rem .3rem; border-radius: 6px; opacity: .8; }
+    .hdr-icon-btn:hover { opacity: 1; background: #1a1a2e; }
+
+    /* ── M1: 管理メニュー（設定・ヘルプ） ── */
+    .settings-panel {
+      position: fixed; top: 3.1rem; right: 1.5rem; z-index: 150;
+      width: 340px; max-height: 70vh; overflow-y: auto;
+      background: #16213e; border: 1px solid #2a3a5a; border-radius: 10px;
+      box-shadow: 0 8px 28px rgba(0,0,0,.55); padding: .9rem 1rem; display: none;
+    }
+    .settings-panel.open { display: block; }
+    .settings-row { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .3rem 0; }
+    .settings-head { border-bottom: 1px solid #2a3a5a; margin-bottom: .5rem; padding-bottom: .5rem; font-size: .9rem; color: #c8d8e8; }
+    .settings-lang { display: flex; gap: .3rem; }
+    .lang-btn { background: none; border: 1px solid #2a3a5a; border-radius: 5px; color: #7a8a9a; font-size: .72rem; padding: .15rem .45rem; cursor: pointer; }
+    .lang-btn.active { border-color: #7c6af7; color: #7c6af7; }
+    .settings-k { font-size: .8rem; color: #7a8a9a; }
+    .settings-v { font-size: .8rem; color: #c8d8e8; font-family: monospace; }
+    .settings-sec-label { font-size: .72rem; color: #5a6a7a; margin: .7rem 0 .35rem; }
+    .settings-help-item { padding: .3rem 0; border-top: 1px solid #1a2540; font-size: .78rem; }
+    .settings-help-item .sh-name { color: #9ec8e3; font-weight: 600; }
+    .settings-help-item .sh-desc { color: #8a99a8; }
 
     /* ── Tabs (U7: 3系統グループ化・色分け) ── */
     .tabs { display: flex; align-items: stretch; border-bottom: 1px solid #2a3a5a; background: #0f0f1a; padding: 0 1rem; overflow-x: auto; }
@@ -62,12 +87,15 @@
     }
     .tab-btn:hover  { color: #c8d8e8; }
     /* 系統アクセント：ラベル色 + アクティブ時の文字色・下線 */
-    .grp-memory.tab-group-label { color: var(--grp-memory); }
-    .grp-conv.tab-group-label   { color: var(--grp-conv); }
-    .grp-other.tab-group-label  { color: var(--grp-other); }
-    .tab-btn.grp-memory.active { color: var(--grp-memory); border-bottom-color: var(--grp-memory); }
-    .tab-btn.grp-conv.active   { color: var(--grp-conv);   border-bottom-color: var(--grp-conv); }
-    .tab-btn.grp-other.active  { color: var(--grp-other);  border-bottom-color: var(--grp-other); }
+    .grp-ai.tab-group-label     { color: var(--grp-ai); }
+    .grp-chat.tab-group-label   { color: var(--grp-chat); }
+    .grp-friend.tab-group-label { color: var(--grp-friend); }
+    .grp-sys.tab-group-label    { color: var(--grp-sys); }
+    .tab-btn.grp-ai.active     { color: var(--grp-ai);     border-bottom-color: var(--grp-ai); }
+    .tab-btn.grp-chat.active   { color: var(--grp-chat);   border-bottom-color: var(--grp-chat); }
+    .tab-btn.grp-friend.active { color: var(--grp-friend); border-bottom-color: var(--grp-friend); }
+    .tab-btn.grp-sys.active    { color: var(--grp-sys);    border-bottom-color: var(--grp-sys); }
+    .tab-btn.grp-solo.active   { color: var(--grp-solo);   border-bottom-color: var(--grp-solo); }
     .tab-panel      { display: none; padding: 1.5rem; }
     .tab-panel.active { display: block; height: calc(100vh - 88px); overflow-y: auto; }
 
@@ -413,24 +441,47 @@
 
 <header>
   <h1>澪の記憶サーバー — Admin</h1>
-  <span id="token-status" onclick="resetToken()">トークン変更</span>
+  <div class="header-right">
+    <button class="hdr-icon-btn" id="settings-btn" onclick="toggleSettings(event)" title="設定・ヘルプ">⚙️</button>
+    <span id="token-status" onclick="resetToken()">トークン変更</span>
+  </div>
 </header>
 
+<!-- M1: 管理メニュー（設定・ヘルプ・言語切り替え） -->
+<div class="settings-panel" id="settings-panel">
+  <div class="settings-row settings-head">
+    <span id="settings-title">設定・ヘルプ</span>
+    <span class="settings-lang">
+      <button class="lang-btn" id="lang-ja" onclick="setLang('ja')">日本語</button>
+      <button class="lang-btn" id="lang-en" onclick="setLang('en')">English</button>
+    </span>
+  </div>
+  <div class="settings-row">
+    <span class="settings-k" id="settings-ver-label">バージョン</span>
+    <span class="settings-v" id="settings-version">…</span>
+  </div>
+  <div class="settings-sec-label" id="settings-help-label">各タブの説明</div>
+  <div id="settings-help"></div>
+</div>
+
 <div class="tabs">
-  <span class="tab-group-label grp-memory">🧠 記憶</span>
-  <button class="tab-btn grp-memory active" onclick="switchTab('memory', this)">Memory</button>
-  <button class="tab-btn grp-memory" onclick="switchTab('msearch', this)">Search</button>
-  <button class="tab-btn grp-memory" onclick="switchTab('coremem', this)">CoreMem</button>
+  <button class="tab-btn grp-solo" onclick="switchTab('msearch', this)">Search</button>
 
-  <span class="tab-group-label grp-conv">💬 会話</span>
-  <button class="tab-btn grp-conv" onclick="switchTab('logs', this)">Logs</button>
-  <button class="tab-btn grp-conv" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
-  <button class="tab-btn grp-conv" onclick="switchTab('files', this)">Files</button>
+  <span class="tab-group-label grp-ai">🤖 AIアシスタント</span>
+  <button class="tab-btn grp-ai active" onclick="switchTab('memory', this)">Memory</button>
+  <button class="tab-btn grp-ai" onclick="switchTab('coremem', this)">CoreMem</button>
+  <button class="tab-btn grp-ai" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
 
-  <span class="tab-group-label grp-other">👥 その他</span>
-  <button class="tab-btn grp-other" onclick="switchTab('import', this)">Import</button>
-  <button class="tab-btn grp-other" onclick="switchTab('oplog', this)">Oplog</button>
-  <button class="tab-btn grp-other" onclick="switchTab('friends', this)">Friends <span id="friends-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
+  <span class="tab-group-label grp-chat">💬 クロードチャット関連</span>
+  <button class="tab-btn grp-chat" onclick="switchTab('logs', this)">Logs</button>
+  <button class="tab-btn grp-chat" onclick="switchTab('files', this)">Files</button>
+  <button class="tab-btn grp-chat" onclick="switchTab('import', this)">Import</button>
+
+  <span class="tab-group-label grp-friend">👥 お友達システム</span>
+  <button class="tab-btn grp-friend" onclick="switchTab('friends', this)">Friends <span id="friends-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
+
+  <span class="tab-group-label grp-sys">⚙️ システム関連</span>
+  <button class="tab-btn grp-sys" onclick="switchTab('oplog', this)">Oplog</button>
 </div>
 
 <!-- Memory tab -->
@@ -723,6 +774,86 @@ function switchTab(name, btn) {
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
   }
 }
+
+// ── M1: 管理メニュー（設定・ヘルプ・言語切り替え） ─────────────────────
+let _settingsVerLoaded = false;
+let _adminLang = localStorage.getItem('mio_admin_lang') || 'ja';
+
+const TAB_HELP = {
+  ja: {
+    _title: '設定・ヘルプ', _ver: 'バージョン', _help: '各タブの説明',
+    Search:  '記憶を階層検索（keywords→要約→全文）。普段使いではなく「わざわざ探す」用途',
+    Memory:  'ExtMemory（澪が書く記憶エントリ）の閲覧・検索・削除',
+    CoreMem: 'UserCoreMemory（core.md 等のバージョン管理ファイル）',
+    Inbox:   '澪チャット↔澪コード間のメッセージ（完了報告・伝言）',
+    Logs:    'インポートしたClaude.ai会話ログのビューア（共有・お気に入り）',
+    Files:   '会話から抽出されたファイル（conv_artifacts）',
+    Import:  'Claude.aiエクスポートZIPの取り込み＋要約バッチ進捗',
+    Friends: 'お友達システムの登録・承認・コード管理',
+    Oplog:   '記憶操作の操作ログ（システム）',
+  },
+  en: {
+    _title: 'Settings & Help', _ver: 'Version', _help: 'Tab guide',
+    Search:  'Hierarchical memory search (keywords→summary→full). For deliberate lookups, not everyday use',
+    Memory:  'ExtMemory entries (memories Mio writes): browse, search, delete',
+    CoreMem: 'UserCoreMemory (versioned files like core.md)',
+    Inbox:   'Messages between Mio-chat and Mio-code (reports, handoffs)',
+    Logs:    'Viewer for imported Claude.ai conversation logs (share, favorites)',
+    Files:   'Files extracted from conversations (conv_artifacts)',
+    Import:  'Import Claude.ai export ZIP + summary batch progress',
+    Friends: 'Friend system: registration, approval, codes',
+    Oplog:   'Memory operation log (system)',
+  }
+};
+
+function toggleSettings(ev) {
+  if (ev) ev.stopPropagation();
+  const panel = document.getElementById('settings-panel');
+  const willOpen = !panel.classList.contains('open');
+  panel.classList.toggle('open', willOpen);
+  if (willOpen) {
+    renderSettings();
+    if (!_settingsVerLoaded) loadServerVersion();
+  }
+}
+
+async function loadServerVersion() {
+  try {
+    const res = await fetch(API + '/health');
+    const d = await res.json();
+    document.getElementById('settings-version').textContent =
+      'v' + (d.version || '?') + '  (' + (d.mcp_tool_count != null ? d.mcp_tool_count + ' tools' : '') + ')';
+    _settingsVerLoaded = true;
+  } catch { document.getElementById('settings-version').textContent = '取得失敗'; }
+}
+
+function setLang(lang) {
+  _adminLang = lang;
+  localStorage.setItem('mio_admin_lang', lang);
+  renderSettings();
+}
+
+function renderSettings() {
+  const t = TAB_HELP[_adminLang] || TAB_HELP.ja;
+  document.getElementById('settings-title').textContent = t._title;
+  document.getElementById('settings-ver-label').textContent = t._ver;
+  document.getElementById('settings-help-label').textContent = t._help;
+  document.getElementById('lang-ja').classList.toggle('active', _adminLang === 'ja');
+  document.getElementById('lang-en').classList.toggle('active', _adminLang === 'en');
+  const order = ['Search','Memory','CoreMem','Inbox','Logs','Files','Import','Friends','Oplog'];
+  document.getElementById('settings-help').innerHTML = order.map(name =>
+    `<div class="settings-help-item"><span class="sh-name">${name}</span> — <span class="sh-desc">${esc(t[name] || '')}</span></div>`
+  ).join('');
+}
+
+// パネル外クリックで閉じる
+document.addEventListener('click', e => {
+  const panel = document.getElementById('settings-panel');
+  const btn   = document.getElementById('settings-btn');
+  if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn) {
+    panel.classList.remove('open');
+  }
+});
 
 // ── Memory ────────────────────────────────────────────────────────────
 async function loadMemory() {

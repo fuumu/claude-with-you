@@ -194,7 +194,7 @@ For an `initialize` request to `/mcp`, the server returns:
 {
   "protocolVersion": "2025-11-25",
   "capabilities": { "tools": { "listChanged": false } },
-  "serverInfo": { "name": "mio-memory", "version": "3.27.0" },
+  "serverInfo": { "name": "mio-memory", "version": "3.28.0" },
   "instructions": "At session start, always run CoreMem_read(\"core.md\") to load your memory. ..."
 }
 ```
@@ -535,6 +535,8 @@ Share tokens are stored in the existing `/data/share_tokens.json` with a `conv_u
 - tool_use blocks (⚙) / tool_result blocks (📤): collapsible
 - Related memory panel: `source_thread` UUID match → title keyword search fallback
 - Font size switching (S/M/L): controlled by the `--msg-font-size` CSS variable, saved to `localStorage`
+- Favorites (☆) + recently-opened conversations (L1, v3.28): stored in `localStorage` (`mio_logs_favorites` / `mio_logs_recent`); "favorites only" filter + top-5 recent list
+- Close conversation (✕): a close button alongside the floating ↑↓ (U3-b, v3.28)
 - Auth-free viewing via `?token=` URLs
 
 ---

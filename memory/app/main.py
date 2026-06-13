@@ -1,8 +1,16 @@
 """
-mio-memory v3.27  —  Streamable HTTP MCP transport
+mio-memory v3.28  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.28 (2026-06-13) - admin/logs UI 大改修（U7-b/L1/M1/U3-b追加・サーバーロジック非接触）
+    - U7-b: タブを再分類（Search単独＋🤖AIアシスタント/💬クロードチャット関連/
+      👥お友達システム/⚙️システム関連の4グループ）。:root のCSS変数で色一括変更可
+    - L1: logs.html にお気に入り（☆・localStorage）＋「最近開いた会話」セクション、
+      「お気に入りのみ表示」フィルタを追加
+    - M1: admin.html ヘッダーに ⚙️ 管理メニュー（バージョン表示・各タブ説明・
+      日本語/英語切り替え）。バージョンは /health から取得
+    - U3-b追加: logs.html 本体のフローティング ↑↓ に「✕ 閉じる」（会話を閉じる）追加
   v3.27 (2026-06-13) - inbox に from_model / to_model 属性追加（I3-b）
     - inbox_post（MCP/REST）に from_model / to_model（任意・手動指定）を追加
     - inbox_read / inbox_check / REST GET の返却に from_model / to_model を付与
@@ -228,7 +236,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.27'
+VERSION = '3.28'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
