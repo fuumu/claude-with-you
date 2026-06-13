@@ -41,6 +41,11 @@
     }
     select:focus, input:focus { outline: none; border-color: #58a6ff; }
     .filter-keyword { flex: 1; }
+    /* L1-c: 検索クリア✕ */
+    .kw-wrap { position: relative; flex: 1; display: flex; }
+    .kw-wrap .filter-keyword { width: 100%; padding-right: 1.4rem; }
+    .kw-clear { position: absolute; right: .25rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: #6e7681; cursor: pointer; font-size: .72rem; line-height: 1; padding: .1rem .2rem; }
+    .kw-clear:hover { color: #c9d1d9; }
 
     .conv-count { font-size: .7rem; color: #484f58; padding: .35rem .7rem; border-bottom: 1px solid #21262d; flex-shrink: 0; }
     .conv-list { flex: 1; overflow-y: auto; }
@@ -183,6 +188,17 @@
     .modal-close:hover { color: #c9d1d9; }
     .modal-meta   { font-size: .76rem; color: #484f58; margin-bottom: .9rem; }
     .modal-body   { font-size: .83rem; line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: #8b949e; }
+    /* R1: 共通レンダラー(renderMd)でMD表示する際のスタイル */
+    .modal-body.md { white-space: normal; color: #adbac7; }
+    .modal-body.md h1, .modal-body.md h2, .modal-body.md h3 { margin: .9rem 0 .45rem; color: #58a6ff; font-size: 1em; }
+    .modal-body.md p { margin-bottom: .65rem; }
+    .modal-body.md code { background: #0d1117; padding: .1rem .3rem; border-radius: 3px; }
+    .modal-body.md pre { background: #0d1117; padding: .6rem .8rem; border-radius: 6px; overflow-x: auto; margin-bottom: .65rem; }
+    .modal-body.md pre code { background: none; padding: 0; }
+    .modal-body.md ul, .modal-body.md ol { margin-left: 1.4rem; margin-bottom: .65rem; }
+    .modal-body.md table { border-collapse: collapse; margin-bottom: .65rem; }
+    .modal-body.md th, .modal-body.md td { border: 1px solid #30363d; padding: .3rem .6rem; font-size: .92em; }
+    .modal-body.md a { color: #58a6ff; }
 
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -210,6 +226,20 @@
     }
     .msg-scroll-btn:hover { border-color: #58a6ff; color: #58a6ff; }
     .msg-scroll-btn.close:hover { border-color: #e5534b; color: #e5534b; }
+
+    /* L1-b: 会話要約パネル（アコーディオン） */
+    .summary-panel { border-bottom: 1px solid #21262d; background: #0d1117; flex-shrink: 0; }
+    .summary-head { display: flex; align-items: center; gap: .4rem; padding: .5rem .9rem; cursor: pointer; font-size: .76rem; color: #8b949e; user-select: none; }
+    .summary-head:hover { color: #c9d1d9; }
+    .summary-caret { font-size: .6rem; transition: transform .15s; display: inline-block; }
+    .summary-caret.open { transform: rotate(90deg); }
+    .summary-tag { color: #484f58; font-size: .7rem; margin-left: auto; }
+    .summary-body { padding: .1rem .9rem .8rem 1.5rem; font-size: .82rem; line-height: 1.7; color: #adbac7; max-height: 40vh; overflow-y: auto; }
+    .summary-body.md { white-space: normal; }
+    .summary-body.md h1, .summary-body.md h2, .summary-body.md h3 { margin: .6rem 0 .35rem; color: #58a6ff; font-size: 1em; }
+    .summary-body.md p { margin-bottom: .55rem; }
+    .summary-body.md ul, .summary-body.md ol { margin-left: 1.3rem; margin-bottom: .55rem; }
+    .summary-body.md code { background: #161b22; padding: .1rem .3rem; border-radius: 3px; }
 
     /* Right slider panel */
     .right-panel {
@@ -280,7 +310,10 @@
         </div>
         <div class="filter-row">
           <label>検索</label>
-          <input type="text" id="keyword-input" class="filter-keyword" placeholder="キーワード..." oninput="applyFilters()">
+          <div class="kw-wrap">
+            <input type="text" id="keyword-input" class="filter-keyword" placeholder="キーワード..." oninput="onKeywordInput()">
+            <button class="kw-clear" id="kw-clear" onclick="clearKeyword()" title="クリア" style="display:none">✕</button>
+          </div>
         </div>
         <div class="filter-row">
           <label>From</label>
@@ -322,6 +355,14 @@
       <button class="toggle-btn" onclick="copyConvId()" title="この会話のIDをコピー（澪に渡せます）">📋 ID</button>
       <button class="toggle-btn" id="share-btn" onclick="shareConv()" title="24時間有効な共有リンクを生成">🔗 共有</button>
       <button class="toggle-btn" id="thinking-toggle" onclick="toggleThinking()">🧠 思考を表示</button>
+    </div>
+    <div class="summary-panel" id="summary-panel" style="display:none">
+      <div class="summary-head" onclick="toggleSummary()">
+        <span class="summary-caret" id="summary-caret">▶</span>
+        <span>📝 2層要約</span>
+        <span class="summary-tag" id="summary-tag"></span>
+      </div>
+      <div class="summary-body" id="summary-body" style="display:none"></div>
     </div>
     <div class="messages-wrap" id="messages-wrap">
       <div class="empty-state">
@@ -458,6 +499,20 @@ function applyFilters() {
   _filterTimer = setTimeout(loadConversations, 300);
 }
 
+// L1-c: 検索入力のクリア✕（入力があるときだけ表示）
+function onKeywordInput() {
+  const v = document.getElementById('keyword-input').value;
+  document.getElementById('kw-clear').style.display = v ? 'block' : 'none';
+  applyFilters();
+}
+function clearKeyword() {
+  const inp = document.getElementById('keyword-input');
+  inp.value = '';
+  document.getElementById('kw-clear').style.display = 'none';
+  inp.focus();
+  applyFilters();
+}
+
 function renderList() {
   const list  = document.getElementById('conv-list');
   const count = document.getElementById('conv-count');
@@ -548,12 +603,72 @@ function clearRecent() {
 function closeConv() {
   activeUuid = null;
   document.getElementById('conv-header').style.display = 'none';
+  document.getElementById('summary-panel').style.display = 'none';
   document.getElementById('messages-wrap').innerHTML =
     '<div class="empty-state"><span class="icon">💬</span><span class="hint">左のリストから会話を選択してください</span></div>';
   document.getElementById('msg-scroll-btns').classList.remove('visible');
   const rp = document.getElementById('related-panel');
   if (rp) rp.style.display = 'none';
   renderList();
+}
+
+// ── L1-b: 2層要約パネル ───────────────────────────────────────────────
+const SUMMARY_MARKER = '## 2層: 要約';
+let _summaryOpen = false;
+
+function extractSummary(body) {
+  if (!body) return '';
+  const i = body.indexOf(SUMMARY_MARKER);
+  if (i === -1) return '';
+  let seg = body.slice(i + SUMMARY_MARKER.length);
+  const j = seg.indexOf('\n## ');
+  if (j !== -1) seg = seg.slice(0, j);
+  return seg.trim();
+}
+
+function setSummaryOpen(open) {
+  _summaryOpen = open;
+  document.getElementById('summary-body').style.display = open ? 'block' : 'none';
+  document.getElementById('summary-caret').classList.toggle('open', open);
+}
+
+function toggleSummary() { setSummaryOpen(!_summaryOpen); }
+
+async function loadSummaryPanel(conv) {
+  const panel = document.getElementById('summary-panel');
+  const bodyEl = document.getElementById('summary-body');
+  const tagEl  = document.getElementById('summary-tag');
+  panel.style.display = 'block';
+  bodyEl.className = 'summary-body';
+  bodyEl.innerHTML = '<span style="color:#484f58">読み込み中...</span>';
+  tagEl.textContent = '';
+  setSummaryOpen(false);
+
+  let summary = '';
+  try {
+    const q = (conv.name || '').slice(0, 40).trim();
+    if (getToken() && conv.uuid && q) {
+      // /api/memory/search は body 込みの全エントリを返す → source_thread 一致を探す
+      const res = await apiFetch('/api/memory/search?q=' + encodeURIComponent(q));
+      if (res.ok) {
+        const hits = await res.json();
+        const hit = (hits || []).find(h => h.source_thread === conv.uuid);
+        if (hit) summary = extractSummary(hit.body || '');
+      }
+    }
+  } catch {}
+
+  if (summary) {
+    bodyEl.className = 'summary-body md';
+    bodyEl.innerHTML = renderMd(summary);
+    tagEl.textContent = '';
+    setSummaryOpen(true);   // 要約あり → 展開
+  } else {
+    bodyEl.className = 'summary-body';
+    bodyEl.innerHTML = '<span style="color:#484f58">この会話の2層要約はまだ生成されていません</span>';
+    tagEl.textContent = '要約なし';
+    setSummaryOpen(false);  // 要約なし → 折りたたみ
+  }
 }
 
 // ── Conversation viewer ───────────────────────────────────────────────
@@ -584,6 +699,7 @@ async function selectConv(uuid) {
   document.getElementById('conv-header-meta').textContent = `作成: ${created}　更新: ${updated}`;
 
   recordRecent(uuid, conv.name || '');  // L1: 最近開いた会話に記録
+  loadSummaryPanel(conv);               // L1-b: 2層要約パネル
   renderMessages(conv);
   document.getElementById('messages-wrap').scrollTop = 0;
   document.getElementById('msg-scroll-btns').classList.add('visible');
@@ -704,6 +820,13 @@ function renderMessages(conv) {
 
 function renderMd(text) {
   return DOMPurify.sanitize(marked.parse(text || ''));
+}
+
+// R1: モーダル本文を共通レンダラーでMD表示
+function setModalBody(text) {
+  const el = document.getElementById('modal-body');
+  el.className = 'modal-body md';
+  el.innerHTML = renderMd(text);
 }
 
 function renderContentBlocks(content, role, mi) {
@@ -868,7 +991,7 @@ async function openConvFile(i) {
     const data = await res.json();
     document.getElementById('modal-title').textContent = f.name;
     document.getElementById('modal-meta').textContent  = f.type === 'coremem' ? 'CoreMem' : '会話内アーティファクト';
-    document.getElementById('modal-body').textContent  = data.content || '';
+    setModalBody(data.content || '');
     openModal();
   } catch {}
 }
@@ -881,7 +1004,7 @@ async function openRelated(id) {
     document.getElementById('modal-title').textContent = e.title || '';
     document.getElementById('modal-meta').textContent =
       `${date}　${(e.tags || []).join(' · ')}　importance: ${e.importance || 'normal'}`;
-    document.getElementById('modal-body').textContent = e.body || '';
+    setModalBody(e.body || '');
     openModal();
   } catch {}
 }

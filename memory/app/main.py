@@ -1,8 +1,17 @@
 """
-mio-memory v3.28  —  Streamable HTTP MCP transport
+mio-memory v3.29  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.29 (2026-06-13) - 表示層UI 3件（R1/L1-b/L1-c・サーバーロジック非接触）
+    - R1: 本文表示を共通マークダウンレンダラーに統一。admin.html の Search 要約欄
+      （summary/symbolic）と Inbox 本文を renderMarkdown 化、logs.html の
+      モーダル本文（CoreMem/会話アーティファクト・関連記憶）を renderMd 化
+    - L1-b: logs.html 会話表示時に2層要約パネル（アコーディオン）を追加。
+      /api/memory/search で source_thread 一致エントリを引き、body から
+      「## 2層: 要約」を抽出してMD表示。要約あり=展開／なし=折りたたみ
+    - L1-c: logs.html サイドバー検索フィールドにクリア✕（入力時のみ表示）
+    - 付随: Inbox 詳細メタに from_model/to_model を併記（I3-b の表示活用）
   v3.28 (2026-06-13) - admin/logs UI 大改修（U7-b/L1/M1/U3-b追加・サーバーロジック非接触）
     - U7-b: タブを再分類（Search単独＋🤖AIアシスタント/💬クロードチャット関連/
       👥お友達システム/⚙️システム関連の4グループ）。:root のCSS変数で色一括変更可
@@ -236,7 +245,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.28'
+VERSION = '3.29'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'

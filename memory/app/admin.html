@@ -1242,9 +1242,13 @@ function _renderInboxDetail(msg) {
   ].filter(Boolean).join(' ');
 
   document.getElementById('inbox-detail-title').innerHTML = esc(msg.title) + (badges ? ' ' + badges : '');
-  document.getElementById('inbox-detail-meta').textContent =
-    `${msg.from || '?'} → ${msg.to || '?'} ・ ${ts}`;
-  document.getElementById('inbox-detail-body').textContent = msg.body || '';
+  const fromStr = (msg.from || '?') + (msg.from_model ? ` (${msg.from_model})` : '');
+  const toStr   = (msg.to   || '?') + (msg.to_model   ? ` (${msg.to_model})`   : '');
+  document.getElementById('inbox-detail-meta').textContent = `${fromStr} → ${toStr} ・ ${ts}`;
+  // R1: Inbox本文を共通レンダラーでMD表示
+  const ibody = document.getElementById('inbox-detail-body');
+  ibody.className = 'inbox-detail-body md-body';
+  ibody.innerHTML = renderMarkdown(msg.body || '');
 
   const actions = document.getElementById('inbox-actions');
   const btns = [];
@@ -1507,8 +1511,11 @@ async function msSelect(i) {
 
 function msSetText(col, text) {
   const el = document.getElementById('ms-body-' + col);
+  // R1: 要約・3層は共通レンダラー(renderMarkdown)でMD表示。raw body は原文保持のためプレーン
+  const useMd = (col === 'summary' || col === 'symbolic');
   let html = text
-    ? `<div style="white-space:pre-wrap">${esc(text)}</div>`
+    ? (useMd ? `<div class="md-body">${renderMarkdown(text)}</div>`
+             : `<div style="white-space:pre-wrap">${esc(text)}</div>`)
     : '<div class="ms-empty">エントリを選択してください</div>';
   if (col === 'summary' && text) {
     html += `<div style="margin-top:.9rem"><span class="ms-link" onclick="event.stopPropagation();msActivate('raw')">Raw body を見る →</span></div>`;
