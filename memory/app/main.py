@@ -1,8 +1,16 @@
 """
-mio-memory v3.29  —  Streamable HTTP MCP transport
+mio-memory v3.30  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.30 (2026-06-13) - i18n水平展開（M1-b・サーバーロジック非接触）
+    - data-i18n 属性ベースの汎用 i18n に発展（M1の言語トグルの延長）。
+      ⚙️メニューのトグルで admin.html 全体が日英切替（グループ見出し・ヘッダー・
+      認証画面・各タブの主要ラベル/プレースホルダ/ボタン）
+    - logs.html も同じ localStorage キー（mio_admin_lang）を共有し、
+      親フレームからの postMessage('mio-lang') で連動切替（サイドバーフィルタ・
+      会話ヘッダー・要約パネル・空状態など主要箇所）
+    - applyLang() が data-i18n / data-i18n-ph / data-i18n-title を一括適用
   v3.29 (2026-06-13) - 表示層UI 3件（R1/L1-b/L1-c・サーバーロジック非接触）
     - R1: 本文表示を共通マークダウンレンダラーに統一。admin.html の Search 要約欄
       （summary/symbolic）と Inbox 本文を renderMarkdown 化、logs.html の
@@ -245,7 +253,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.29'
+VERSION = '3.30'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'

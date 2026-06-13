@@ -432,18 +432,18 @@
 <!-- Auth overlay -->
 <div class="auth-overlay" id="auth-overlay">
   <div class="auth-card">
-    <h2>澪の記憶サーバー</h2>
-    <p>APIトークンを入力してください</p>
+    <h2 data-i18n="auth.title">澪の記憶サーバー</h2>
+    <p data-i18n="auth.prompt">APIトークンを入力してください</p>
     <input type="password" id="token-input" placeholder="mio2026..." autocomplete="current-password">
-    <button class="btn" style="width:100%" onclick="saveToken()">接続</button>
+    <button class="btn" style="width:100%" onclick="saveToken()" data-i18n="auth.connect">接続</button>
   </div>
 </div>
 
 <header>
-  <h1>澪の記憶サーバー — Admin</h1>
+  <h1 data-i18n="app.title">澪の記憶サーバー — Admin</h1>
   <div class="header-right">
     <button class="hdr-icon-btn" id="settings-btn" onclick="toggleSettings(event)" title="設定・ヘルプ">⚙️</button>
-    <span id="token-status" onclick="resetToken()">トークン変更</span>
+    <span id="token-status" onclick="resetToken()" data-i18n="token.change">トークン変更</span>
   </div>
 </header>
 
@@ -467,30 +467,30 @@
 <div class="tabs">
   <button class="tab-btn grp-solo" onclick="switchTab('msearch', this)">Search</button>
 
-  <span class="tab-group-label grp-ai">🤖 AIアシスタント</span>
+  <span class="tab-group-label grp-ai" data-i18n="grp.ai">🤖 AIアシスタント</span>
   <button class="tab-btn grp-ai active" onclick="switchTab('memory', this)">Memory</button>
   <button class="tab-btn grp-ai" onclick="switchTab('coremem', this)">CoreMem</button>
   <button class="tab-btn grp-ai" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
 
-  <span class="tab-group-label grp-chat">💬 クロードチャット関連</span>
+  <span class="tab-group-label grp-chat" data-i18n="grp.chat">💬 クロードチャット関連</span>
   <button class="tab-btn grp-chat" onclick="switchTab('logs', this)">Logs</button>
   <button class="tab-btn grp-chat" onclick="switchTab('files', this)">Files</button>
   <button class="tab-btn grp-chat" onclick="switchTab('import', this)">Import</button>
 
-  <span class="tab-group-label grp-friend">👥 お友達システム</span>
+  <span class="tab-group-label grp-friend" data-i18n="grp.friend">👥 お友達システム</span>
   <button class="tab-btn grp-friend" onclick="switchTab('friends', this)">Friends <span id="friends-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
 
-  <span class="tab-group-label grp-sys">⚙️ システム関連</span>
+  <span class="tab-group-label grp-sys" data-i18n="grp.sys">⚙️ システム関連</span>
   <button class="tab-btn grp-sys" onclick="switchTab('oplog', this)">Oplog</button>
 </div>
 
 <!-- Memory tab -->
 <div class="tab-panel active" id="tab-memory">
   <div class="search-bar">
-    <input type="search" id="memory-search" placeholder="🔍 キーワード検索..." oninput="onSearchInput(this.value)">
+    <input type="search" id="memory-search" placeholder="🔍 キーワード検索..." data-i18n-ph="memory.search.ph" oninput="onSearchInput(this.value)">
   </div>
   <div class="filter-bar" id="filter-bar">
-    <button class="filter-btn active" onclick="setFilter('全て', this)">全て</button>
+    <button class="filter-btn active" onclick="setFilter('全て', this)" data-i18n="filter.all">全て</button>
   </div>
   <div class="card-grid" id="memory-grid"></div>
 </div>
@@ -500,8 +500,8 @@
 <!-- Memory Search tab (U5) -->
 <div class="tab-panel" id="tab-msearch">
   <div class="search-bar" style="display:flex;gap:.5rem">
-    <input type="search" id="ms-query" placeholder="🔍 階層検索（keywords → summary → full body）..." onkeydown="if(event.key==='Enter')msSearch()" style="flex:1">
-    <button class="btn btn-secondary" onclick="msSearch()" style="padding:.35rem .9rem;font-size:.85rem">検索</button>
+    <input type="search" id="ms-query" placeholder="🔍 階層検索（keywords → summary → full body）..." data-i18n-ph="msearch.ph" onkeydown="if(event.key==='Enter')msSearch()" style="flex:1">
+    <button class="btn btn-secondary" onclick="msSearch()" style="padding:.35rem .9rem;font-size:.85rem" data-i18n="msearch.btn">検索</button>
   </div>
   <div id="ms-status" style="font-size:.75rem;color:#5a6a7a;margin:.4rem 0 .6rem"></div>
   <div class="ms-main">
@@ -583,7 +583,7 @@
 <!-- Oplog tab -->
 <div class="tab-panel" id="tab-oplog">
   <div class="oplog-toolbar">
-    <button class="btn btn-secondary" onclick="loadOplog()">再読み込み</button>
+    <button class="btn btn-secondary" onclick="loadOplog()" data-i18n="common.reload">再読み込み</button>
     <span class="oplog-count" id="oplog-count"></span>
   </div>
   <div class="oplog-list" id="oplog-list"></div>
@@ -593,7 +593,7 @@
 <div class="tab-panel" id="tab-files">
   <!-- Row 1: search + count -->
   <div class="files-toolbar">
-    <input type="search" class="files-search" id="files-search" placeholder="🔍 ファイル名・会話名で検索..." oninput="onFilesSearch(this.value)">
+    <input type="search" class="files-search" id="files-search" placeholder="🔍 ファイル名・会話名で検索..." data-i18n-ph="files.search.ph" oninput="onFilesSearch(this.value)">
     <span class="files-count" id="files-count"></span>
   </div>
   <!-- Row 2: extension filter buttons (populated dynamically) -->
@@ -619,8 +619,8 @@
 <!-- Inbox tab -->
 <div class="tab-panel" id="tab-inbox">
   <div class="inbox-toolbar">
-    <button class="btn btn-secondary" onclick="loadInbox()" style="padding:.25rem .65rem;font-size:.8rem">再読み込み</button>
-    <button class="inbox-filter-btn active" id="inbox-filter-all" onclick="setInboxFilter('all', this)">すべて</button>
+    <button class="btn btn-secondary" onclick="loadInbox()" style="padding:.25rem .65rem;font-size:.8rem" data-i18n="common.reload">再読み込み</button>
+    <button class="inbox-filter-btn active" id="inbox-filter-all" onclick="setInboxFilter('all', this)" data-i18n="inbox.all">すべて</button>
     <button class="inbox-filter-btn" id="inbox-filter-chat" onclick="setInboxFilter('chat', this)">→ chat</button>
     <button class="inbox-filter-btn" id="inbox-filter-code" onclick="setInboxFilter('code', this)">→ code</button>
     <span id="inbox-count" style="font-size:.8rem;color:#5a6a7a;margin-left:auto"></span>
@@ -637,39 +637,39 @@
 <!-- Friends tab -->
 <div class="tab-panel" id="tab-friends">
   <div class="friends-toolbar">
-    <button class="btn btn-secondary" onclick="loadFriends()" style="padding:.25rem .65rem;font-size:.8rem">再読み込み</button>
-    <a href="/register" target="_blank" class="btn btn-secondary" style="padding:.25rem .65rem;font-size:.8rem;text-decoration:none">登録ページを開く</a>
+    <button class="btn btn-secondary" onclick="loadFriends()" style="padding:.25rem .65rem;font-size:.8rem" data-i18n="common.reload">再読み込み</button>
+    <a href="/register" target="_blank" class="btn btn-secondary" style="padding:.25rem .65rem;font-size:.8rem;text-decoration:none" data-i18n="friends.openreg">登録ページを開く</a>
   </div>
 
   <!-- F7: 直接登録フォーム -->
   <div class="friends-section">
-    <h3>新規登録</h3>
+    <h3 data-i18n="friends.newreg">新規登録</h3>
     <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
       <div>
-        <div style="font-size:.75rem;color:#5a6a7a;margin-bottom:.3rem">ニックネーム</div>
+        <div style="font-size:.75rem;color:#5a6a7a;margin-bottom:.3rem" data-i18n="friends.nickname">ニックネーム</div>
         <input id="freg-nickname" type="text" placeholder="例: さとみ" style="background:#0f0f1a;border:1px solid #2a3a5a;border-radius:4px;color:#c8d8e8;padding:.35rem .55rem;font-size:.83rem;width:140px">
       </div>
       <div>
-        <div style="font-size:.75rem;color:#5a6a7a;margin-bottom:.3rem">メールアドレス</div>
+        <div style="font-size:.75rem;color:#5a6a7a;margin-bottom:.3rem" data-i18n="friends.email">メールアドレス</div>
         <input id="freg-email" type="email" placeholder="例: friend@example.com" style="background:#0f0f1a;border:1px solid #2a3a5a;border-radius:4px;color:#c8d8e8;padding:.35rem .55rem;font-size:.83rem;width:200px">
       </div>
-      <button class="friends-btn" style="border-color:#2ecc71;color:#2ecc71" onclick="friendsDirectRegister()">登録して承認</button>
+      <button class="friends-btn" style="border-color:#2ecc71;color:#2ecc71" onclick="friendsDirectRegister()" data-i18n="friends.regbtn">登録して承認</button>
     </div>
     <div id="freg-result" style="margin-top:.75rem;display:none"></div>
   </div>
 
   <div class="friends-section" id="friends-pending-section">
-    <h3>申請中 <span id="friends-pending-count" style="color:#f39c12"></span></h3>
+    <h3><span data-i18n="friends.pending">申請中</span> <span id="friends-pending-count" style="color:#f39c12"></span></h3>
     <div id="friends-pending-list"></div>
   </div>
 
   <div class="friends-section" id="friends-active-section">
-    <h3>承認済み <span id="friends-active-count" style="color:#2ecc71"></span></h3>
+    <h3><span data-i18n="friends.active">承認済み</span> <span id="friends-active-count" style="color:#2ecc71"></span></h3>
     <div id="friends-active-list"></div>
   </div>
 
   <div class="friends-section" id="friends-revoked-section" style="display:none">
-    <h3 style="color:#5a6a7a">失効済み</h3>
+    <h3 style="color:#5a6a7a" data-i18n="friends.revoked">失効済み</h3>
     <div id="friends-revoked-list"></div>
   </div>
 </div>
@@ -827,9 +827,59 @@ async function loadServerVersion() {
   } catch { document.getElementById('settings-version').textContent = '取得失敗'; }
 }
 
+// ── M1-b: 汎用 i18n（data-i18n 属性ベース・M1の延長） ───────────────────
+const I18N = {
+  'app.title':    { ja: '澪の記憶サーバー — Admin', en: "Mio's Memory Server — Admin" },
+  'auth.title':   { ja: '澪の記憶サーバー', en: "Mio's Memory Server" },
+  'auth.prompt':  { ja: 'APIトークンを入力してください', en: 'Enter your API token' },
+  'auth.connect': { ja: '接続', en: 'Connect' },
+  'token.change': { ja: 'トークン変更', en: 'Change token' },
+  // グループ見出し
+  'grp.ai':     { ja: '🤖 AIアシスタント', en: '🤖 AI Assistant' },
+  'grp.chat':   { ja: '💬 クロードチャット関連', en: '💬 Claude Chat' },
+  'grp.friend': { ja: '👥 お友達システム', en: '👥 Friends System' },
+  'grp.sys':    { ja: '⚙️ システム関連', en: '⚙️ System' },
+  // プレースホルダ・共通ラベル
+  'memory.search.ph':  { ja: '🔍 キーワード検索...', en: '🔍 Keyword search...' },
+  'filter.all':        { ja: '全て', en: 'All' },
+  'msearch.ph':        { ja: '🔍 階層検索（keywords → summary → full body）...', en: '🔍 Hierarchical search (keywords → summary → full body)...' },
+  'msearch.btn':       { ja: '検索', en: 'Search' },
+  'common.reload':     { ja: '再読み込み', en: 'Reload' },
+  // Friends
+  'friends.openreg':   { ja: '登録ページを開く', en: 'Open registration page' },
+  'friends.newreg':    { ja: '新規登録', en: 'New registration' },
+  'friends.nickname':  { ja: 'ニックネーム', en: 'Nickname' },
+  'friends.email':     { ja: 'メールアドレス', en: 'Email' },
+  'friends.regbtn':    { ja: '登録して承認', en: 'Register & approve' },
+  'friends.pending':   { ja: '申請中', en: 'Pending' },
+  'friends.active':    { ja: '承認済み', en: 'Active' },
+  'friends.revoked':   { ja: '失効済み', en: 'Revoked' },
+  // Import
+  'import.last':       { ja: '最終インポート：', en: 'Last import:' },
+  // Inbox / Files 共通
+  'inbox.all':         { ja: 'すべて', en: 'All' },
+  'files.search.ph':   { ja: '🔍 ファイル名・会話名で検索...', en: '🔍 Search by file or conversation name...' },
+  'common.clear':      { ja: 'クリア', en: 'Clear' },
+};
+
+function t(key) { const e = I18N[key]; return e ? (e[_adminLang] || e.ja) : key; }
+
+function applyLang() {
+  document.documentElement.lang = _adminLang;
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.getAttribute('data-i18n-ph')); });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.getAttribute('data-i18n-title')); });
+  // Logsタブ（iframe）にも言語を伝える
+  try {
+    const f = document.getElementById('logs-frame');
+    if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'mio-lang', lang: _adminLang }, '*');
+  } catch {}
+}
+
 function setLang(lang) {
   _adminLang = lang;
   localStorage.setItem('mio_admin_lang', lang);
+  applyLang();
   renderSettings();
 }
 
@@ -893,7 +943,7 @@ function renderFilterBar() {
     .map(([t]) => t);
   const bar = document.getElementById('filter-bar');
   bar.innerHTML =
-    `<button class="filter-btn${currentFilter === '全て' ? ' active' : ''}" onclick="setFilter('全て', this)">全て</button>` +
+    `<button class="filter-btn${currentFilter === '全て' ? ' active' : ''}" onclick="setFilter('全て', this)">${esc(t('filter.all'))}</button>` +
     topTags.map(t =>
       `<button class="filter-btn${currentFilter === t ? ' active' : ''}" onclick="setFilter('${esc(t)}', this)">${esc(t)}</button>`
     ).join('');
@@ -1873,6 +1923,8 @@ function copyTextToClipboard(text) {
 
 // ── Init ──────────────────────────────────────────────────────────────
 (async () => {
+  applyLang();  // M1-b: 起動時に言語を適用
+
   const params      = new URLSearchParams(location.search);
   const sharedId    = params.get('id');
   const sharedToken = params.get('token');
