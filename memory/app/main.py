@@ -1,8 +1,13 @@
 """
-mio-memory v3.26  —  Streamable HTTP MCP transport
+mio-memory v3.27  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.27 (2026-06-13) - inbox に from_model / to_model 属性追加（I3-b）
+    - inbox_post（MCP/REST）に from_model / to_model（任意・手動指定）を追加
+    - inbox_read / inbox_check / REST GET の返却に from_model / to_model を付与
+      （旧メッセージは _norm_inbox_models で null 既定。後方互換）
+    - 既存呼び出しは無変更で動作（任意フィールド追加のみ）
   v3.26 (2026-06-13) - admin.html 表示層UI 3件（U7/U6/U3-b・サーバーロジック非接触）
     - U7: タブを3系統にグループ化＋色分け（記憶系=青/会話系=緑/その他=橙）。
       グループ見出しラベル挿入＋系統別アクセント。色は :root の CSS変数で一括変更可
@@ -223,7 +228,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.26'
+VERSION = '3.27'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -977,11 +982,19 @@ def _load_inbox_messages(to=None, unread_only=False):
         msgs.append(msg)
     return msgs
 
-def _post_inbox_message(to, title, body, from_='code', persistent=False):
+def _norm_inbox_models(msg):
+    """from_model / to_model キーを補完する（v3.27。旧メッセージは null 既定）"""
+    msg.setdefault('from_model', None)
+    msg.setdefault('to_model', None)
+    return msg
+
+def _post_inbox_message(to, title, body, from_='code', persistent=False,
+                        from_model=None, to_model=None):
     os.makedirs(INBOX_DIR, exist_ok=True)
     now   = now_jst()
     msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
     msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
+           "from_model": from_model or None, "to_model": to_model or None,
            "created_at": now, "read": False, "persistent": persistent}
     with open(_inbox_path(msg_id), 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
@@ -998,7 +1011,7 @@ def _mark_inbox_read(msg_id):
         msg['read'] = True
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(msg, f, ensure_ascii=False, indent=2)
-    return msg
+    return _norm_inbox_models(msg)
 
 # ── 会話ログ注記（log_annotate, v3.22）──────────────────────────────
 # 生ログは不変。注記は /data/annotations/{uuid}.json に append-only で積む
@@ -1057,7 +1070,7 @@ def api_inbox_get(msg_id):
     if not os.path.exists(path):
         abort(404)
     with open(path, encoding='utf-8') as f:
-        return jsonify(json.load(f))
+        return jsonify(_norm_inbox_models(json.load(f)))
 
 @app.route('/api/inbox', methods=['POST'])
 @require_auth
@@ -1070,7 +1083,9 @@ def api_inbox_post():
         return jsonify({"error": "to and title are required"}), 400
     msg = _post_inbox_message(to=to, title=title, body=body,
                               from_=data.get('from', 'code'),
-                              persistent=bool(data.get('persistent', False)))
+                              persistent=bool(data.get('persistent', False)),
+                              from_model=data.get('from_model'),
+                              to_model=data.get('to_model'))
     return jsonify(msg), 201
 
 @app.route('/api/inbox/<msg_id>/read', methods=['PATCH'])
@@ -2546,7 +2561,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_check",
-        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージは persistent[] に本文ごと全件含まれるため inbox_read 不要。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す",
+        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージは persistent[] に本文ごと全件含まれるため inbox_read 不要。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す。各メッセージに from_model/to_model（なければ null）が付く",
         "inputSchema": {"type": "object", "properties": {
             "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"},
             "include_read": {"type": "boolean", "description": "trueの場合、既読メッセージも含める。レスポンスにmessages[]（id+read+title）が追加される。デフォルト: false"}
@@ -2561,12 +2576,14 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_post",
-        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）",
+        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）。from_model/to_model で送信元・宛先のモデル名を明示できる（任意）",
         "inputSchema": {"type": "object", "properties": {
             "to":         {"type": "string", "description": "宛先（'chat' または 'code'）"},
             "title":      {"type": "string", "description": "件名"},
             "body":       {"type": "string", "description": "本文"},
-            "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"}
+            "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"},
+            "from_model": {"type": "string", "description": "送信元モデル名（任意・手動指定。例: \"claude-opus-4-8\", \"claude-sonnet-4-6\"）。受け取り側が誰から来たか分かる"},
+            "to_model":   {"type": "string", "description": "宛先モデル名（任意・手動指定）。特定のモデルに宛てたい場合に使う"}
         }, "required": ["to", "title", "body"]}
     },
     {
@@ -2868,7 +2885,8 @@ def _handle_tool_call_raw(name, arguments):
         result["non_persistent_unread_ids"]   = [m['id'] for m in non_persistent_unread]
         result["persistent"] = [
             {"id": m['id'], "title": m.get('title', ''), "body": m.get('body', ''),
-             "created_at": m.get('created_at', '')}
+             "created_at": m.get('created_at', ''),
+             "from_model": m.get('from_model'), "to_model": m.get('to_model')}
             for m in msgs if m.get('persistent')
         ]
         if include_read:
@@ -2876,7 +2894,8 @@ def _handle_tool_call_raw(name, arguments):
             result["unread_count"] = unread_count
             result["messages"] = [
                 {"id": m['id'], "read": bool(m.get('read')), "persistent": bool(m.get('persistent')),
-                 "title": m.get('title', ''), "from": m.get('from', ''), "to": m.get('to', '')}
+                 "title": m.get('title', ''), "from": m.get('from', ''), "to": m.get('to', ''),
+                 "from_model": m.get('from_model'), "to_model": m.get('to_model')}
                 for m in msgs
             ]
         return result
@@ -2895,8 +2914,12 @@ def _handle_tool_call_raw(name, arguments):
         if not to or not title:
             return {"error": "to and title are required"}
         persistent = bool(arguments.get("persistent", False))
-        msg = _post_inbox_message(to=to, title=title, body=body, from_='code', persistent=persistent)
-        return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent}
+        msg = _post_inbox_message(to=to, title=title, body=body, from_='code',
+                                  persistent=persistent,
+                                  from_model=arguments.get("from_model"),
+                                  to_model=arguments.get("to_model"))
+        return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent,
+                "from_model": msg.get('from_model'), "to_model": msg.get('to_model')}
 
     elif name == "batch_run_summary_layers":
         if arguments.get("status_only"):

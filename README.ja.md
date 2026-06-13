@@ -134,7 +134,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.26","mcp_tool_count":18}
+# {"status":"ok","version":"3.27","mcp_tool_count":18}
 ```
 
 ### 5. Claude Code への登録
@@ -468,8 +468,10 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ### inbox_post
 
 ```
-引数: to（必須）, title（必須）, body（必須）, persistent（省略時false）
-返値: {id, created_at, persistent, server_time}
+引数: to（必須）, title（必須）, body（必須）, persistent（省略時false）,
+       from_model（省略可 — 送信元モデル名）, to_model（省略可 — 宛先モデル名）
+返値: {id, created_at, persistent, from_model, to_model, server_time}
+※ from_model/to_model は任意・手動指定（v3.27）。複数モデルが混在しても誰から来たか分かる
 ```
 
 ### inbox_check
@@ -479,12 +481,13 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
        include_read（省略可, bool, デフォルト false）
 返値（通常）:      {count: N, ids: [...],
                     non_persistent_unread_count: N1, non_persistent_unread_ids: [...],
-                    persistent: [{id, title, body, created_at}, ...], server_time}
+                    persistent: [{id, title, body, created_at, from_model, to_model}, ...], server_time}
 返値（include_read=true）: 上記 + {unread_count: N2,
-                             messages: [{id, read, persistent, title, from, to}, ...]}
+                             messages: [{id, read, persistent, title, from, to, from_model, to_model}, ...]}
 ※ persistent メッセージは既読でも count に含まれる
 ※ persistent[] には常駐メッセージが本文ごと全件含まれる（v3.20 — inbox_read 不要）
 ※ 非常駐の未読のみ non_persistent_unread_ids を inbox_read で読む
+※ from_model/to_model は旧メッセージでは null（v3.27 で追加）
 ※ include_read=true で既読の非常駐メッセージも IDs に含まれる
 ```
 

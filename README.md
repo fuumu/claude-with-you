@@ -31,7 +31,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.26","mcp_tool_count":18}
+# {"status":"ok","version":"3.27","mcp_tool_count":18}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -217,7 +217,7 @@ Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 |------|-------------|----------|
 | `inbox_check` | Get unread count + IDs; `persistent[]` includes standing messages with full bodies (v3.20, no `inbox_read` needed), plus `non_persistent_unread_count`/`_ids`; `include_read=true` adds `messages[]` metadata | `to`, `include_read` |
 | `inbox_read` | Fetch a message and mark as read | `id` |
-| `inbox_post` | Send a message | `to`, `title`, `body`, `persistent` |
+| `inbox_post` | Send a message; `from_model`/`to_model` optionally tag sender/recipient model (v3.27) | `to`, `title`, `body`, `persistent`, `from_model`, `to_model` |
 
 `persistent=true` creates a standing message that is never marked as read — useful for reminders that should appear every session.
 

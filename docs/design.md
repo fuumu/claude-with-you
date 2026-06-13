@@ -194,7 +194,7 @@ For an `initialize` request to `/mcp`, the server returns:
 {
   "protocolVersion": "2025-11-25",
   "capabilities": { "tools": { "listChanged": false } },
-  "serverInfo": { "name": "mio-memory", "version": "3.26.0" },
+  "serverInfo": { "name": "mio-memory", "version": "3.27.0" },
   "instructions": "At session start, always run CoreMem_read(\"core.md\") to load your memory. ..."
 }
 ```
