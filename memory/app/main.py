@@ -1,8 +1,15 @@
 """
-mio-memory v3.25  —  Streamable HTTP MCP transport
+mio-memory v3.26  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.26 (2026-06-13) - admin.html 表示層UI 3件（U7/U6/U3-b・サーバーロジック非接触）
+    - U7: タブを3系統にグループ化＋色分け（記憶系=青/会話系=緑/その他=橙）。
+      グループ見出しラベル挿入＋系統別アクセント。色は :root の CSS変数で一括変更可
+    - U6: メモリービューア（openMemory）のポップアップを一律マークダウン
+      レンダリング化（renderMarkdown / marked.js）。.md-body に white-space:normal 追加
+    - U3-b: モーダルのフローティング ↑↓ に「✕ 閉じる」追加。重複していた
+      ページ全体の「↑ TOP」ボタン（.top-btn）を削除（モーダル↑と機能重複）
   v3.25 (2026-06-12) - share HTTP 415 修正＋HTTPエラーログ
     - logs.html shareConv: POST に Content-Type: application/json と body('{}') を付与
     - サーバー側: share 系2エンドポイントの get_json を silent=True 化
@@ -216,7 +223,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.25'
+VERSION = '3.26'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'

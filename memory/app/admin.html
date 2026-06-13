@@ -12,6 +12,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* タブ系統別アクセントカラー（U7・仮置き。ここを変えれば一括で色が変わる） */
+    :root {
+      --grp-memory: #7c6af7;  /* 🧠 記憶系：Memory・Search・CoreMem */
+      --grp-conv:   #2ecc71;  /* 💬 会話系：Logs・Inbox・Files */
+      --grp-other:  #e6913c;  /* 👥 その他：Import・Oplog・Friends */
+    }
     body { font-family: 'Helvetica Neue', sans-serif; background: #1a1a2e; color: #c8d8e8; height: 100vh; overflow: hidden; }
 
     /* ── Auth ── */
@@ -41,15 +47,27 @@
     #token-status { font-size: .8rem; color: #5a6a7a; cursor: pointer; }
     #token-status:hover { color: #7c6af7; }
 
-    /* ── Tabs ── */
-    .tabs { display: flex; border-bottom: 1px solid #2a3a5a; background: #0f0f1a; padding: 0 1.5rem; }
+    /* ── Tabs (U7: 3系統グループ化・色分け) ── */
+    .tabs { display: flex; align-items: stretch; border-bottom: 1px solid #2a3a5a; background: #0f0f1a; padding: 0 1rem; overflow-x: auto; }
+    .tab-group-label {
+      display: flex; align-items: center; gap: .25rem;
+      font-size: .68rem; white-space: nowrap; padding: 0 .55rem 0 .7rem;
+      border-left: 1px solid #2a3a5a; opacity: .85; user-select: none;
+    }
+    .tabs > .tab-group-label:first-child { border-left: none; padding-left: .3rem; }
     .tab-btn {
-      padding: .75rem 1.25rem; background: none; border: none;
-      color: #7a8a9a; cursor: pointer; font-size: .9rem;
+      padding: .75rem 1rem; background: none; border: none;
+      color: #7a8a9a; cursor: pointer; font-size: .9rem; white-space: nowrap;
       border-bottom: 2px solid transparent; transition: color .2s;
     }
-    .tab-btn.active { color: #7c6af7; border-bottom-color: #7c6af7; }
     .tab-btn:hover  { color: #c8d8e8; }
+    /* 系統アクセント：ラベル色 + アクティブ時の文字色・下線 */
+    .grp-memory.tab-group-label { color: var(--grp-memory); }
+    .grp-conv.tab-group-label   { color: var(--grp-conv); }
+    .grp-other.tab-group-label  { color: var(--grp-other); }
+    .tab-btn.grp-memory.active { color: var(--grp-memory); border-bottom-color: var(--grp-memory); }
+    .tab-btn.grp-conv.active   { color: var(--grp-conv);   border-bottom-color: var(--grp-conv); }
+    .tab-btn.grp-other.active  { color: var(--grp-other);  border-bottom-color: var(--grp-other); }
     .tab-panel      { display: none; padding: 1.5rem; }
     .tab-panel.active { display: block; height: calc(100vh - 88px); overflow-y: auto; }
 
@@ -223,8 +241,10 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.4);
     }
     .modal-scroll-btn:hover { border-color: #7c6af7; color: #7c6af7; }
+    .modal-scroll-btn.close:hover { border-color: #e74c3c; color: #e74c3c; }
 
     /* Markdown */
+    .md-body { white-space: normal; }  /* pre-wrap を打ち消し、MDの二重改行を防ぐ */
     .md-body h1, .md-body h2, .md-body h3 { margin: 1rem 0 .5rem; color: #7c6af7; }
     .md-body p   { margin-bottom: .75rem; }
     .md-body code { background: #0f0f1a; padding: .1rem .3rem; border-radius: 3px; font-size: .85em; }
@@ -280,16 +300,6 @@
     .files-size  { color: #5a6a7a; font-size: .78rem; text-align: right; }
 
     /* ── TOP button ── */
-    .top-btn {
-      position: fixed; bottom: 5rem; right: 1.5rem;
-      width: 44px; height: 44px; border-radius: 50%;
-      background: #7c6af7; border: none; color: #fff; font-size: .72rem;
-      cursor: pointer; z-index: 50; opacity: 0; pointer-events: none;
-      box-shadow: 0 2px 10px rgba(0,0,0,.5);
-      transition: opacity .25s;
-    }
-    .top-btn.visible { opacity: 1; pointer-events: auto; }
-
     /* ── Oplog ── */
     .oplog-toolbar { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
     .oplog-count   { font-size: .8rem; color: #5a6a7a; margin-left: auto; }
@@ -407,15 +417,20 @@
 </header>
 
 <div class="tabs">
-  <button class="tab-btn active" onclick="switchTab('memory', this)">Memory</button>
-  <button class="tab-btn" onclick="switchTab('msearch', this)">Search</button>
-  <button class="tab-btn" onclick="switchTab('coremem', this)">CoreMem</button>
-  <button class="tab-btn" onclick="switchTab('import', this)">Import</button>
-  <button class="tab-btn" onclick="switchTab('oplog', this)">Oplog</button>
-  <button class="tab-btn" onclick="switchTab('files', this)">Files</button>
-  <button class="tab-btn" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
-  <button class="tab-btn" onclick="switchTab('friends', this)">Friends <span id="friends-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
-  <button class="tab-btn" onclick="switchTab('logs', this)">Logs</button>
+  <span class="tab-group-label grp-memory">🧠 記憶</span>
+  <button class="tab-btn grp-memory active" onclick="switchTab('memory', this)">Memory</button>
+  <button class="tab-btn grp-memory" onclick="switchTab('msearch', this)">Search</button>
+  <button class="tab-btn grp-memory" onclick="switchTab('coremem', this)">CoreMem</button>
+
+  <span class="tab-group-label grp-conv">💬 会話</span>
+  <button class="tab-btn grp-conv" onclick="switchTab('logs', this)">Logs</button>
+  <button class="tab-btn grp-conv" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
+  <button class="tab-btn grp-conv" onclick="switchTab('files', this)">Files</button>
+
+  <span class="tab-group-label grp-other">👥 その他</span>
+  <button class="tab-btn grp-other" onclick="switchTab('import', this)">Import</button>
+  <button class="tab-btn grp-other" onclick="switchTab('oplog', this)">Oplog</button>
+  <button class="tab-btn grp-other" onclick="switchTab('friends', this)">Friends <span id="friends-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
 </div>
 
 <!-- Memory tab -->
@@ -630,12 +645,10 @@
     <div class="modal-scroll-btns">
       <button class="modal-scroll-btn" onclick="modalScroll('top')" title="先頭へ">↑</button>
       <button class="modal-scroll-btn" onclick="modalScroll('bottom')" title="末尾へ">↓</button>
+      <button class="modal-scroll-btn close" onclick="closeModal()" title="閉じる">✕</button>
     </div>
   </div>
 </div>
-
-<!-- Floating TOP button -->
-<button class="top-btn" id="top-btn" onclick="scrollToTop()">↑ TOP</button>
 
 <script>
 const API = window.location.origin;
@@ -799,8 +812,8 @@ async function openMemory(id) {
     document.getElementById('modal-meta').textContent =
       `${date}　${(e.tags || []).join(' · ')}　importance: ${e.importance || 'normal'}`;
     const body = document.getElementById('modal-body');
-    body.className = 'modal-body';
-    body.textContent = e.body || '';
+    body.className = 'modal-body md-body';
+    body.innerHTML = renderMarkdown(e.body || '');
     setModalId(e.id || id);
     setModalLinks('');
     openModal();
@@ -1708,24 +1721,6 @@ function openModal() {
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
-// ── TOP button ────────────────────────────────────────────────────────
-function scrollToTop() {
-  const active = document.querySelector('.tab-panel.active');
-  if (active) active.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-document.querySelectorAll('.tab-panel').forEach(panel => {
-  panel.addEventListener('scroll', () => {
-    const btn    = document.getElementById('top-btn');
-    const active = document.querySelector('.tab-panel.active');
-    if (active && active.scrollTop > 300) {
-      btn.classList.add('visible');
-    } else {
-      btn.classList.remove('visible');
-    }
-  });
-});
 
 // ── Util ──────────────────────────────────────────────────────────────
 function esc(s) {
