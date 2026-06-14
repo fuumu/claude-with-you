@@ -176,7 +176,7 @@ Versioned file storage (NAS file store). Every save creates a new version; the l
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `CoreMem_save` | Save a file (new version) | `name`, `content`, `source_conversation_uuid` |
+| `CoreMem_save` | Save a file (new version); `mode="append"` appends to the existing content with an automatic separator (v3.31/v3.32) | `name`, `content`, `source_conversation_uuid`, `mode` |
 | `CoreMem_read` | Read latest or specific version; if `{stem}_manifest.md` exists, returns split files merged with `<!-- BEGIN/END: file -->` separators (v3.21) | `name`, `version` |
 | `CoreMem_list` | List all files | — |
 | `CoreMem_delete` | Delete a file and all its versions | `name` |
@@ -189,14 +189,15 @@ CoreMem_save(name="config.md", content="# Config\n...", source_conversation_uuid
 → {"name": "config.md", "version": 2, "server_time": "..."}
 ```
 
-### Conversation tools (4)
+### Conversation tools (5)
 
 Browse, share, and annotate past conversations imported from Claude.ai export ZIPs.
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `conversation_search` | Search conversation titles | `q`, `limit` |
-| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations` |
+| `conversation_index` | List conversation titles in descending date order with pagination — for browsing when UUID is unknown (v3.34); REST: `GET /api/conversations/index`, rebuild: `POST /api/conversations/index/rebuild` | `search`, `limit`, `offset` |
+| `conversation_search` | Search conversation titles by keyword and date range | `q`, `limit` |
+| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22); `include_body=false` returns annotations only without message body (v3.33) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations`, `include_body` |
 | `conversation_share` | Generate 24h shareable URL (`/share.html?token=` — standalone read-only viewer, v3.23) | `uuid` |
 | `log_annotate` | Append-only audit annotation on a conversation; raw logs never change, stored in `/data/annotations/{uuid}.json` (v3.22) | `uuid`, `note`, `author`, `target` |
 
@@ -474,13 +475,23 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.17)**
+**Implemented (v3.9–v3.34)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
 - Summary batch improvements — LMStudio fallback auto-start after import, `batch_run_summary_layers` MCP tool (v3.15)
 - Nightly auto-batch — daily raw-entry check and auto-run (`MIO_NIGHTLY_BATCH_HOUR`, v3.16)
 - Layer-4 keywords + hierarchical search — LLM-generated `keywords` field, 3-stage `memory_search` returning summaries (v3.17)
+- Friends tab improvements — activation URL display, manual email button, direct registration form (v3.18)
+- admin.html Search tab — 4-column accordion viewer with keyword aggregation (v3.19)
+- inbox improvements — `persistent[]` with full bodies, thinking block support (v3.20)
+- CoreMem split+merge read via manifest files (v3.21)
+- `log_annotate` + `conversation_read` `include_annotations`/`thinking_limit` args (v3.22)
+- Conversation share URL generation via `/share.html?token=` (v3.23); various admin UI improvements (v3.24–v3.26)
+- `from_model`/`to_model` fields for inbox messages (v3.27); admin.html i18n and tab improvements (v3.28–v3.30)
+- `CoreMem_save` `mode="append"` with automatic separator insertion (v3.31/v3.32)
+- `conversation_read` `include_body=false` to return annotations only without message body (v3.33)
+- `conversation_index` MCP tool + `GET /api/conversations/index` REST endpoint (v3.34)
 
 ---
 
