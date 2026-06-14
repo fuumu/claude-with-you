@@ -1216,8 +1216,8 @@ def api_inbox_list():
 @app.route('/api/inbox/<msg_id>', methods=['GET'])
 @require_auth
 def api_inbox_get(msg_id):
-    path = _inbox_path(msg_id)
-    if not os.path.exists(path):
+    path = _find_inbox_file(msg_id)
+    if not path:
         abort(404)
     with open(path, encoding='utf-8') as f:
         return jsonify(_norm_inbox_models(json.load(f)))
