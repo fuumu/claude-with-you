@@ -1,8 +1,14 @@
 """
-mio-memory v3.35  —  Streamable HTTP MCP transport
+mio-memory v3.36  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.36 (2026-06-14) - 友達用inboxチャネル追加
+    - inbox に friend:{token} 宛先を追加（/data/inbox/friend/{token}/ に分離保存）
+    - _inbox_dir() ヘルパー追加、_find_inbox_file() で全ディレクトリ横断検索
+    - 友人セッション用 MCP ツール追加: friend_inbox_check / friend_inbox_read
+    - inbox_post の to スキーマに 'friend:{token}' を明示
+    - 友人セッション認証時に friend dict へ token フィールドをエフェメラル注入
   v3.35 (2026-06-14) - L2候補: Logsタブ 本文検索対応
     - GET /api/conversations/ に body_search=true パラメータ追加
       （キーワードが全会話JSONの本文テキストとマッチするものを返す）
@@ -274,7 +280,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.35'
+VERSION = '3.36'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1086,16 +1092,36 @@ def get_shared_entry(token):
 
 # ── インボックス ──────────────────────────────────────────────────────
 
-def _inbox_path(msg_id):
-    return os.path.join(INBOX_DIR, f'{msg_id}.json')
+def _inbox_dir(to=None):
+    """to 値に対応するディレクトリを返す。friend:{token} は /data/inbox/friend/{token}/ に分離"""
+    if to and to.startswith('friend:'):
+        return os.path.join(INBOX_DIR, 'friend', to[len('friend:'):])
+    return INBOX_DIR
+
+def _inbox_path(msg_id, to=None):
+    return os.path.join(_inbox_dir(to), f'{msg_id}.json')
+
+def _find_inbox_file(msg_id):
+    """msg_id のファイルをフラット + friend サブディレクトリから検索する"""
+    p = os.path.join(INBOX_DIR, f'{msg_id}.json')
+    if os.path.exists(p):
+        return p
+    friend_root = os.path.join(INBOX_DIR, 'friend')
+    if os.path.isdir(friend_root):
+        for sub in os.listdir(friend_root):
+            p = os.path.join(friend_root, sub, f'{msg_id}.json')
+            if os.path.exists(p):
+                return p
+    return None
 
 def _load_inbox_messages(to=None, unread_only=False):
-    os.makedirs(INBOX_DIR, exist_ok=True)
+    dir_ = _inbox_dir(to)
+    os.makedirs(dir_, exist_ok=True)
     msgs = []
-    for fname in sorted(os.listdir(INBOX_DIR)):
+    for fname in sorted(os.listdir(dir_)):
         if not fname.endswith('.json'):
             continue
-        with open(os.path.join(INBOX_DIR, fname), encoding='utf-8') as f:
+        with open(os.path.join(dir_, fname), encoding='utf-8') as f:
             msg = json.load(f)
         if to and msg.get('to') != to:
             continue
@@ -1113,19 +1139,20 @@ def _norm_inbox_models(msg):
 
 def _post_inbox_message(to, title, body, from_='code', persistent=False,
                         from_model=None, to_model=None):
-    os.makedirs(INBOX_DIR, exist_ok=True)
+    dir_ = _inbox_dir(to)
+    os.makedirs(dir_, exist_ok=True)
     now   = now_jst()
     msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
     msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
            "from_model": from_model or None, "to_model": to_model or None,
            "created_at": now, "read": False, "persistent": persistent}
-    with open(_inbox_path(msg_id), 'w', encoding='utf-8') as f:
+    with open(os.path.join(dir_, f'{msg_id}.json'), 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
     return msg
 
 def _mark_inbox_read(msg_id):
-    path = _inbox_path(msg_id)
-    if not os.path.exists(path):
+    path = _find_inbox_file(msg_id)
+    if not path:
         return None
     with open(path, encoding='utf-8') as f:
         msg = json.load(f)
@@ -1507,6 +1534,30 @@ def _handle_friend_tool_call(name, arguments, friend):
             return {"error": "note is required"}
         msg = _post_inbox_message(to='chat', title='【澪メモ】', body=note, from_='friend')
         return {"ok": True, "id": msg['id']}
+
+    elif name == "friend_inbox_check":
+        to = f'friend:{friend["token"]}'
+        msgs = _load_inbox_messages(to=to, unread_only=True)
+        unread = [m for m in msgs if not m.get('read') and not m.get('persistent')]
+        result = {
+            "non_persistent_unread_count": len(unread),
+            "non_persistent_unread_ids":   [m['id'] for m in unread],
+            "persistent": [
+                {"id": m['id'], "title": m['title'], "body": m['body'],
+                 "created_at": m['created_at'], "from_model": m.get('from_model'),
+                 "to_model": m.get('to_model')}
+                for m in msgs if m.get('persistent')
+            ],
+            "server_time": now_jst(),
+        }
+        return result
+
+    elif name == "friend_inbox_read":
+        msg_id = arguments.get("id", "")
+        msg = _mark_inbox_read(msg_id)
+        if msg is None:
+            return {"error": f"message not found: {msg_id}"}
+        return msg
 
     return {"error": f"unknown friend tool: {name}"}
 
@@ -2712,7 +2763,7 @@ _MCP_TOOLS = [
         "name": "inbox_post",
         "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）。from_model/to_model で送信元・宛先のモデル名を明示できる（任意）",
         "inputSchema": {"type": "object", "properties": {
-            "to":         {"type": "string", "description": "宛先（'chat' または 'code'）"},
+            "to":         {"type": "string", "description": "宛先（'chat' / 'code' / 'friend:{token}' — 特定の友人向け）"},
             "title":      {"type": "string", "description": "件名"},
             "body":       {"type": "string", "description": "本文"},
             "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"},
@@ -2758,6 +2809,18 @@ _FRIEND_MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "note": {"type": "string", "description": "気づきの内容（固有名詞・具体エピソードなし、抽象化必須）"}
         }, "required": ["note"]}
+    },
+    {
+        "name": "friend_inbox_check",
+        "description": "自分宛の受信BOXを確認する（澪から届いたメッセージ）。未読メッセージの件数・IDリストを返す",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "friend_inbox_read",
+        "description": "受信BOXの特定メッセージを取得して既読にする",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "friend_inbox_check で取得したメッセージID"}
+        }, "required": ["id"]}
     }
 ]
 
@@ -3174,7 +3237,8 @@ def mcp_streamable():
             if raw_token in reg:
                 reg[raw_token]['last_seen'] = now_jst()
                 _save_friends_registry(reg)
-                _friend = reg[raw_token]
+                _friend = dict(reg[raw_token])
+                _friend['token'] = raw_token  # friend_inbox_check 等で使用
         except Exception:
             pass
     elif _verify_token(raw_token):
