@@ -1,8 +1,12 @@
 """
-mio-memory v3.32  —  Streamable HTTP MCP transport
+mio-memory v3.33  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.33 (2026-06-14) - conversation_read include_body 引数追加
+    - include_body=false で本文を省略し注記のみ返す（include_annotations=true と併用）
+    - デフォルト: true（従来通り本文を返す・後方互換）
+    - 注記が付いているがテキストが空のメッセージも include_body=false 時に出力対象になる
   v3.32 (2026-06-14) - CoreMem_save append セパレーター自動挿入
     - mode="append" 時に "\n---\n<!-- APPEND {datetime} -->\n" を自動挿入
     - 追記分と元本文の境界を明示。整理時の目印として活用可能
@@ -260,7 +264,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.32'
+VERSION = '3.33'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2583,12 +2587,13 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_read",
-        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）",
+        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）。include_body=falseで本文を省略し注記のみ取得可能",
         "inputSchema": {"type": "object", "properties": {
             "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
             "include_thinking": {"type": "boolean", "description": "trueの場合、thinkingブロックも💭[thinking]マーカー付きで含める。デフォルト: false"},
             "thinking_limit": {"type": "integer", "description": "thinking 1件あたりの文字数上限（デフォルト1500、0以下で無制限）"},
-            "include_annotations": {"type": "boolean", "description": "trueの場合、log_annotateで積んだ注記を該当位置にインライン表示し、各メッセージに[No.X]通番を付ける。デフォルト: false"}
+            "include_annotations": {"type": "boolean", "description": "trueの場合、log_annotateで積んだ注記を該当位置にインライン表示し、各メッセージに[No.X]通番を付ける。デフォルト: false"},
+            "include_body": {"type": "boolean", "description": "falseの場合、本文を省略し注記のみ返す（include_annotations=trueと併用）。デフォルト: true"}
         }, "required": ["uuid"]}
     },
     {
@@ -2834,6 +2839,7 @@ def _handle_tool_call_raw(name, arguments):
         uid   = arguments.get("uuid", "")
         include_thinking    = bool(arguments.get("include_thinking", False))
         include_annotations = bool(arguments.get("include_annotations", False))
+        include_body        = bool(arguments.get("include_body", True))
         raw_tl = arguments.get("thinking_limit")
         thinking_limit = int(raw_tl) if raw_tl is not None else 1500  # 0 / 負数 = 無制限
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
@@ -2879,13 +2885,19 @@ def _handle_tool_call_raw(name, arguments):
                                 text += f'\n💭[thinking]\n{tt}\n[/thinking]\n'
             else:
                 text = str(content)
-            if text.strip():
+            has_ann = no in ann_by_no
+            if include_body and text.strip():
                 body = text[:msg_cap] if msg_cap else text
                 prefix = f'[No.{no}][{role}]' if include_annotations else f'[{role}]'
                 line = f'{prefix} {body}'
-                if no in ann_by_no:
+                if has_ann:
                     emitted_nos.add(no)
                     line += '\n' + '\n'.join(_format_annotation(a) for a in ann_by_no[no])
+                lines.append(line)
+            elif not include_body and has_ann:
+                emitted_nos.add(no)
+                prefix = f'[No.{no}][{role}]'
+                line = prefix + '\n' + '\n'.join(_format_annotation(a) for a in ann_by_no[no])
                 lines.append(line)
         title  = conv.get('name') or conv.get('title') or '無題'
         result = f'# {title}\n\n'
