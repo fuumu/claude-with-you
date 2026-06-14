@@ -1,8 +1,13 @@
 """
-mio-memory v3.33  —  Streamable HTTP MCP transport
+mio-memory v3.34  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.34 (2026-06-14) - S2: 会話インデックス GETエンドポイント
+    - GET /api/conversations/index — limit/offset/search でページネーション取得
+    - POST /api/conversations/index/rebuild — _index.json を実ファイルから再構築
+    - MCP ツール conversation_index 追加（タイトル一覧・日付降順ブラウズ用）
+    - インポート時の自動更新は既存 _save_conversations で担保済み
   v3.33 (2026-06-14) - conversation_read include_body 引数追加
     - include_body=false で本文を省略し注記のみ返す（include_annotations=true と併用）
     - デフォルト: true（従来通り本文を返す・後方互換）
@@ -264,7 +269,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.33'
+VERSION = '3.34'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -666,6 +671,51 @@ def api_conversations_search():
         index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= to_ + 'T23:59:59']
     index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     return jsonify(index[:limit])
+
+@app.route('/api/conversations/index')
+@require_auth
+def api_conversations_index():
+    search = request.args.get('search', '').lower()
+    limit  = min(int(request.args.get('limit',  50)), 500)
+    offset = max(int(request.args.get('offset',  0)), 0)
+    index  = _load_conv_index()
+    if search:
+        index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+    index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
+    total  = len(index)
+    items  = index[offset:offset + limit]
+    return jsonify({'total': total, 'offset': offset, 'limit': limit, 'items': items})
+
+@app.route('/api/conversations/index/rebuild', methods=['POST'])
+@require_auth
+def api_conversations_index_rebuild():
+    rebuilt = 0
+    new_index = []
+    if os.path.isdir(CONVERSATIONS_DIR):
+        for fname in os.listdir(CONVERSATIONS_DIR):
+            if not fname.endswith('.json') or fname.startswith('_'):
+                continue
+            fpath = os.path.join(CONVERSATIONS_DIR, fname)
+            try:
+                with open(fpath, encoding='utf-8') as f:
+                    conv = json.load(f)
+            except Exception:
+                continue
+            uid = conv.get('uuid') or conv.get('id', '')
+            if not uid:
+                uid = fname[:-5]
+            new_index.append({
+                'uuid':          uid,
+                'title':         conv.get('name') or conv.get('title') or uid[:8],
+                'created_at':    conv.get('created_at', ''),
+                'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
+                'message_count': len(conv.get('chat_messages') or []),
+            })
+            rebuilt += 1
+    new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
+    _save_conv_index(new_index)
+    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt}')
+    return jsonify({'rebuilt': rebuilt})
 
 @app.route('/api/conversations/<uuid>')
 @require_auth
@@ -2562,6 +2612,15 @@ _MCP_TOOLS = [
         }, "required": ["name"]}
     },
     {
+        "name": "conversation_index",
+        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。キーワード全文検索はconversation_search、中身の取得はconversation_read",
+        "inputSchema": {"type": "object", "properties": {
+            "search": {"type": "string",  "description": "タイトルに対する部分一致フィルタ（省略可）"},
+            "limit":  {"type": "integer", "description": "最大取得件数（デフォルト50、最大500）"},
+            "offset": {"type": "integer", "description": "スキップ件数（ページネーション用、デフォルト0）"}
+        }, "required": []}
+    },
+    {
         "name": "conversation_search",
         "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数）を返す",
         "inputSchema": {"type": "object", "properties": {
@@ -2793,6 +2852,18 @@ def _handle_tool_call_raw(name, arguments):
             shutil.rmtree(versions_dir)
         _log_info(f'CoreMem_delete via MCP: {n}')
         return {"deleted": n, "server_time": now_jst()}
+
+    elif name == "conversation_index":
+        search = arguments.get("search", "").lower()
+        limit  = min(int(arguments.get("limit",  50)), 500)
+        offset = max(int(arguments.get("offset",  0)), 0)
+        index  = _load_conv_index()
+        if search:
+            index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+        index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
+        total = len(index)
+        items = index[offset:offset + limit]
+        return {"total": total, "offset": offset, "limit": limit, "items": items, "server_time": now_jst()}
 
     elif name == "conversation_search":
         q         = arguments.get("q", "").lower()
