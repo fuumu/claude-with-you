@@ -1,8 +1,11 @@
 """
-mio-memory v3.31  —  Streamable HTTP MCP transport
+mio-memory v3.32  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.32 (2026-06-14) - CoreMem_save append セパレーター自動挿入
+    - mode="append" 時に "\n---\n<!-- APPEND {datetime} -->\n" を自動挿入
+    - 追記分と元本文の境界を明示。整理時の目印として活用可能
   v3.31 (2026-06-14) - CoreMem_save append モード追加
     - CoreMem_save に mode 引数追加（"overwrite"（デフォルト） / "append"）
     - mode="append" 時は既存ファイル末尾に追記して新バージョンとして保存
@@ -257,7 +260,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.31'
+VERSION = '3.32'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -492,7 +495,9 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
         if os.path.exists(symlink_path):
             with open(symlink_path, 'r', encoding='utf-8') as f:
                 existing_content = f.read()
-            content = existing_content + content
+            import datetime as _dt
+            ts = _dt.datetime.now().strftime('%Y-%m-%dT%H:%M')
+            content = existing_content + f'\n---\n<!-- APPEND {ts} -->\n' + content
 
     with open(version_path, 'w', encoding='utf-8') as f:
         f.write(content)
