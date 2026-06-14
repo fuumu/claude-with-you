@@ -1,8 +1,13 @@
 """
-mio-memory v3.36  —  Streamable HTTP MCP transport
+mio-memory v3.37  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.37 (2026-06-15) - CoreMem_delete にリネーム機能追加
+    - src+dst 指定で OS rename()によるサーバー側リネーム（内容の読み書きなし）
+    - versions ディレクトリをまるごと移動。拡張子変更時はバージョンファイルも追随
+    - name 指定の従来の削除動作は後方互換で維持
+    - MCPスキーマ更新（name: required外し、src/dst を追加）
   v3.36 (2026-06-14) - 友達用inboxチャネル追加
     - inbox に friend:{token} 宛先を追加（/data/inbox/friend/{token}/ に分離保存）
     - _inbox_dir() ヘルパー追加、_find_inbox_file() で全ディレクトリ横断検索
@@ -280,7 +285,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.36'
+VERSION = '3.37'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2685,10 +2690,12 @@ _MCP_TOOLS = [
     },
     {
         "name": "CoreMem_delete",
-        "description": "UserCoreMemoryからファイルをバージョン履歴ごと完全削除する",
+        "description": "UserCoreMemoryからファイルを削除またはリネームする。name指定→バージョン履歴ごと完全削除。src+dst指定→サーバー側リネーム（内容の読み書きなし）",
         "inputSchema": {"type": "object", "properties": {
-            "name": {"type": "string", "description": "削除するファイル名（例: test_iframe.html）"}
-        }, "required": ["name"]}
+            "name": {"type": "string", "description": "削除するファイル名（例: old.md）。src/dst 未指定時に使用"},
+            "src":  {"type": "string", "description": "リネーム元ファイル名（dst と一緒に指定）"},
+            "dst":  {"type": "string", "description": "リネーム先ファイル名（src と一緒に指定）"}
+        }, "required": []}
     },
     {
         "name": "conversation_index",
@@ -2927,9 +2934,49 @@ def _handle_tool_call_raw(name, arguments):
         return _artifacts_list()
 
     elif name == "CoreMem_delete":
-        n = arguments.get("name", "")
+        src = arguments.get("src", "")
+        dst = arguments.get("dst", "")
+        n   = arguments.get("name", "")
+
+        if src or dst:
+            # rename モード
+            if not src or not dst:
+                return {"error": "src と dst は両方必須です"}
+            if not _validate_artifact_name(src) or not _validate_artifact_name(dst):
+                return {"error": "invalid name"}
+            src_sym = os.path.join(ARTIFACTS_DIR, src)
+            dst_sym = os.path.join(ARTIFACTS_DIR, dst)
+            if not os.path.islink(src_sym) and not os.path.exists(src_sym):
+                return {"error": f"not found: {src}"}
+            if os.path.exists(dst_sym):
+                return {"error": f"already exists: {dst}"}
+            src_slug = _name_slug(src)
+            dst_slug = _name_slug(dst)
+            src_ext  = os.path.splitext(src)[1]
+            dst_ext  = os.path.splitext(dst)[1]
+            src_vdir = os.path.join(ARTIFACTS_DIR, 'versions', src_slug)
+            dst_vdir = os.path.join(ARTIFACTS_DIR, 'versions', dst_slug)
+            if os.path.isdir(src_vdir):
+                os.rename(src_vdir, dst_vdir)
+                if src_ext != dst_ext:
+                    for fname in sorted(os.listdir(dst_vdir)):
+                        if fname.endswith(src_ext):
+                            os.rename(
+                                os.path.join(dst_vdir, fname),
+                                os.path.join(dst_vdir, fname[:-len(src_ext)] + dst_ext)
+                            )
+            if os.path.islink(src_sym):
+                os.remove(src_sym)
+            if os.path.isdir(dst_vdir):
+                existing = sorted(glob.glob(os.path.join(dst_vdir, f'*{dst_ext}')))
+                if existing:
+                    os.symlink(existing[-1], dst_sym)
+            _log_info(f'CoreMem_rename via MCP: {src} → {dst}')
+            return {"renamed": True, "src": src, "dst": dst, "server_time": now_jst()}
+
+        # delete モード（従来通り）
         if not n:
-            return {"error": "name is required"}
+            return {"error": "name は必須です（削除: name / リネーム: src+dst）"}
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
         symlink_path = os.path.join(ARTIFACTS_DIR, n)
