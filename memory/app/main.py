@@ -1,8 +1,13 @@
 """
-mio-memory v3.34  —  Streamable HTTP MCP transport
+mio-memory v3.35  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.35 (2026-06-14) - L2候補: Logsタブ 本文検索対応
+    - GET /api/conversations/ に body_search=true パラメータ追加
+      （キーワードが全会話JSONの本文テキストとマッチするものを返す）
+    - logs.html: 検索欄に「📄 本文も検索」チェックボックス追加
+    - 本文検索中は「本文検索中（少し時間がかかります）...」ステータス表示
   v3.34 (2026-06-14) - S2: 会話インデックス GETエンドポイント
     - GET /api/conversations/index — limit/offset/search でページネーション取得
     - POST /api/conversations/index/rebuild — _index.json を実ファイルから再構築
@@ -269,7 +274,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.34'
+VERSION = '3.35'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -658,17 +663,40 @@ def api_import_status():
 @app.route('/api/conversations/')
 @require_auth
 def api_conversations_search():
-    q      = request.args.get('q', '').lower()
-    from_  = request.args.get('from', '')
-    to_    = request.args.get('to', '')
-    limit  = min(int(request.args.get('limit', 20)), 200)
+    q           = request.args.get('q', '').lower()
+    from_       = request.args.get('from', '')
+    to_         = request.args.get('to', '')
+    limit       = min(int(request.args.get('limit', 20)), 1200)
+    body_search = request.args.get('body_search', 'false').lower() == 'true'
     index  = _load_conv_index()
-    if q:
+    if q and not body_search:
         index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
     if from_:
         index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) >= from_]
     if to_:
         index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= to_ + 'T23:59:59']
+    if q and body_search:
+        def _conv_matches(entry):
+            if q in (entry.get('title', '') + ' ' + entry.get('uuid', '')).lower():
+                return True
+            fpath = os.path.join(CONVERSATIONS_DIR, f'{entry["uuid"]}.json')
+            if not os.path.exists(fpath):
+                return False
+            try:
+                with open(fpath, encoding='utf-8') as f:
+                    conv = json.load(f)
+                for m in conv.get('chat_messages', []):
+                    content = m.get('content') or m.get('text') or ''
+                    if isinstance(content, list):
+                        text = ' '.join(c.get('text', '') for c in content if isinstance(c, dict) and c.get('type') == 'text')
+                    else:
+                        text = str(content)
+                    if q in text.lower():
+                        return True
+            except Exception:
+                pass
+            return False
+        index = [e for e in index if _conv_matches(e)]
     index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     return jsonify(index[:limit])
 

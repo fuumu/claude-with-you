@@ -316,6 +316,10 @@
           </div>
         </div>
         <div class="filter-row">
+          <label></label>
+          <label class="fav-filter-row"><input type="checkbox" id="body-search" onchange="applyFilters()"> <span data-i18n="bodysearch">📄 本文も検索</span></label>
+        </div>
+        <div class="filter-row">
           <label>From</label>
           <input type="date" id="date-from" onchange="applyFilters()" style="flex:1">
           <label style="margin-left:.25rem">To</label>
@@ -453,19 +457,21 @@ async function apiFetch(path, options = {}) {
 let _filterTimer = null;
 
 async function loadConversations() {
-  const kw       = document.getElementById('keyword-input').value.trim();
-  const dateFrom = document.getElementById('date-from').value;
-  const dateTo   = document.getElementById('date-to').value;
-  const minCount = parseInt(document.getElementById('min-count').value) || 0;
-  const sort     = document.getElementById('sort-select').value;
+  const kw         = document.getElementById('keyword-input').value.trim();
+  const dateFrom   = document.getElementById('date-from').value;
+  const dateTo     = document.getElementById('date-to').value;
+  const minCount   = parseInt(document.getElementById('min-count').value) || 0;
+  const sort       = document.getElementById('sort-select').value;
+  const bodySearch = document.getElementById('body-search').checked;
 
-  document.getElementById('load-status').textContent = '読み込み中...';
+  document.getElementById('load-status').textContent = bodySearch && kw ? '本文検索中（少し時間がかかります）...' : '読み込み中...';
   document.getElementById('conv-list').innerHTML =
     '<div class="empty-state"><span class="icon">💬</span><span class="hint">読み込み中...</span></div>';
 
   let path = '/api/conversations/?limit=1000';
-  if (kw)       path += '&q='    + encodeURIComponent(kw);
-  if (dateFrom) path += '&from=' + encodeURIComponent(dateFrom);
+  if (kw)                   path += '&q='           + encodeURIComponent(kw);
+  if (dateFrom)             path += '&from='        + encodeURIComponent(dateFrom);
+  if (bodySearch && kw)     path += '&body_search=true';
   if (dateTo)   path += '&to='   + encodeURIComponent(dateTo);
 
   try {
@@ -1062,6 +1068,7 @@ const I18N = {
   'min':             { ja: '最小件数', en: 'Min count' },
   'fontsize':        { ja: '文字サイズ', en: 'Font size' },
   'favonly':         { ja: '☆ お気に入りのみ表示', en: '☆ Favorites only' },
+  'bodysearch':      { ja: '📄 本文も検索', en: '📄 Search in body' },
   'btn.share':       { ja: '🔗 共有', en: '🔗 Share' },
   'thinking.show':   { ja: '🧠 思考を表示', en: '🧠 Show thinking' },
   'thinking.hide':   { ja: '🧠 思考を非表示', en: '🧠 Hide thinking' },
