@@ -1,8 +1,12 @@
 """
-mio-memory v3.30  —  Streamable HTTP MCP transport
+mio-memory v3.31  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.31 (2026-06-14) - CoreMem_save append モード追加
+    - CoreMem_save に mode 引数追加（"overwrite"（デフォルト） / "append"）
+    - mode="append" 時は既存ファイル末尾に追記して新バージョンとして保存
+    - 後方互換：mode 省略時は従来通りの全文書き換え
   v3.30 (2026-06-13) - i18n水平展開（M1-b・サーバーロジック非接触）
     - data-i18n 属性ベースの汎用 i18n に発展（M1の言語トグルの延長）。
       ⚙️メニューのトグルで admin.html 全体が日英切替（グループ見出し・ヘッダー・
@@ -253,7 +257,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.30'
+VERSION = '3.31'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -470,7 +474,7 @@ def _validate_artifact_name(name: str) -> bool:
     norm = os.path.normpath(name)
     return not (norm.startswith('..') or os.path.isabs(norm))
 
-def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None) -> dict:
+def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None, mode: str = "overwrite") -> dict:
     name_slug = _name_slug(name)
     ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
 
@@ -482,6 +486,13 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
     next_num = int(os.path.splitext(os.path.basename(existing[-1]))[0]) + 1 if existing else 1
     version_filename = f'{next_num:03d}{ext}'
     version_path = os.path.join(versions_dir, version_filename)
+
+    if mode == "append" and existing:
+        symlink_path = os.path.join(ARTIFACTS_DIR, name)
+        if os.path.exists(symlink_path):
+            with open(symlink_path, 'r', encoding='utf-8') as f:
+                existing_content = f.read()
+            content = existing_content + content
 
     with open(version_path, 'w', encoding='utf-8') as f:
         f.write(content)
@@ -2505,12 +2516,13 @@ _MCP_TOOLS = [
     },
     {
         "name": "CoreMem_save",
-        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う",
+        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う。mode=\"append\"で既存ファイルの末尾に追記（新バージョンとして保存）",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name":    {"type": "string", "description": "ファイル名（例: core.md、script.sh）"},
                 "content": {"type": "string"},
+                "mode":    {"type": "string", "description": "\"overwrite\"（デフォルト・全文書き換え）または \"append\"（既存末尾に追記）"},
                 "source_conversation_uuid": {"type": "string", "description": "このファイルが生まれた会話のUUID（省略可）"}
             },
             "required": ["name", "content"]
@@ -2737,7 +2749,7 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": "name is required"}
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
-        return _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"))
+        return _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=arguments.get("mode", "overwrite"))
 
     elif name == "CoreMem_read":
         n = arguments.get("name", "")
