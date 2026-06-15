@@ -376,6 +376,10 @@
     .inbox-action-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
     .inbox-action-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
     .inbox-reply { border-style:dashed; opacity:.92; }
+    .inbox-group-toggle { font-size:.65rem; color:#5a6a7a; flex-shrink:0; margin-right:.25rem; cursor:pointer; }
+    .inbox-item.has-children { cursor:default; }
+    .inbox-open-btn { font-size:.72rem; padding:.1rem .4rem; background:none; border:1px solid #3a4a6a; border-radius:4px; color:#7ec8e3; cursor:pointer; flex-shrink:0; margin-left:.35rem; }
+    .inbox-open-btn:hover { border-color:#7ec8e3; }
 
     /* ── Memory Search (U5) ── */
     .ms-main { display:flex; gap:.7rem; height:calc(100vh - 195px); min-height:300px; }
@@ -1226,6 +1230,13 @@ let _inboxFilter    = 'all';
 let _inboxData      = [];
 let _inboxSortAsc    = false;      // false = 新→古（デフォルト）
 let _inboxUnreadOnly = false;
+let _collapsedGroups = new Set();
+
+function toggleGroup(id) {
+  if (_collapsedGroups.has(id)) _collapsedGroups.delete(id);
+  else _collapsedGroups.add(id);
+  renderInbox();
+}
 
 function setInboxFilter(filter, btn) {
   _inboxFilter = filter;
@@ -1311,21 +1322,36 @@ function renderInbox() {
   const roots = sorted.filter(m => !m.reply_to_id || !idSet.has(m.reply_to_id));
 
   function renderItem(m, depth) {
-    const ts       = (m.created_at || '').slice(0, 19).replace('T', ' ');
-    const stateCls = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
-    const badge    = m.persistent
+    const ts          = (m.created_at || '').slice(0, 19).replace('T', ' ');
+    const stateCls    = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
+    const badge       = m.persistent
       ? '<span class="inbox-badge-persistent">常駐</span>'
       : (!m.read ? '<span class="inbox-badge-unread">未読</span>' : '');
-    const fromStr  = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
-    const toStr    = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
-    const indent   = depth > 0 ? ` style="margin-left:${depth * 1.25}rem"` : '';
-    const children = (replyMap[m.id] || []).map(c => renderItem(c, depth + 1)).join('');
+    const fromStr     = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
+    const toStr       = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
+    const indent      = depth > 0 ? ` style="margin-left:${depth * 1.25}rem"` : '';
+    const childItems  = replyMap[m.id] || [];
+    const hasChildren = depth === 0 && childItems.length > 0;
+
+    if (hasChildren) {
+      const collapsed    = _collapsedGroups.has(m.id);
+      const childrenHtml = collapsed ? '' : childItems.map(c => renderItem(c, depth + 1)).join('');
+      return `<div class="inbox-item ${stateCls} has-children" id="inbox-item-${esc(m.id)}" onclick="toggleGroup('${esc(m.id)}')">
+        <div class="inbox-item-header">
+          <span class="inbox-group-toggle">${collapsed ? '▶' : '▼'}</span>
+          <span class="inbox-item-title">${esc(m.title)}</span>${badge}
+          <button class="inbox-open-btn" onclick="openInboxModal('${esc(m.id)}');event.stopPropagation()">開く</button>
+          <span class="inbox-item-meta" style="margin-left:auto;white-space:nowrap">${esc(fromStr)} → ${esc(toStr)} · ${esc(ts)}</span>
+        </div>
+      </div>${childrenHtml}`;
+    }
+    const childrenHtml = childItems.map(c => renderItem(c, depth + 1)).join('');
     return `<div class="inbox-item ${stateCls}${depth > 0 ? ' inbox-reply' : ''}" id="inbox-item-${esc(m.id)}"${indent} onclick="openInboxModal('${esc(m.id)}')">
       <div class="inbox-item-header">
         <span class="inbox-item-title">${esc(m.title)}</span>${badge}
         <span class="inbox-item-meta" style="margin-left:auto;white-space:nowrap">${esc(fromStr)} → ${esc(toStr)} · ${esc(ts)}</span>
       </div>
-    </div>${children}`;
+    </div>${childrenHtml}`;
   }
 
   list.innerHTML = roots.map(r => renderItem(r, 0)).join('');
