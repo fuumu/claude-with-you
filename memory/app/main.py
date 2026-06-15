@@ -1,8 +1,13 @@
 """
-mio-memory v3.37  —  Streamable HTTP MCP transport
+mio-memory v3.38  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.38 (2026-06-15) - U9/U10: Inboxタブ表示改善・スレッド化（バックエンド）
+    - inbox_post に reply_to_id 追加（optional。発注↔完了報告の紐づけ）
+    - _post_inbox_message / _norm_inbox_models に reply_to_id を追加（旧データはnull）
+    - MCPスキーマ inbox_post に reply_to_id プロパティ追加
+    - admin.html: ソート切替・未読フィルタ・アコーディオン展開・スレッド表示
   v3.37 (2026-06-15) - CoreMem_delete にリネーム機能追加
     - src+dst 指定で OS rename()によるサーバー側リネーム（内容の読み書きなし）
     - versions ディレクトリをまるごと移動。拡張子変更時はバージョンファイルも追随
@@ -285,7 +290,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.37'
+VERSION = '3.38'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1137,19 +1142,21 @@ def _load_inbox_messages(to=None, unread_only=False):
     return msgs
 
 def _norm_inbox_models(msg):
-    """from_model / to_model キーを補完する（v3.27。旧メッセージは null 既定）"""
+    """from_model / to_model / reply_to_id キーを補完する（旧メッセージは null 既定）"""
     msg.setdefault('from_model', None)
     msg.setdefault('to_model', None)
+    msg.setdefault('reply_to_id', None)
     return msg
 
 def _post_inbox_message(to, title, body, from_='code', persistent=False,
-                        from_model=None, to_model=None):
+                        from_model=None, to_model=None, reply_to_id=None):
     dir_ = _inbox_dir(to)
     os.makedirs(dir_, exist_ok=True)
     now   = now_jst()
     msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
     msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
            "from_model": from_model or None, "to_model": to_model or None,
+           "reply_to_id": reply_to_id or None,
            "created_at": now, "read": False, "persistent": persistent}
     with open(os.path.join(dir_, f'{msg_id}.json'), 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
@@ -2774,8 +2781,9 @@ _MCP_TOOLS = [
             "title":      {"type": "string", "description": "件名"},
             "body":       {"type": "string", "description": "本文"},
             "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"},
-            "from_model": {"type": "string", "description": "送信元モデル名（任意・手動指定。例: \"claude-opus-4-8\", \"claude-sonnet-4-6\"）。受け取り側が誰から来たか分かる"},
-            "to_model":   {"type": "string", "description": "宛先モデル名（任意・手動指定）。特定のモデルに宛てたい場合に使う"}
+            "from_model":  {"type": "string", "description": "送信元モデル名（任意・手動指定。例: \"claude-sonnet-4-6\"）。受け取り側が誰から来たか分かる"},
+            "to_model":    {"type": "string", "description": "宛先モデル名（任意・手動指定）。特定のモデルに宛てたい場合に使う"},
+            "reply_to_id": {"type": "string", "description": "返信先のメッセージID（発注に対する完了報告を紐づける用途）。省略可"}
         }, "required": ["to", "title", "body"]}
     },
     {
@@ -3176,13 +3184,16 @@ def _handle_tool_call_raw(name, arguments):
         body  = arguments.get("body", "")
         if not to or not title:
             return {"error": "to and title are required"}
-        persistent = bool(arguments.get("persistent", False))
+        persistent  = bool(arguments.get("persistent", False))
+        reply_to_id = arguments.get("reply_to_id") or None
         msg = _post_inbox_message(to=to, title=title, body=body, from_='code',
                                   persistent=persistent,
                                   from_model=arguments.get("from_model"),
-                                  to_model=arguments.get("to_model"))
+                                  to_model=arguments.get("to_model"),
+                                  reply_to_id=reply_to_id)
         return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent,
-                "from_model": msg.get('from_model'), "to_model": msg.get('to_model')}
+                "from_model": msg.get('from_model'), "to_model": msg.get('to_model'),
+                "reply_to_id": msg.get('reply_to_id')}
 
     elif name == "batch_run_summary_layers":
         if arguments.get("status_only"):

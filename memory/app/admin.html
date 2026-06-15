@@ -380,6 +380,11 @@
     .inbox-action-btn { background:none; border:1px solid #2a3a5a; border-radius:4px; color:#7a8a9a; padding:.25rem .65rem; font-size:.78rem; cursor:pointer; transition:border-color .15s,color .15s; }
     .inbox-action-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
     .inbox-action-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
+    .inbox-item.expanded { border-color:#7ec8e3; }
+    .inbox-item-expand { font-size:.65rem; color:#5a6a7a; flex-shrink:0; width:.8rem; text-align:center; }
+    .inbox-item-body { margin-top:.75rem; padding-top:.75rem; border-top:1px solid #2a3a5a; }
+    .inbox-item-content { font-size:.88rem; color:#b0c0d0; line-height:1.7; }
+    .inbox-reply { border-style:dashed; opacity:.92; }
 
     /* ── Memory Search (U5) ── */
     .ms-main { display:flex; gap:.7rem; height:calc(100vh - 195px); min-height:300px; }
@@ -623,15 +628,11 @@
     <button class="inbox-filter-btn active" id="inbox-filter-all" onclick="setInboxFilter('all', this)" data-i18n="inbox.all">すべて</button>
     <button class="inbox-filter-btn" id="inbox-filter-chat" onclick="setInboxFilter('chat', this)">→ chat</button>
     <button class="inbox-filter-btn" id="inbox-filter-code" onclick="setInboxFilter('code', this)">→ code</button>
+    <button class="inbox-filter-btn" id="inbox-sort-btn" onclick="toggleInboxSort()" title="並び順">新→古</button>
+    <button class="inbox-filter-btn" id="inbox-unread-btn" onclick="toggleInboxUnread()">未読のみ</button>
     <span id="inbox-count" style="font-size:.8rem;color:#5a6a7a;margin-left:auto"></span>
   </div>
   <div class="inbox-list" id="inbox-list"></div>
-  <div class="inbox-detail" id="inbox-detail">
-    <div class="inbox-detail-title" id="inbox-detail-title"></div>
-    <div class="inbox-detail-meta" id="inbox-detail-meta"></div>
-    <div class="inbox-actions" id="inbox-actions"></div>
-    <div class="inbox-detail-body" id="inbox-detail-body"></div>
-  </div>
 </div>
 
 <!-- Friends tab -->
@@ -1230,14 +1231,45 @@ async function startBatch() {
 }
 
 // ── Inbox ─────────────────────────────────────────────────────────────
-let _inboxFilter = 'all';
-let _inboxData   = [];
+let _inboxFilter    = 'all';
+let _inboxData      = [];
+let _inboxSortAsc   = false;      // false = 新→古（デフォルト）
+let _inboxUnreadOnly = false;
+let _expandedIds    = new Set();
 
 function setInboxFilter(filter, btn) {
   _inboxFilter = filter;
   document.querySelectorAll('.inbox-filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderInbox();
+}
+
+function toggleInboxSort() {
+  _inboxSortAsc = !_inboxSortAsc;
+  const btn = document.getElementById('inbox-sort-btn');
+  if (btn) btn.textContent = _inboxSortAsc ? '古→新' : '新→古';
+  renderInbox();
+}
+
+function toggleInboxUnread() {
+  _inboxUnreadOnly = !_inboxUnreadOnly;
+  const btn = document.getElementById('inbox-unread-btn');
+  if (btn) btn.classList.toggle('active', _inboxUnreadOnly);
+  renderInbox();
+}
+
+function toggleInboxItem(id) {
+  const scrollY = window.scrollY;
+  if (_expandedIds.has(id)) {
+    _expandedIds.delete(id);
+    renderInbox();
+    window.scrollTo({ top: scrollY });
+  } else {
+    _expandedIds.add(id);
+    renderInbox();
+    const el = document.getElementById('inbox-item-' + id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 async function loadInbox() {
@@ -1262,61 +1294,62 @@ function updateInboxBadge() {
 }
 
 function renderInbox() {
-  const list    = document.getElementById('inbox-list');
-  const filtered = _inboxFilter === 'all' ? _inboxData
-    : _inboxData.filter(m => m.to === _inboxFilter);
-  document.getElementById('inbox-count').textContent = `${filtered.length}件`;
-  if (!filtered.length) { list.innerHTML = '<div class="inbox-empty">メッセージなし</div>'; return; }
-  list.innerHTML = filtered.map(m => {
-    const ts   = (m.created_at || '').slice(0, 19).replace('T', ' ');
-    const cls  = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
-    const badge = m.persistent
+  const list = document.getElementById('inbox-list');
+  let data = _inboxFilter === 'all' ? _inboxData : _inboxData.filter(m => m.to === _inboxFilter);
+  if (_inboxUnreadOnly) data = data.filter(m => !m.read || m.persistent);
+  const sorted = [...data].sort((a, b) => {
+    const c = (a.created_at || '').localeCompare(b.created_at || '');
+    return _inboxSortAsc ? c : -c;
+  });
+  document.getElementById('inbox-count').textContent = `${sorted.length}件`;
+  if (!sorted.length) { list.innerHTML = '<div class="inbox-empty">メッセージなし</div>'; return; }
+
+  // スレッドツリー構築
+  const idSet = new Set(sorted.map(m => m.id));
+  const replyMap = {};
+  sorted.forEach(m => {
+    if (m.reply_to_id && idSet.has(m.reply_to_id))
+      (replyMap[m.reply_to_id] || (replyMap[m.reply_to_id] = [])).push(m);
+  });
+  const roots = sorted.filter(m => !m.reply_to_id || !idSet.has(m.reply_to_id));
+
+  function renderItem(m, depth) {
+    const ts       = (m.created_at || '').slice(0, 19).replace('T', ' ');
+    const expanded = _expandedIds.has(m.id);
+    const stateCls = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
+    const badge    = m.persistent
       ? '<span class="inbox-badge-persistent">常駐</span>'
       : (!m.read ? '<span class="inbox-badge-unread">未読</span>' : '');
-    return `
-      <div class="inbox-item ${cls}" onclick="openInboxMessage('${esc(m.id)}')">
-        <div class="inbox-item-header">
-          <span class="inbox-item-title">${esc(m.title)}</span>${badge}
-        </div>
-        <div class="inbox-item-meta">${esc(m.from || '?')} → ${esc(m.to || '?')} ・ ${esc(ts)}</div>
+    const fromStr  = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
+    const toStr    = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
+    const indent   = depth > 0 ? ` style="margin-left:${depth * 1.25}rem"` : '';
+
+    let bodyHtml = '';
+    if (expanded) {
+      const btns = [
+        `<button class="inbox-action-btn" onclick="copyTextToClipboard('${esc(m.id)}');event.stopPropagation()">📋 ID</button>`,
+        !m.read && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(m.id)}');event.stopPropagation()">既読</button>` : '',
+        m.read  && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(m.id)}');event.stopPropagation()">未読に戻す</button>` : '',
+        !m.persistent ? `<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(m.id)}',true);event.stopPropagation()">常駐ON</button>` : '',
+        m.persistent  ? `<button class="inbox-action-btn danger" onclick="inboxSetPersistent('${esc(m.id)}',false);event.stopPropagation()">常駐OFF</button>` : '',
+      ].filter(Boolean).join('');
+      bodyHtml = `<div class="inbox-item-body">
+        <div class="inbox-actions">${btns}</div>
+        <div class="inbox-item-content md-body">${renderMarkdown(m.body || '')}</div>
       </div>`;
-  }).join('');
-}
+    }
+    const children = (replyMap[m.id] || []).map(c => renderItem(c, depth + 1)).join('');
+    return `<div class="inbox-item ${stateCls}${expanded ? ' expanded' : ''}${depth > 0 ? ' inbox-reply' : ''}" id="inbox-item-${esc(m.id)}"${indent}>
+      <div class="inbox-item-header" onclick="toggleInboxItem('${esc(m.id)}')">
+        <span class="inbox-item-expand">${expanded ? '▼' : '▶'}</span>
+        <span class="inbox-item-title">${esc(m.title)}</span>${badge}
+        <span class="inbox-item-meta" style="margin-left:auto;white-space:nowrap">${esc(fromStr)} → ${esc(toStr)} · ${esc(ts)}</span>
+      </div>
+      ${bodyHtml}
+    </div>${children}`;
+  }
 
-function _renderInboxDetail(msg) {
-  const detail = document.getElementById('inbox-detail');
-  const ts  = (msg.created_at || '').slice(0, 19).replace('T', ' ');
-  const badges = [
-    msg.persistent ? '<span class="inbox-badge-persistent" style="font-size:.78rem">常駐</span>' : '',
-    !msg.read      ? '<span class="inbox-badge-unread"    style="font-size:.78rem">未読</span>' : '',
-  ].filter(Boolean).join(' ');
-
-  document.getElementById('inbox-detail-title').innerHTML = esc(msg.title) + (badges ? ' ' + badges : '');
-  const fromStr = (msg.from || '?') + (msg.from_model ? ` (${msg.from_model})` : '');
-  const toStr   = (msg.to   || '?') + (msg.to_model   ? ` (${msg.to_model})`   : '');
-  document.getElementById('inbox-detail-meta').textContent = `${fromStr} → ${toStr} ・ ${ts}`;
-  // R1: Inbox本文を共通レンダラーでMD表示
-  const ibody = document.getElementById('inbox-detail-body');
-  ibody.className = 'inbox-detail-body md-body';
-  ibody.innerHTML = renderMarkdown(msg.body || '');
-
-  const actions = document.getElementById('inbox-actions');
-  const btns = [];
-  btns.push(`<button class="inbox-action-btn" onclick="copyTextToClipboard('${esc(msg.id)}')">📋 IDコピー</button>`);
-  if (!msg.read)  btns.push(`<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(msg.id)}')">既読にする</button>`);
-  if (msg.read)   btns.push(`<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(msg.id)}')">未読に戻す</button>`);
-  if (!msg.persistent) btns.push(`<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(msg.id)}', true)">常駐ON</button>`);
-  if (msg.persistent)  btns.push(`<button class="inbox-action-btn danger" onclick="inboxSetPersistent('${esc(msg.id)}', false)">常駐OFF</button>`);
-  actions.innerHTML = btns.join('');
-
-  detail.classList.add('open');
-  detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-async function openInboxMessage(id) {
-  const msg = _inboxData.find(m => m.id === id);
-  if (!msg) return;
-  _renderInboxDetail(msg);
+  list.innerHTML = roots.map(r => renderItem(r, 0)).join('');
 }
 
 async function inboxMarkRead(id) {
@@ -1324,7 +1357,7 @@ async function inboxMarkRead(id) {
     const res = await apiFetch(`/api/inbox/${id}/read`, { method: 'PATCH' });
     const updated = await res.json();
     Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
-    updateInboxBadge(); renderInbox(); _renderInboxDetail(updated);
+    updateInboxBadge(); renderInbox();
   } catch(e) { showToast('通信エラー'); }
 }
 
@@ -1333,7 +1366,7 @@ async function inboxMarkUnread(id) {
     const res = await apiFetch(`/api/inbox/${id}/unread`, { method: 'PATCH' });
     const updated = await res.json();
     Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
-    updateInboxBadge(); renderInbox(); _renderInboxDetail(updated);
+    updateInboxBadge(); renderInbox();
   } catch(e) { showToast('通信エラー'); }
 }
 
@@ -1342,7 +1375,7 @@ async function inboxSetPersistent(id, value) {
     const res = await apiFetch(`/api/inbox/${id}/persistent?value=${value}`, { method: 'PATCH' });
     const updated = await res.json();
     Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
-    updateInboxBadge(); renderInbox(); _renderInboxDetail(updated);
+    updateInboxBadge(); renderInbox();
   } catch(e) { showToast('通信エラー'); }
 }
 
