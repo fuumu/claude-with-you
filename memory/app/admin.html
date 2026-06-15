@@ -370,20 +370,11 @@
     .inbox-badge-unread { background:#7ec8e3; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
     .inbox-badge-persistent { background:#f1c40f; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
     .inbox-item-meta { font-size:.75rem; color:#5a6a7a; }
-    .inbox-detail { background:#1a1a2e; border:1px solid #2a3a5a; border-radius:8px; padding:1.25rem; margin-top:1rem; display:none; }
-    .inbox-detail.open { display:block; }
-    .inbox-detail-title { font-size:1rem; color:#c8d8e8; margin-bottom:.5rem; }
-    .inbox-detail-meta { font-size:.78rem; color:#5a6a7a; margin-bottom:1rem; }
-    .inbox-detail-body { font-size:.88rem; color:#b0c0d0; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
     .inbox-empty { color:#5a6a7a; font-size:.88rem; text-align:center; padding:2rem 0; }
     .inbox-actions { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1rem; }
     .inbox-action-btn { background:none; border:1px solid #2a3a5a; border-radius:4px; color:#7a8a9a; padding:.25rem .65rem; font-size:.78rem; cursor:pointer; transition:border-color .15s,color .15s; }
     .inbox-action-btn:hover { border-color:#7ec8e3; color:#7ec8e3; }
     .inbox-action-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
-    .inbox-item.expanded { border-color:#7ec8e3; }
-    .inbox-item-expand { font-size:.65rem; color:#5a6a7a; flex-shrink:0; width:.8rem; text-align:center; }
-    .inbox-item-body { margin-top:.75rem; padding-top:.75rem; border-top:1px solid #2a3a5a; }
-    .inbox-item-content { font-size:.88rem; color:#b0c0d0; line-height:1.7; }
     .inbox-reply { border-style:dashed; opacity:.92; }
 
     /* ── Memory Search (U5) ── */
@@ -1233,9 +1224,8 @@ async function startBatch() {
 // ── Inbox ─────────────────────────────────────────────────────────────
 let _inboxFilter    = 'all';
 let _inboxData      = [];
-let _inboxSortAsc   = false;      // false = 新→古（デフォルト）
+let _inboxSortAsc    = false;      // false = 新→古（デフォルト）
 let _inboxUnreadOnly = false;
-let _expandedIds    = new Set();
 
 function setInboxFilter(filter, btn) {
   _inboxFilter = filter;
@@ -1258,24 +1248,31 @@ function toggleInboxUnread() {
   renderInbox();
 }
 
-function toggleInboxItem(id) {
-  const scrollY = window.scrollY;
-  if (_expandedIds.has(id)) {
-    _expandedIds.delete(id);
-    renderInbox();
-    window.scrollTo({ top: scrollY });
-  } else {
-    _expandedIds.add(id);
-    renderInbox();
-    const el = document.getElementById('inbox-item-' + id);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
+function openInboxModal(id) {
+  const m = _inboxData.find(x => x.id === id);
+  if (!m) return;
+  const ts      = (m.created_at || '').slice(0, 19).replace('T', ' ');
+  const fromStr = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
+  const toStr   = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
+  document.getElementById('modal-title').textContent = m.title || '';
+  document.getElementById('modal-meta').textContent  = `${fromStr} → ${toStr}　${ts}`;
+  const btns = [
+    !m.read && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(id)}');closeModal()">既読</button>` : '',
+    m.read  && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(id)}');closeModal()">未読に戻す</button>` : '',
+    !m.persistent ? `<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(id)}',true);closeModal()">常駐ON</button>` : '',
+    m.persistent  ? `<button class="inbox-action-btn danger" onclick="inboxSetPersistent('${esc(id)}',false);closeModal()">常駐OFF</button>` : '',
+  ].filter(Boolean).join('');
+  const body = document.getElementById('modal-body');
+  body.className = 'modal-body md-body';
+  body.innerHTML = (btns ? `<div class="inbox-actions" style="margin-bottom:.75rem">${btns}</div>` : '') + renderMarkdown(m.body || '');
+  setModalId(id);
+  setModalLinks('');
+  openModal();
 }
 
 async function loadInbox() {
   const list = document.getElementById('inbox-list');
   list.innerHTML = '<div class="inbox-empty">読み込み中...</div>';
-  document.getElementById('inbox-detail').classList.remove('open');
   try {
     const res  = await apiFetch('/api/inbox?full=true');
     _inboxData = (await res.json()).sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -1315,7 +1312,6 @@ function renderInbox() {
 
   function renderItem(m, depth) {
     const ts       = (m.created_at || '').slice(0, 19).replace('T', ' ');
-    const expanded = _expandedIds.has(m.id);
     const stateCls = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
     const badge    = m.persistent
       ? '<span class="inbox-badge-persistent">常駐</span>'
@@ -1323,29 +1319,12 @@ function renderInbox() {
     const fromStr  = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
     const toStr    = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
     const indent   = depth > 0 ? ` style="margin-left:${depth * 1.25}rem"` : '';
-
-    let bodyHtml = '';
-    if (expanded) {
-      const btns = [
-        `<button class="inbox-action-btn" onclick="copyTextToClipboard('${esc(m.id)}');event.stopPropagation()">📋 ID</button>`,
-        !m.read && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(m.id)}');event.stopPropagation()">既読</button>` : '',
-        m.read  && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(m.id)}');event.stopPropagation()">未読に戻す</button>` : '',
-        !m.persistent ? `<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(m.id)}',true);event.stopPropagation()">常駐ON</button>` : '',
-        m.persistent  ? `<button class="inbox-action-btn danger" onclick="inboxSetPersistent('${esc(m.id)}',false);event.stopPropagation()">常駐OFF</button>` : '',
-      ].filter(Boolean).join('');
-      bodyHtml = `<div class="inbox-item-body">
-        <div class="inbox-actions">${btns}</div>
-        <div class="inbox-item-content md-body">${renderMarkdown(m.body || '')}</div>
-      </div>`;
-    }
     const children = (replyMap[m.id] || []).map(c => renderItem(c, depth + 1)).join('');
-    return `<div class="inbox-item ${stateCls}${expanded ? ' expanded' : ''}${depth > 0 ? ' inbox-reply' : ''}" id="inbox-item-${esc(m.id)}"${indent}>
-      <div class="inbox-item-header" onclick="toggleInboxItem('${esc(m.id)}')">
-        <span class="inbox-item-expand">${expanded ? '▼' : '▶'}</span>
+    return `<div class="inbox-item ${stateCls}${depth > 0 ? ' inbox-reply' : ''}" id="inbox-item-${esc(m.id)}"${indent} onclick="openInboxModal('${esc(m.id)}')">
+      <div class="inbox-item-header">
         <span class="inbox-item-title">${esc(m.title)}</span>${badge}
         <span class="inbox-item-meta" style="margin-left:auto;white-space:nowrap">${esc(fromStr)} → ${esc(toStr)} · ${esc(ts)}</span>
       </div>
-      ${bodyHtml}
     </div>${children}`;
   }
 
