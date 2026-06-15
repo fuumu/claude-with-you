@@ -141,7 +141,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.41","mcp_tool_count":18}
+# {"status":"ok","version":"3.42","mcp_tool_count":18}
 ```
 
 ### 5. Claude Code への登録
@@ -578,6 +578,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | GET | `/api/memory/index` | エントリ一覧 |
 | GET | `/api/memory/search?q=...` | キーワード検索 |
 | GET | `/api/memory/hsearch?q=...` | 階層検索（keywords+symbolic→summary→full body、match_layer/summary/symbolic 付き） |
+| GET | `/api/memories/symbolic` | 全エントリの 3層シンボリック圧縮一覧（`{id, title, symbolic}`、空は除外・v3.42） |
 | GET | `/api/memory/<id>` | エントリ取得 |
 | POST | `/api/memory` | エントリ作成 |
 | PATCH | `/api/memory/<id>` | エントリ更新 |
@@ -588,6 +589,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | DELETE | `/api/coremem/<name>` | UserCoreMemory ファイル削除（全バージョン） |
 | GET | `/api/conversations/` | 会話一覧・検索 |
 | GET | `/api/conversations/<uuid>` | 会話取得 |
+| GET | `/api/conversations/<uuid>/annotations` | 会話の注記一覧（読み取り専用・v3.42） |
 | GET | `/api/inbox` | インボックス一覧 |
 | POST | `/api/inbox` | メッセージ送信 |
 | PATCH | `/api/inbox/<id>/read` | 既読マーク |

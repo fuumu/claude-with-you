@@ -612,6 +612,15 @@ conversation_share(uuid: str)
   `📝[annotation #seq by author @date] note` をインライン表示。
   このとき各メッセージに `[No.X]` 通番が付き、target との対応が取れる。
   会話全体への注記はタイトル直後、対象メッセージが非表示（空テキスト）の注記は末尾にまとめる
+- REST 表示（v3.42・U11）: `GET /api/conversations/<uuid>/annotations` が注記配列を返す。
+  logs.html の会話ビューアが各メッセージ下に折りたたみ「📝 注記 (N)」を表示し、
+  会話全体注記は先頭にまとめる。番号付けは chat_messages の1始まり（`conversation_read` の No.X と一致）
+
+### symbolic 一覧 API（M3, v3.42）
+
+`GET /api/memories/symbolic` は index.json から全エントリの `{id, title, symbolic}` を返す
+（symbolic が空＝3層未生成のものは除外、読み取り専用）。俯瞰して似たエントリを束ねる・
+将来のカスケード入口としての利用を想定。MCP ツールは設けず REST のみ。
 
 ---
 

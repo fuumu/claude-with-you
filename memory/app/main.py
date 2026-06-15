@@ -1,8 +1,15 @@
 """
-mio-memory v3.41  —  Streamable HTTP MCP transport
+mio-memory v3.42  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.42 (2026-06-16) - M3: symbolic一覧API ＋ U11: logsビューア注記表示
+    - M3: GET /api/memories/symbolic — 全エントリの {id, title, symbolic} を返す
+      （symbolic 空は除外・読み取り専用）。俯瞰／カスケード入口用
+    - U11: GET /api/conversations/<uuid>/annotations — 会話の注記一覧（読み取り専用）
+    - U11: logs.html 会話ビューアで注記をインライン表示。各メッセージ下に
+      折りたたみ「📝 注記 (N)」、会話全体注記は先頭にまとめ。番号付けは
+      chat_messages の1始まり（conversation_read の No.X と一致）。表示層のみ
   v3.41 (2026-06-16) - M2: 3層symbolicを1次検索に追加（検索精度向上）
     - rebuild_index() が body から3層シンボリック圧縮を抽出し index.json の
       symbolic フィールドに収載（空なら未生成として省略・keywords と同様）
@@ -298,7 +305,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.41'
+VERSION = '3.42'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -782,6 +789,13 @@ def api_conversations_get(uuid):
     with open(fpath, encoding='utf-8') as f:
         return jsonify(json.load(f))
 
+@app.route('/api/conversations/<uuid>/annotations')
+@require_auth
+def api_conversations_annotations(uuid):
+    """会話の注記一覧（U11・logs.html ビューア用）。生ログとは別レイヤー・読み取り専用。
+    各注記: {seq, target, note, author, created_at}（target は通番 / "No.X" / null=会話全体）"""
+    return jsonify(_load_annotations(uuid))
+
 @app.route('/api/conversations/share/<uuid>', methods=['POST'])
 @require_auth
 def api_conversations_share(uuid):
@@ -858,6 +872,22 @@ def get_index():
         with open(INDEX_FILE) as f:
             return jsonify(json.load(f))
     return jsonify([])
+
+@app.route('/api/memories/symbolic')
+@require_auth
+def api_memories_symbolic():
+    """全エントリの3層シンボリック圧縮一覧（M3）。symbolic が空のものは除外。
+    読み取り専用。用途: 俯瞰して似たエントリを束ねる・カスケード入口"""
+    index = []
+    if os.path.exists(INDEX_FILE):
+        with open(INDEX_FILE) as f:
+            index = json.load(f)
+    items = [
+        {'id': e.get('id'), 'title': e.get('title') or '', 'symbolic': e.get('symbolic')}
+        for e in index
+        if not e.get('deleted') and (e.get('symbolic') or '').strip()
+    ]
+    return jsonify(items)
 
 @app.route('/api/memory/search')
 @require_auth

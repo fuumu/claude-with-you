@@ -612,6 +612,17 @@ An annotation layer for audits and re-experiencing sessions. Design principle:
   Each message then carries a `[No.X]` sequence number matching the targets.
   Whole-conversation annotations appear right after the title; annotations whose target
   message is hidden (empty text) are collected at the end
+- REST display (v3.42, U11): `GET /api/conversations/<uuid>/annotations` returns the annotation
+  array. The logs.html conversation viewer renders a collapsible "📝 注記 (N)" under each
+  message and groups whole-conversation annotations at the top. Numbering is 1-based over
+  `chat_messages` (matching `conversation_read`'s No.X)
+
+### symbolic listing API (M3, v3.42)
+
+`GET /api/memories/symbolic` returns `{id, title, symbolic}` for all entries from index.json
+(entries with empty symbolic — i.e. layer 3 not yet generated — are excluded; read-only).
+Intended for surveying/clustering similar entries and as a future cascade entry point.
+No MCP tool; REST only.
 
 ---
 

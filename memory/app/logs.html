@@ -140,6 +140,16 @@
     .block-content.open { display: block; }
     .tool-input { color: #f0883e; }
 
+    /* U11: 注記表示 */
+    .msg-ann, .ann-global { margin-top: .4rem; }
+    .ann-global { margin: 0 0 .9rem; }
+    .msg-ann .block-header, .ann-global .block-header { color: #d29922; }
+    .msg-ann .block-header:hover, .ann-global .block-header:hover { color: #f2cc60; }
+    .ann-item { border-left: 2px solid #d29922; padding: .15rem 0 .15rem .6rem; margin: .3rem 0; }
+    .ann-meta { font-size: .7rem; color: #d29922; margin-bottom: .2rem; }
+    .ann-date { color: #6e7681; }
+    .ann-note { font-size: .78rem; color: #c9d1d9; white-space: normal; }
+
     /* Related memory panel */
     .related-panel {
       border-top: 1px solid #21262d; background: #010409; flex-shrink: 0;
@@ -421,6 +431,7 @@ const API = window.location.origin;
 let filteredConvs = [];
 let activeUuid = null;
 let showThinking = false;
+let activeAnnotations = [];   // U11: 現在表示中の会話の注記一覧
 const convCache = new Map(); // uuid → full conversation data
 
 // ── Auth ─────────────────────────────────────────────────────────────
@@ -706,6 +717,12 @@ async function selectConv(uuid) {
 
   recordRecent(uuid, conv.name || '');  // L1: 最近開いた会話に記録
   loadSummaryPanel(conv);               // L1-b: 2層要約パネル
+  // U11: 注記を取得（生ログとは別レイヤー・失敗しても本文表示は続行）
+  activeAnnotations = [];
+  try {
+    const ar = await apiFetch('/api/conversations/' + encodeURIComponent(uuid) + '/annotations');
+    activeAnnotations = await ar.json();
+  } catch(e) { activeAnnotations = []; }
   renderMessages(conv);
   document.getElementById('messages-wrap').scrollTop = 0;
   document.getElementById('msg-scroll-btns').classList.add('visible');
@@ -799,6 +816,24 @@ function toggleThinking() {
   }
 }
 
+// U11: 注記 target（通番 / "No.X" / null）→ メッセージ通番 or null（会話全体）
+function annTargetNo(target) {
+  if (target === null || target === undefined || target === '') return null;
+  const m = String(target).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// U11: 注記リストを HTML 化（番号・著者・日付・本文）
+function renderAnnotations(anns) {
+  return anns.map(a => {
+    const date = (a.created_at || '').slice(0, 10);
+    return `<div class="ann-item">
+        <div class="ann-meta">📝 <b>#${esc(String(a.seq ?? '?'))}</b> by ${esc(a.author || '?')} <span class="ann-date">${esc(date)}</span></div>
+        <div class="ann-note md">${renderMd(a.note || '')}</div>
+      </div>`;
+  }).join('');
+}
+
 function renderMessages(conv) {
   const wrap = document.getElementById('messages-wrap');
   const msgs = conv.chat_messages || [];
@@ -808,11 +843,31 @@ function renderMessages(conv) {
     return;
   }
 
-  wrap.innerHTML = msgs.map((msg, mi) => {
+  // U11: 注記を通番ごとに整理（番号付けは chat_messages の1始まり = サーバ conversation_read と一致）
+  const annByNo = {}, annGlobal = [];
+  (activeAnnotations || []).forEach(a => {
+    const no = annTargetNo(a.target);
+    if (no === null) annGlobal.push(a);
+    else (annByNo[no] = annByNo[no] || []).push(a);
+  });
+
+  let html = '';
+  // 会話全体への注記はビューア先頭にまとめて表示
+  if (annGlobal.length) {
+    html += `<div class="ann-global">${mkCollapsible('ann-global', '📝 会話全体への注記 (' + annGlobal.length + ')', renderAnnotations(annGlobal), false)}</div>`;
+  }
+
+  html += msgs.map((msg, mi) => {
     const role   = msg.sender === 'human' ? 'human' : 'assistant';
     const ts     = (msg.created_at || '').slice(11, 16);
     const blocks = renderContentBlocks(msg.content || [], role, mi);
-    if (!blocks.trim() && role === 'assistant') return '';
+    const no     = mi + 1;
+    const anns   = annByNo[no];
+    // 本文が空の assistant でも、注記があれば残す（対象注記を取りこぼさない）
+    if (!blocks.trim() && role === 'assistant' && !anns) return '';
+    const annBlock = anns
+      ? `<div class="msg-ann">${mkCollapsible('ann' + mi, '📝 注記 (' + anns.length + ')', renderAnnotations(anns), false)}</div>`
+      : '';
     return `
       <div class="msg msg-${role}">
         <div class="msg-role">
@@ -820,8 +875,11 @@ function renderMessages(conv) {
           <span class="msg-ts">${esc(ts)}</span>
         </div>
         ${blocks}
+        ${annBlock}
       </div>`;
   }).join('');
+
+  wrap.innerHTML = html;
 }
 
 function renderMd(text) {
