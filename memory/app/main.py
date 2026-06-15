@@ -1,8 +1,16 @@
 """
-mio-memory v3.38  —  Streamable HTTP MCP transport
+mio-memory v3.41  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.41 (2026-06-16) - M2: 3層symbolicを1次検索に追加（検索精度向上）
+    - rebuild_index() が body から3層シンボリック圧縮を抽出し index.json の
+      symbolic フィールドに収載（空なら未生成として省略・keywords と同様）
+    - _hierarchical_search() の1次検索で symbolic も対象に追加。
+      title/tags/keywords 一致は match_layer='keyword'、symbolic のみ一致は
+      match_layer='symbolic'（ヒット理由が判別可能）
+    - 既存エントリのバックフィルは rebuild_index() 1回で完了（bodyに3層が既存・
+      LLMバッチ不要）。新規 write は create/update が rebuild_index 経由のため自動対応
   v3.38 (2026-06-15) - U9/U10: Inboxタブ表示改善・スレッド化（バックエンド）
     - inbox_post に reply_to_id 追加（optional。発注↔完了報告の紐づけ）
     - _post_inbox_message / _norm_inbox_models に reply_to_id を追加（旧データはnull）
@@ -290,7 +298,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.40'
+VERSION = '3.41'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -478,6 +486,10 @@ def rebuild_index():
         # 4層キーワード（フィールドが存在する場合のみ。未生成エントリと区別するため）
         if 'keywords' in e:
             item['keywords'] = e.get('keywords') or []
+        # 3層シンボリック圧縮（body から抽出して1次検索に載せる。空なら未生成として省略）
+        symbolic = _extract_layer3(str(e.get('body') or ''))
+        if symbolic:
+            item['symbolic'] = symbolic
         index.append(item)
     with open(INDEX_FILE, 'w') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
@@ -2099,7 +2111,7 @@ def _extract_layer3(body: str) -> str:
 
 
 def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False) -> dict:
-    """階層検索（1次:インデックス title+tags+keywords → 2次:2層要約 → 3次:全文）。
+    """階層検索（1次:インデックス title+tags+keywords+3層symbolic → 2次:2層要約 → 3次:全文）。
     MCP memory_search と REST /api/memory/hsearch の共通実装"""
     q = (q or '').lower()
     index = []
@@ -2108,7 +2120,7 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
             index = json.load(f)
     index = [e for e in index if not e.get('deleted')]
 
-    # 1次: インデックスのみで検索（title + tags + keywords）— bodyを読まない
+    # 1次: インデックスのみで検索（title + tags + keywords、次点で3層symbolic）— bodyを読まない
     matched = {}  # id -> match_layer（挿入順 = 優先順）
     for e in index:
         text = ' '.join([
@@ -2118,6 +2130,8 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
         ]).lower()
         if q in text:
             matched[e['id']] = 'keyword'
+        elif q in str(e.get('symbolic') or '').lower():
+            matched[e['id']] = 'symbolic'
 
     # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
     target = offset + limit if limit > 0 else None

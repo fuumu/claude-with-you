@@ -40,7 +40,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.30","mcp_tool_count":18}
+# {"status":"ok","version":"3.41","mcp_tool_count":18}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -160,7 +160,7 @@ Claude calls these tools directly. All responses include `server_time` (JST) and
 | `memory_read` | Read one entry by ID | `id` |
 | `memory_write` | Create a new entry | `title`, `body`, `tags`, `importance` |
 | `memory_upsert` | Overwrite a fixed-ID entry | `id`, `title`, `body` |
-| `memory_search` | Hierarchical search (index keywords → summary → full text); returns `summary` + `match_layer` per hit | `q`, `limit` (default 10), `offset`, `full_body` |
+| `memory_search` | Hierarchical search (index keywords + layer-3 symbolic → summary → full text); returns `summary` + `match_layer` (keyword/symbolic/summary/full) per hit | `q`, `limit` (default 10), `offset`, `full_body` |
 | `memory_share` | Generate 24h shareable URL | `id` |
 
 **Example — Claude saves a decision:**
@@ -256,7 +256,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 |--------|------|-------------|
 | GET | `/api/memory/index` | List all entries |
 | GET | `/api/memory/search?q=...` | Search entries |
-| GET | `/api/memory/hsearch?q=...` | Hierarchical search (keywords→summary→full body, with match_layer/summary/symbolic) |
+| GET | `/api/memory/hsearch?q=...` | Hierarchical search (keywords+symbolic→summary→full body, with match_layer/summary/symbolic) |
 | GET | `/api/memory/<id>` | Get one entry |
 | POST | `/api/memory` | Create entry |
 | PATCH | `/api/memory/<id>` | Update entry |

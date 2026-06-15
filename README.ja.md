@@ -141,7 +141,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.30","mcp_tool_count":18}
+# {"status":"ok","version":"3.41","mcp_tool_count":18}
 ```
 
 ### 5. Claude Code への登録
@@ -437,8 +437,8 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 引数: q（必須）, limit（デフォルト10, 0=無制限）, offset（デフォルト0）,
        full_body（省略可, bool — trueで従来どおりbody全文を返す）
 返値: {results: [...], total: N, has_more: bool, server_time: "..."}
-※ 階層検索（v3.17）: 1次=インデックスのみ（title+tags+keywords）→ 2次=2層要約 → 3次=全文
-※ 各ヒットは body の代わりに summary（2層要約）を返す。match_layer（keyword/summary/full）付き
+※ 階層検索（v3.17, symbolic追加 v3.41）: 1次=インデックスのみ（title+tags+keywords＋3層symbolic）→ 2次=2層要約 → 3次=全文
+※ 各ヒットは body の代わりに summary（2層要約）を返す。match_layer（keyword/symbolic/summary/full）付き
 ※ 全文が必要なときは memory_read で個別取得するか full_body=true を指定
 ```
 
@@ -577,7 +577,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 |---------|------|------|
 | GET | `/api/memory/index` | エントリ一覧 |
 | GET | `/api/memory/search?q=...` | キーワード検索 |
-| GET | `/api/memory/hsearch?q=...` | 階層検索（keywords→summary→full body、match_layer/summary/symbolic 付き） |
+| GET | `/api/memory/hsearch?q=...` | 階層検索（keywords+symbolic→summary→full body、match_layer/summary/symbolic 付き） |
 | GET | `/api/memory/<id>` | エントリ取得 |
 | POST | `/api/memory` | エントリ作成 |
 | PATCH | `/api/memory/<id>` | エントリ更新 |
