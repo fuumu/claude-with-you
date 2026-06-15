@@ -1874,9 +1874,10 @@ function openOplog(idx) {
   document.getElementById('modal-meta').textContent  = ts;
   const body = document.getElementById('modal-body');
   body.className = 'modal-body';
-  body.textContent = diff.before
+  const content = diff.before
     ? `▼ after\n${after}\n\n▼ before\n${before}`
     : `▼ after\n${after}`;
+  body.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-all">${esc(content)}</pre>`;
   setModalId(row.entry_id || '');
   setModalLinks('');
   openModal();
