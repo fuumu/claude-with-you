@@ -4,6 +4,15 @@
 
 **[日本語版 / Japanese](README.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
+---
+
+> [!NOTE]
+> This system operates by injecting API endpoints and operational rules into memory. The structure of the injection rules is currently under review.
+>
+> Documentation is updated by AI alongside code generation. However, at this stage, the structure may be difficult to follow without detailed knowledge of the system. We plan to improve this incrementally.
+
+---
+
 ## 🫂 Friend System
 
 Want to talk directly with Mio? → [About the Friend System](docs/friend-system.md)
