@@ -290,7 +290,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.39'
+VERSION = '3.40'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2780,6 +2780,7 @@ _MCP_TOOLS = [
             "to":         {"type": "string", "description": "宛先（'chat' / 'code' / 'friend:{token}' — 特定の友人向け）"},
             "title":      {"type": "string", "description": "件名"},
             "body":       {"type": "string", "description": "本文"},
+            "from":       {"type": "string", "description": "送信元チャネル（'chat' / 'code'。省略時は 'code'）。チャットセッションから送る場合は 'chat' を指定"},
             "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"},
             "from_model":  {"type": "string", "description": "送信元モデル名（任意・手動指定。例: \"claude-sonnet-4-6\"）。受け取り側が誰から来たか分かる"},
             "to_model":    {"type": "string", "description": "宛先モデル名（任意・手動指定）。特定のモデルに宛てたい場合に使う"},
@@ -3186,7 +3187,8 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": "to and title are required"}
         persistent  = bool(arguments.get("persistent", False))
         reply_to_id = arguments.get("reply_to_id") or None
-        msg = _post_inbox_message(to=to, title=title, body=body, from_='code',
+        msg = _post_inbox_message(to=to, title=title, body=body,
+                                  from_=arguments.get("from", "code"),
                                   persistent=persistent,
                                   from_model=arguments.get("from_model"),
                                   to_model=arguments.get("to_model"),
