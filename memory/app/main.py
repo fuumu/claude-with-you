@@ -290,7 +290,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.38'
+VERSION = '3.39'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
