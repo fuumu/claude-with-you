@@ -1862,19 +1862,29 @@ function renderOplog() {
   }).join('');
 }
 
+function _fmtOplogEntry(entry) {
+  if (!entry) return '（なし）';
+  const meta = Object.assign({}, entry);
+  const bodyText = meta.body;
+  delete meta.body;
+  let out = JSON.stringify(meta, null, 2);
+  if (bodyText !== undefined) out += '\n\n▼ body\n' + bodyText;
+  return out;
+}
+
 function openOplog(idx) {
   const row = oplogData[idx];
   if (!row) return;
   const op     = row.operation || '?';
   const ts     = (row.timestamp || '').slice(0, 19).replace('T', ' ');
   const diff   = row.diff || {};
-  const after  = diff.after  ? JSON.stringify(diff.after,  null, 2) : '（なし）';
-  const before = diff.before ? JSON.stringify(diff.before, null, 2) : '（なし）';
+  const after  = _fmtOplogEntry(diff.after);
+  const before = diff.before ? _fmtOplogEntry(diff.before) : null;
   document.getElementById('modal-title').textContent = `[${op}] ${row.entry_id || ''}`;
   document.getElementById('modal-meta').textContent  = ts;
   const body = document.getElementById('modal-body');
   body.className = 'modal-body';
-  const content = diff.before
+  const content = before
     ? `▼ after\n${after}\n\n▼ before\n${before}`
     : `▼ after\n${after}`;
   body.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-all">${esc(content)}</pre>`;

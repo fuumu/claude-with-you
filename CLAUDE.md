@@ -132,6 +132,7 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 1. `inbox_post(to="chat", title="【完了報告】...", body="...")` でチャット宛に完了報告する
    - タイトル形式: `【完了報告】handoff No.XX（内容）`
    - 本文: 実装内容の要約・コミットID・デプロイ手順（必要な場合）
+   - **`reply_to_id`**: 対応する発注メッセージの ID（`inbox_read` の返り値 `id`）を必ず指定する。スレッド表示のペアリングに使われる
    - ※ `inbox_post` が使えないセッション（v3.4 デプロイ前に開始）では `memory_write(tags=["チャット宛", "完了報告"])` で代替
 2. `handoff_claude_code.md` を更新（完了チェックをつける）
 3. コミット・push する
