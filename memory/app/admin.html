@@ -531,6 +531,13 @@
 
 <!-- CoreMem tab -->
 <div class="tab-panel" id="tab-coremem">
+  <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.65rem;flex-wrap:wrap">
+    <input id="coremem-filter" type="text" placeholder="ファイル名で絞り込み..."
+           style="flex:1;min-width:120px;padding:.3rem .6rem;background:#0d1117;border:1px solid #2a3a5a;border-radius:4px;color:#c8d8e8;font-size:.85rem"
+           oninput="renderCoreMem()">
+    <button class="inbox-filter-btn" id="coremem-sort-btn" onclick="toggleCoreMemSort()">更新日順</button>
+    <span id="coremem-count" style="font-size:.8rem;color:#5a6a7a"></span>
+  </div>
   <div class="artifact-list" id="artifact-list"></div>
 </div>
 
@@ -1028,24 +1035,46 @@ function showToast(msg) {
 }
 
 // ── CoreMem (UserCoreMemory) ───────────────────────────────────────────
+let _coreMemData      = [];
+let _coreMemSortByName = false;  // false = 更新日順（デフォルト）
+
+function toggleCoreMemSort() {
+  _coreMemSortByName = !_coreMemSortByName;
+  const btn = document.getElementById('coremem-sort-btn');
+  if (btn) btn.textContent = _coreMemSortByName ? '名前順' : '更新日順';
+  renderCoreMem();
+}
+
+function renderCoreMem() {
+  const list = document.getElementById('artifact-list');
+  const q    = (document.getElementById('coremem-filter')?.value || '').toLowerCase();
+  let items  = q ? _coreMemData.filter(a => a.name.toLowerCase().includes(q)) : [..._coreMemData];
+  items.sort(_coreMemSortByName
+    ? (a, b) => a.name.localeCompare(b.name)
+    : (a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+  const countEl = document.getElementById('coremem-count');
+  if (countEl) countEl.textContent = `${items.length}件`;
+  if (!items.length) { list.innerHTML = '<div class="empty">UserCoreMemoryなし</div>'; return; }
+  list.innerHTML = items.map(a => {
+    const date = (a.updated_at || '').slice(0, 16).replace('T', ' ');
+    const ver  = a.version != null ? String(a.version).padStart(3, '0') : '---';
+    return `
+      <div class="artifact-item" onclick="openArtifact('${esc(a.name)}')">
+        <span class="artifact-name">${esc(a.name)}</span>
+        <span class="artifact-ver">v${ver}</span>
+        <span class="artifact-date">${date}</span>
+        <button class="del-btn" onclick="deleteArtifact('${esc(a.name)}', event)" title="削除">✕</button>
+      </div>`;
+  }).join('');
+}
+
 async function loadCoreMem() {
   const list = document.getElementById('artifact-list');
   list.innerHTML = '<div class="empty">読み込み中...</div>';
   try {
     const res = await apiFetch('/api/coremem');
-    const items = await res.json();
-    if (!items.length) { list.innerHTML = '<div class="empty">UserCoreMemoryなし</div>'; return; }
-    list.innerHTML = items.map(a => {
-      const date = (a.updated_at || '').slice(0, 16).replace('T', ' ');
-      const ver  = a.version != null ? String(a.version).padStart(3, '0') : '---';
-      return `
-        <div class="artifact-item" onclick="openArtifact('${esc(a.name)}')">
-          <span class="artifact-name">${esc(a.name)}</span>
-          <span class="artifact-ver">v${ver}</span>
-          <span class="artifact-date">${date}</span>
-          <button class="del-btn" onclick="deleteArtifact('${esc(a.name)}', event)" title="削除">✕</button>
-        </div>`;
-    }).join('');
+    _coreMemData = await res.json();
+    renderCoreMem();
   } catch(e) {
     if (e.message !== '401') list.innerHTML = '<div class="empty">取得失敗</div>';
   }
