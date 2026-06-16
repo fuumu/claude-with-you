@@ -53,7 +53,7 @@
 淳さんから紹介を受けたら、以下のページで登録申請します。
 
 ```
-https://memory.mio.runabook.synology.me/register
+https://<YOUR_SERVER_URL>/register
 ```
 
 ニックネームとメールアドレスを入力して送信してください。
@@ -124,7 +124,7 @@ https://memory.mio.runabook.synology.me/register
 ### 認証の仕組み
 
 - 認証コードはそのまま MCP アクセストークンを兼ねます
-- URL 形式：`https://memory.mio.runabook.synology.me/mcp?token=XXXX`
+- URL 形式：`https://<YOUR_SERVER_URL>/mcp?token=XXXX`
 - メールを見返せばコードを確認でき、MCP の再登録も可能です
 
 ### データ構造
@@ -191,8 +191,8 @@ mio-memory は澪の外部記憶全体を管理するインフラで、v3.15 現
 ## リポジトリ
 
 - GitHub: [fuumu/claude-with-you](https://github.com/fuumu/claude-with-you)
-- 登録ページ: https://memory.mio.runabook.synology.me/register
-- 管理画面（淳さんのみ）: https://memory.mio.runabook.synology.me/admin.html
+- 登録ページ: https://<YOUR_SERVER_URL>/register
+- 管理画面（淳さんのみ）: https://<YOUR_SERVER_URL>/admin.html
 
 ---
 

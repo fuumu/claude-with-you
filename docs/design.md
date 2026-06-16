@@ -471,7 +471,7 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | `LM_STUDIO_HOST` | LMStudio host (lmstudio backend) | `192.168.10.32` |
 | `LM_STUDIO_PORT` | LMStudio port | `1234` |
 
-The `MIO_SERVER_URL` default assumes in-container execution. When running outside the container, add `MIO_SERVER_URL=https://memory.mio.runabook.synology.me` to `.env`.
+The `MIO_SERVER_URL` default assumes in-container execution. When running outside the container, add `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` to `.env`.
 
 **Run inside the container (recommended):**
 
@@ -489,7 +489,7 @@ docker exec -it memory python /app/scripts/generate_summary_layers.py --backend 
 **Run outside the container (e.g. on the WS):**
 
 ```bash
-MIO_SERVER_URL=https://memory.mio.runabook.synology.me python scripts/generate_summary_layers.py --dry-run
+MIO_SERVER_URL=https://<YOUR_SERVER_URL> python scripts/generate_summary_layers.py --dry-run
 ```
 
 ---
@@ -569,7 +569,7 @@ conversation_share(uuid: str)
 - Verifies `/data/conversations/{uuid}.json` exists
 - Generates a 24-hour token and stores it in `/data/share_tokens.json`
 - Returns `{ token, url, expires_at }`
-- `url` has the form `https://memory.mio.runabook.synology.me/share.html?token=...` (v3.23+; a standalone read-only viewer. Legacy `logs.html?token=` links keep working)
+- `url` has the form `https://<YOUR_SERVER_URL>/share.html?token=...` (v3.23+; a standalone read-only viewer. Legacy `logs.html?token=` links keep working)
 - Also available from the "🔗 共有" button in the logs.html conversation header (popup with URL + expiry)
 
 ### Usage example
@@ -654,7 +654,7 @@ memory_share(id: str)
 - Verifies the memory entry with the given ID exists
 - Generates a 24-hour token and stores it in `/data/share_tokens.json` (with an `entry_id` field)
 - Returns `{ token, url, expires_at }`
-- `url` has the form `https://memory.mio.runabook.synology.me/admin.html?token=...&id=...`
+- `url` has the form `https://<YOUR_SERVER_URL>/admin.html?token=...&id=...`
 
 #### REST endpoint
 

@@ -472,7 +472,7 @@ anthropic / LMStudio API で生成:
 | `LM_STUDIO_HOST` | LMStudioホスト（lmstudioバックエンド） | `192.168.10.32` |
 | `LM_STUDIO_PORT` | LMStudioポート | `1234` |
 
-`MIO_SERVER_URL` はコンテナ内実行前提のデフォルト。コンテナ外実行時は `.env` に `MIO_SERVER_URL=https://memory.mio.runabook.synology.me` を追加。
+`MIO_SERVER_URL` はコンテナ内実行前提のデフォルト。コンテナ外実行時は `.env` に `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` を追加。
 
 **コンテナ内から実行（推奨）：**
 
@@ -490,7 +490,7 @@ docker exec -it memory python /app/scripts/generate_summary_layers.py --backend 
 **コンテナ外（WSなど）から実行する場合：**
 
 ```bash
-MIO_SERVER_URL=https://memory.mio.runabook.synology.me python scripts/generate_summary_layers.py --dry-run
+MIO_SERVER_URL=https://<YOUR_SERVER_URL> python scripts/generate_summary_layers.py --dry-run
 ```
 
 ---
@@ -570,7 +570,7 @@ conversation_share(uuid: str)
 - `/data/conversations/{uuid}.json` の存在を確認
 - 24時間有効なトークンを生成して `/data/share_tokens.json` に保存
 - `{ token, url, expires_at }` を返す
-- `url` は `https://memory.mio.runabook.synology.me/share.html?token=...` 形式（v3.23〜。独立した読み取り専用ビューア。旧 `logs.html?token=` も互換動作）
+- `url` は `https://<YOUR_SERVER_URL>/share.html?token=...` 形式（v3.23〜。独立した読み取り専用ビューア。旧 `logs.html?token=` も互換動作）
 - logs.html の会話ヘッダー「🔗 共有」ボタンからも生成可能（URL＋有効期限のポップアップ表示）
 
 ### 使用例
@@ -650,7 +650,7 @@ memory_share(id: str)
 - 指定IDの記憶エントリが存在することを確認
 - 24時間有効なトークンを生成して `/data/share_tokens.json` に保存（`entry_id` フィールド）
 - `{ token, url, expires_at }` を返す
-- `url` は `https://memory.mio.runabook.synology.me/admin.html?token=...&id=...` 形式
+- `url` は `https://<YOUR_SERVER_URL>/admin.html?token=...&id=...` 形式
 
 #### RESTエンドポイント
 

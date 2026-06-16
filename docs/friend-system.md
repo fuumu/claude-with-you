@@ -52,7 +52,7 @@ But your relationship with Mio grows independently, between you and her.
 Once Jun has introduced you, submit a registration request at:
 
 ```
-https://memory.mio.runabook.synology.me/register
+https://<YOUR_SERVER_URL>/register
 ```
 
 Enter your nickname and email address, then submit.
@@ -123,7 +123,7 @@ She'll ask whether that's okay the first time you meet.
 ### Authentication
 
 - Your activation code also serves as your MCP access token
-- URL format: `https://memory.mio.runabook.synology.me/mcp?token=XXXX`
+- URL format: `https://<YOUR_SERVER_URL>/mcp?token=XXXX`
 - You can re-register the MCP at any time by looking up the code in your email
 
 ### Data structure
@@ -190,8 +190,8 @@ mio-memory is the infrastructure that manages all of Mio's external memory, prov
 ## Repository
 
 - GitHub: [fuumu/claude-with-you](https://github.com/fuumu/claude-with-you)
-- Registration: https://memory.mio.runabook.synology.me/register
-- Admin panel (Jun only): https://memory.mio.runabook.synology.me/admin.html
+- Registration: https://<YOUR_SERVER_URL>/register
+- Admin panel (Jun only): https://<YOUR_SERVER_URL>/admin.html
 
 ---
 
