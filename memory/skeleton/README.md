@@ -31,7 +31,16 @@ memory/skeleton/
       core_history.md    ← 軌跡＋バージョン対応表（最初は空）
       todo.md            ← 残件・TODO 管理（最初は空）
       protocol_guide.md  ← MCPツール全19本の運用ガイド（install 非依存）
+      welcome.md         ← 新規ユーザー向け案内（困ったら接続中のClaudeに聞く）
 ```
+
+### ヘルプ導線（`MIO_SEED_WELCOME`）
+
+新規ユーザーが迷わないよう、デフォルトで「困ったら接続中の Claude に聞けばよい」導線を入れる：
+
+- `welcome.md` をシード（ユーザーが読む案内）
+- 初回シード時に persistent な inbox メッセージを1本投入（AI が起動時に気づき、ユーザーに案内できる）
+- `MIO_SEED_WELCOME=off` で両方を抑止（デフォルト on）
 
 ja/ と en/ は**同じファイル名・同じ構造**で、中身の言語だけが違う。
 シード時にどちらか一方が（ファイル名は言語非依存のまま）CoreMem に投入される。

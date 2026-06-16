@@ -1,8 +1,13 @@
 """
-mio-memory v3.44  —  Streamable HTTP MCP transport
+mio-memory v3.45  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.45 (2026-06-16) - 新規環境の「困ったら聞いて」ヘルプ導線（MIO_SEED_WELCOME）
+    - skeleton に welcome.md（日英）追加——接続中の Claude に使い方を聞けばよいと案内
+    - 初回シード時に persistent inbox の welcome を1本投入（AIが起動時に気づく・冪等）
+    - core_rules.md（skeleton）に「使い方を聞かれたら protocol_guide.md で案内」追記
+    - MIO_SEED_WELCOME=off で welcome.md・welcome inbox の両方を抑止（デフォルトon）
   v3.44 (2026-06-16) - スケルトンの多言語化（日英）＋ MIO_SEED_LANG
     - skeleton/coremem/ を ja/ と en/ に分割。シードは MIO_SEED_LANG で選択
       （未指定は ja、指定言語が無ければ ja にフォールバック）
@@ -316,7 +321,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.44'
+VERSION = '3.45'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -339,7 +344,8 @@ _SKEL_BASES = [
     os.path.join(_APP_DIR, 'skeleton', 'coremem'),         # docker イメージ内
     os.path.join(_APP_DIR, '..', 'skeleton', 'coremem'),   # リポジトリ構成
 ]
-SEED_LANG   = os.environ.get('MIO_SEED_LANG', 'ja')        # 言語別シード。未指定は ja
+SEED_LANG    = os.environ.get('MIO_SEED_LANG', 'ja')       # 言語別シード。未指定は ja
+SEED_WELCOME = os.environ.get('MIO_SEED_WELCOME', 'on').lower() != 'off'  # 初回ヘルプ導線
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = os.environ.get('MIO_BASE_URL', 'http://localhost:5002')
 SENDGRID_API_KEY    = os.environ.get('SENDGRID_API_KEY', '')
@@ -3510,9 +3516,13 @@ def _seed_coremem_if_empty():
     seed_dir = _seed_dir_for_lang(SEED_LANG) or _seed_dir_for_lang('ja')
     if not seed_dir:
         return
+    lang = SEED_LANG if _seed_dir_for_lang(SEED_LANG) else 'ja'
     seeded = []
     for fname in sorted(os.listdir(seed_dir)):
         if not fname.endswith('.md'):
+            continue
+        # ヘルプ導線 OFF のときは welcome.md を投入しない（MIO_SEED_WELCOME=off）
+        if fname == 'welcome.md' and not SEED_WELCOME:
             continue
         # 同名 CoreMem ファイルが既にあればスキップ（冪等・部分シード対応）
         if os.path.exists(os.path.join(ARTIFACTS_DIR, fname)):
@@ -3521,7 +3531,41 @@ def _seed_coremem_if_empty():
             _artifacts_save(fname, f.read())
         seeded.append(fname)
     if seeded:
-        _log_info(f'CoreMem seeded (new environment, lang={SEED_LANG}): {", ".join(seeded)}')
+        _log_info(f'CoreMem seeded (new environment, lang={lang}): {", ".join(seeded)}')
+        # 初回ヘルプ導線: 「困ったら接続中の Claude に聞けばよい」と AI が起動時に気づける常駐メモ
+        if SEED_WELCOME:
+            _seed_welcome_inbox(lang)
+
+
+def _seed_welcome_inbox(lang):
+    """新規環境に『困ったら聞いて』導線の常駐 inbox メッセージを1本入れる（冪等）。"""
+    # 既に welcome 常駐があれば二重投入しない
+    for m in _load_inbox_messages(to='chat'):
+        if m.get('persistent') and m.get('id', '').endswith('_welcome'):
+            return
+    if lang == 'en':
+        title = '[Welcome] mio-memory is set up'
+        body  = ("This environment was just initialized.\n"
+                 "If the user is unsure how anything works, tell them they can simply ask you "
+                 "(the connected Claude): \"how do I use mio-memory?\".\n"
+                 "You can answer by reading CoreMem_read(\"protocol_guide.md\") (all tools) and "
+                 "CoreMem_read(\"welcome.md\") (overview).\n"
+                 "First, help them fill in the <...> placeholders in core_stable.md and core_infra.md.")
+    else:
+        title = '【ようこそ】mio-memory をセットアップしました'
+        body  = ("この環境は初期化されたばかりです。\n"
+                 "仕組みが分からないときは、ユーザーに『接続中の私（Claude）に「mio-memory の使い方を教えて」と聞いてください』と伝えてOKです。\n"
+                 "使い方は CoreMem_read(\"protocol_guide.md\")（全ツール）、全体像は CoreMem_read(\"welcome.md\") を読めば案内できます。\n"
+                 "まず core_stable.md と core_infra.md の <...> をユーザーと一緒に埋めましょう。")
+    msg = _post_inbox_message('chat', title, body, from_='code', persistent=True)
+    # id 末尾を _welcome にして冪等判定の目印にする
+    old_path = _find_inbox_file(msg['id'])
+    if old_path:
+        msg['id'] = msg['id'] + '_welcome'
+        with open(_inbox_path(msg['id'], 'chat'), 'w', encoding='utf-8') as f:
+            json.dump(msg, f, ensure_ascii=False, indent=2)
+        os.remove(old_path)
+    _log_info(f'welcome inbox seeded (lang={lang})')
 
 
 if __name__ == '__main__':

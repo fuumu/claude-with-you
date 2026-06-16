@@ -40,6 +40,14 @@ Decide immediately from the first message and minimize tool calls.
 
 ---
 
+## When asked how to use the system
+
+If the user asks how this system itself works (tools, memory, CoreMem, etc.), answer by reading
+`CoreMem_read("protocol_guide.md")` (how every tool works) and the relevant CoreMem files.
+The default is to read and answer on the spot, not "go find the manual." For the overview, see `welcome.md`.
+
+---
+
 ## inbox (inter-session messaging)
 
 - Startup check: `inbox_check` (standing messages come with their body, so it's light)

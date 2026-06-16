@@ -141,7 +141,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.44","mcp_tool_count":19}
+# {"status":"ok","version":"3.45","mcp_tool_count":19}
 ```
 
 ### 5. Claude Code への登録
@@ -622,6 +622,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | `SENDGRID_FROM_EMAIL` | （空） | お友達システム：送信元メールアドレス |
 | `MIO_REGISTER_URL` | （空） | お友達システム：承認メール内アクティベーションリンクのベース URL（`/activate` を自動付与。省略時は MIO_BASE_URL を使用） |
 | `MIO_SEED_LANG` | `ja` | 新規環境にシードする CoreMem スケルトンの言語（`ja` / `en`）。無ければ `ja` にフォールバック（v3.44） |
+| `MIO_SEED_WELCOME` | `on` | 新規シード時に `welcome.md` と初回のみ常駐 inbox 案内を投入。`off` で両方抑止（v3.45） |
 
 ---
 

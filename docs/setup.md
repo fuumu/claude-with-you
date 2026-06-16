@@ -159,7 +159,15 @@ On first boot, `_seed_coremem_if_empty()` runs under this contract:
 3. Do **nothing** when `core_stable.md` is present (protects a running environment's data)
 
 Files seeded: `core_manifest.md` / `core_stable.md` / `core_rules.md` / `core_infra.md` /
-`core_history.md` / `todo.md` / `protocol_guide.md`
+`core_history.md` / `todo.md` / `protocol_guide.md` / `welcome.md`
+
+### Help on-ramp (`MIO_SEED_WELCOME`, default on)
+
+So new users aren't lost, the first seed adds an "ask the connected Claude how to use it" on-ramp:
+
+- seeds `welcome.md` (a user-facing guide)
+- posts a one-time persistent inbox message (the AI notices it at startup and can guide the user)
+- set `MIO_SEED_WELCOME=off` in `.env` if you don't want it
 
 ### Seed language (`MIO_SEED_LANG`)
 

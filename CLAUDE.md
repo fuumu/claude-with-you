@@ -116,6 +116,7 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to MIO_BASE_URL) |
 | `MIO_SEED_LANG` | `ja` | Language of the CoreMem skeleton seeded into a new environment (`ja` / `en`); falls back to `ja` if missing (v3.44) |
+| `MIO_SEED_WELCOME` | `on` | On a fresh seed, also add `welcome.md` + a one-time persistent inbox "ask the connected Claude for help" message; `off` suppresses both (v3.45) |
 
 ## 澪コードの定型フロー
 
