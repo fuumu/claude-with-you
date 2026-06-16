@@ -109,6 +109,12 @@ Claude.ai エクスポート ZIP をインポート
 - HTTPS アクセス（Claude.ai の OAuth 認証に必要）
 - Claude Code CLI（ローカル PC 側）
 
+> **⚠️ HTTPS 公開は環境依存（本書のスコープ外）：** Claude.ai / Claude Code との連携には、
+> 外部から到達できる **HTTPS URL** が必須です。ドメイン取得・TLS 証明書（Let's Encrypt / Certbot 等）・
+> リバースプロキシ／トンネル（Synology nginx・Cloudflare Tunnel・ngrok 等）の設定は環境ごとに異なるため、
+> 本書では代表的なパターンの提示にとどめます。**証明書の取得やネットワーク設定の詳細は、各ツールの公式
+> ドキュメントを参照して各自で用意してください。**
+
 ### 1. リポジトリをクローン
 
 ```bash

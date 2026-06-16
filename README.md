@@ -29,6 +29,12 @@ Built around the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 
 **Requirements:** Docker, a server with HTTPS (Synology NAS, VPS, etc.), Claude Code CLI
 
+> **⚠️ HTTPS exposure is environment-specific (out of scope here):** integrating with Claude.ai /
+> Claude Code requires a publicly reachable **HTTPS URL**. Getting a domain, TLS certificates
+> (Let's Encrypt / Certbot, etc.), and a reverse proxy / tunnel (Synology nginx, Cloudflare Tunnel,
+> ngrok, etc.) differ per environment, so this README only shows representative patterns.
+> **Set up certificates and networking yourself, following each tool's official docs.**
+
 ```bash
 # 1. Clone and configure
 git clone https://github.com/fuumu/claude-with-you.git
