@@ -156,7 +156,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.45","mcp_tool_count":19}
+# {"status":"ok","version":"3.46","mcp_tool_count":19}
 ```
 
 ### 5. Claude Code への登録
@@ -594,6 +594,8 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | GET | `/api/memory/search?q=...` | キーワード検索 |
 | GET | `/api/memory/hsearch?q=...` | 階層検索（keywords+symbolic→summary→full body、match_layer/summary/symbolic 付き） |
 | GET | `/api/memories/symbolic` | 全エントリの 3層シンボリック圧縮一覧（`{id, title, symbolic}`、空は除外・v3.42） |
+| POST | `/api/memory/reindex` | index.json を全エントリから再構築（層再生成後の明示反映・v3.46） |
+| GET | `/api/export` | CoreMem＋ExtMemory のバックアップ ZIP（読み取り専用・最新スナップショット・v3.46） |
 | GET | `/api/memory/<id>` | エントリ取得 |
 | POST | `/api/memory` | エントリ作成 |
 | PATCH | `/api/memory/<id>` | エントリ更新 |

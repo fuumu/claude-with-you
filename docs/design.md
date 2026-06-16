@@ -624,6 +624,16 @@ An annotation layer for audits and re-experiencing sessions. Design principle:
 Intended for surveying/clustering similar entries and as a future cascade entry point.
 No MCP tool; REST only.
 
+### reindex and backup export (v3.46)
+
+- `POST /api/memory/reindex` — calls `rebuild_index()` explicitly. Normally the index is rebuilt
+  automatically on write/update/delete, but this lets you reflect changes (e.g. after regenerating
+  symbolic/keywords layers) without a dummy write.
+- `GET /api/export` — read-only backup ZIP of CoreMem (latest content of each file) + ExtMemory
+  (`memory/*.json` plus `index.json`), as B1's first half. Layout: `coremem/` + `extmemory/` +
+  `export_meta.json`. Latest snapshot only (no version history). Restore (import) involves writes and
+  is to be implemented separately, with care.
+
 ---
 
 ## 11. memory_share MCP tool + admin.html Memory keyword search

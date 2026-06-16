@@ -622,6 +622,14 @@ conversation_share(uuid: str)
 （symbolic が空＝3層未生成のものは除外、読み取り専用）。俯瞰して似たエントリを束ねる・
 将来のカスケード入口としての利用を想定。MCP ツールは設けず REST のみ。
 
+### reindex とバックアップ export（v3.46）
+
+- `POST /api/memory/reindex` — `rebuild_index()` を明示的に呼ぶ。通常は write/update/delete で
+  自動再構築されるが、層（symbolic/keywords）の再生成後など、ダミー書き込みなしで確定反映したい場合に使う。
+- `GET /api/export` — CoreMem（各ファイルの最新版本文）＋ ExtMemory（`memory/*.json` 全件＋`index.json`）を
+  ZIP で返す読み取り専用バックアップ（B1 前半）。`coremem/` ＋ `extmemory/` ＋ `export_meta.json` の構成。
+  版履歴は含まず最新スナップショットのみ。復元（import）は書き込みを伴うため別途・慎重に実装予定。
+
 ---
 
 ## 11. memory_share MCPツール + admin.html Memoryキーワード検索

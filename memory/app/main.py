@@ -1,8 +1,13 @@
 """
-mio-memory v3.45  —  Streamable HTTP MCP transport
+mio-memory v3.46  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.46 (2026-06-16) - reindex エンドポイント ＋ バックアップ export（B1前半）
+    - POST /api/memory/reindex: index.json を全エントリから再構築（層の再生成後など
+      明示的に叩ける。M2バックフィルで踏んだ痛点の解消）
+    - GET /api/export: CoreMem最新版＋ExtMemory全件＋index を ZIP で返す（読み取り専用・
+      別環境復元用スナップショット）。B1（バックアップ）の前半。import復元は別途
   v3.45 (2026-06-16) - 新規環境の「困ったら聞いて」ヘルプ導線（MIO_SEED_WELCOME）
     - skeleton に welcome.md（日英）追加——接続中の Claude に使い方を聞けばよいと案内
     - 初回シード時に persistent inbox の welcome を1本投入（AIが起動時に気づく・冪等）
@@ -321,7 +326,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.45'
+VERSION = '3.46'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -912,6 +917,54 @@ def api_memories_symbolic():
         if not e.get('deleted') and (e.get('symbolic') or '').strip()
     ]
     return jsonify(items)
+
+@app.route('/api/memory/reindex', methods=['POST'])
+@require_auth
+def api_memory_reindex():
+    """index.json を全エントリから再構築する（symbolic/keywords のバックフィル等を確定反映）。
+    通常は write/update/delete 時に自動で走るが、層の再生成後など明示的に叩きたい場合に使う。"""
+    rebuild_index()
+    count = 0
+    if os.path.exists(INDEX_FILE):
+        with open(INDEX_FILE) as f:
+            count = len([e for e in json.load(f) if not e.get('deleted')])
+    return jsonify({'status': 'reindexed', 'count': count})
+
+@app.route('/api/export')
+@require_auth
+def api_export():
+    """CoreMem（最新版本文）＋ ExtMemory（全エントリ＋index）を ZIP で返すバックアップ（B1・読み取り専用）。
+    別環境への最低限の手動復元用スナップショット。版履歴は含まず最新状態のみ。"""
+    import io
+    buf = io.BytesIO()
+    n_mem = n_core = 0
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        # ExtMemory（KVストア）
+        if os.path.exists(INDEX_FILE):
+            z.write(INDEX_FILE, 'extmemory/index.json')
+        if os.path.isdir(DATA_DIR):
+            for fn in sorted(os.listdir(DATA_DIR)):
+                if fn.endswith('.json'):
+                    z.write(os.path.join(DATA_DIR, fn), f'extmemory/memory/{fn}')
+                    n_mem += 1
+        # CoreMem（UserCoreMemory・各ファイルの最新版本文）
+        for item in _artifacts_list():
+            name = item['name']
+            r = _artifacts_read(name)
+            if 'content' in r:
+                z.writestr(f'coremem/{name}', r['content'])
+                n_core += 1
+        # メタ情報
+        meta = {
+            'exported_at': now_jst(), 'server_version': VERSION,
+            'extmemory_count': n_mem, 'coremem_count': n_core,
+            'note': 'CoreMem は最新版本文のスナップショット（版履歴なし）。復元は各 name で CoreMem_save、ExtMemory は memory/*.json を /data/memory/ に配置し reindex。'
+        }
+        z.writestr('export_meta.json', json.dumps(meta, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    fname = f'mio_backup_{datetime.now(JST).strftime("%Y%m%d_%H%M%S")}.zip'
+    return Response(buf.read(), mimetype='application/zip',
+                    headers={'Content-Disposition': f'attachment; filename={fname}'})
 
 @app.route('/api/memory/search')
 @require_auth
