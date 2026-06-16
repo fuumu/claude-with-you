@@ -161,6 +161,16 @@ On first boot, `_seed_coremem_if_empty()` runs under this contract:
 Files seeded: `core_manifest.md` / `core_stable.md` / `core_rules.md` / `core_infra.md` /
 `core_history.md` / `todo.md` / `protocol_guide.md`
 
+### Seed language (`MIO_SEED_LANG`)
+
+The skeleton ships in two languages (`skeleton/coremem/ja/` and `en/`). Pick which one to seed via an env var:
+
+- unset → **`ja`** (default)
+- `MIO_SEED_LANG=en` → English skeleton
+- falls back to `ja` if the requested language is missing
+
+For an English-speaking new environment, set `MIO_SEED_LANG=en` in `.env` before the first boot.
+
 ### Filling in after setup
 
 1. Replace the `<...>` placeholders in `core_stable.md` (identity) and `core_infra.md` (host/URL/version)

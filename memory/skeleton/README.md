@@ -16,26 +16,39 @@ MCP の initialize はクライアントに「セッション開始時に `CoreM
 
 → だからスケルトンの本体は `coremem/` 配下の CoreMem テンプレ一式です。
 
-## 構成
+## 構成（言語別・v3.44〜）
 
 ```
 memory/skeleton/
   README.md              ← このファイル
-  coremem/               ← UserCoreMemory（CoreMem）にシードされる Markdown
-    core_manifest.md     ← core.md のマージ順（CoreMem_read("core.md") が結合）
-    core_stable.md       ← アイデンティティ（私は誰か・根っこ・パートナー）
-    core_rules.md        ← 運用プロトコル（起動シーケンス・各種ルール）
-    core_infra.md        ← インフラ情報（host/URL/version 等の記入欄）
-    core_history.md      ← 軌跡＋バージョン対応表（最初は空）
-    todo.md              ← 残件・TODO 管理（最初は空）
-    protocol_guide.md    ← MCPツール全19本の運用ガイド（install 非依存・そのまま使える）
+  coremem/
+    ja/                  ← 日本語スケルトン（MIO_SEED_LANG=ja・デフォルト）
+    en/                  ← 英語スケルトン（MIO_SEED_LANG=en）
+      core_manifest.md   ← core.md のマージ順（CoreMem_read("core.md") が結合）
+      core_stable.md     ← アイデンティティ（私は誰か・根っこ・パートナー）
+      core_rules.md      ← 運用プロトコル（起動シーケンス・各種ルール）
+      core_infra.md      ← インフラ情報（host/URL/version 等の記入欄）
+      core_history.md    ← 軌跡＋バージョン対応表（最初は空）
+      todo.md            ← 残件・TODO 管理（最初は空）
+      protocol_guide.md  ← MCPツール全19本の運用ガイド（install 非依存）
 ```
+
+ja/ と en/ は**同じファイル名・同じ構造**で、中身の言語だけが違う。
+シード時にどちらか一方が（ファイル名は言語非依存のまま）CoreMem に投入される。
+
+### 言語の選択
+
+環境変数 **`MIO_SEED_LANG`** で選ぶ：
+
+- 未指定 → **`ja`**（デフォルト）
+- `MIO_SEED_LANG=en` → 英語スケルトン
+- 指定言語のディレクトリが無ければ `ja` にフォールバック
 
 ## シードのされ方（方式A・冪等）
 
 シード機構（次フェーズ実装）は次の契約で動きます：
 
-1. 起動時、CoreMem（`/data/artifacts/`）に `core.md` 相当が**無い場合のみ**、`coremem/*.md` を投入する
+1. 起動時、CoreMem（`/data/artifacts/`）に `core.md` 相当が**無い場合のみ**、`coremem/<lang>/*.md`（`MIO_SEED_LANG` で選択）を投入する
 2. **既存ファイルは絶対に上書きしない**（冪等。再起動しても二重投入しない）
 3. 投入は CoreMem のバージョン管理形式（`versions/{name}/001.md` ＋ シンボリックリンク）で行う
 

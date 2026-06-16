@@ -40,7 +40,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.43","mcp_tool_count":19}
+# {"status":"ok","version":"3.44","mcp_tool_count":19}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -436,6 +436,7 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails (Mail Send scope) |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to `MIO_BASE_URL`) |
+| `MIO_SEED_LANG` | `ja` | Language of the CoreMem skeleton seeded into a new environment (`ja` / `en`); falls back to `ja` (v3.44) |
 
 ---
 

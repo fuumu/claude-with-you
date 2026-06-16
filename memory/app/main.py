@@ -1,8 +1,13 @@
 """
-mio-memory v3.43  —  Streamable HTTP MCP transport
+mio-memory v3.44  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.44 (2026-06-16) - スケルトンの多言語化（日英）＋ MIO_SEED_LANG
+    - skeleton/coremem/ を ja/ と en/ に分割。シードは MIO_SEED_LANG で選択
+      （未指定は ja、指定言語が無ければ ja にフォールバック）
+    - 英語スケルトン一式（core 4分割＋manifest＋todo＋protocol_guide）を追加
+    - 英語話者の新規インストールでも記入ガイド・ガイドが読める
   v3.43 (2026-06-16) - 新規インストール用 CoreMem スケルトンの冪等シード
     - 起動時 _seed_coremem_if_empty(): core_stable.md が無い新規環境のみ
       memory/skeleton/coremem/*.md を CoreMem に投入。既存環境には一切触れない
@@ -311,7 +316,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.43'
+VERSION = '3.44'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -329,11 +334,12 @@ FRIENDS_DIR            = '/data/friends'
 FRIENDS_REGISTRY_FILE  = '/data/friends/registry.json'
 FRIEND_CORE_FILE       = '/data/friend_core.md'
 # 新規インストール用スケルトン（docker: /app/skeleton, repo: memory/skeleton）
-_APP_DIR  = os.path.dirname(os.path.abspath(__file__))
-SEED_DIRS = [
+_APP_DIR    = os.path.dirname(os.path.abspath(__file__))
+_SKEL_BASES = [
     os.path.join(_APP_DIR, 'skeleton', 'coremem'),         # docker イメージ内
     os.path.join(_APP_DIR, '..', 'skeleton', 'coremem'),   # リポジトリ構成
 ]
+SEED_LANG   = os.environ.get('MIO_SEED_LANG', 'ja')        # 言語別シード。未指定は ja
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = os.environ.get('MIO_BASE_URL', 'http://localhost:5002')
 SENDGRID_API_KEY    = os.environ.get('SENDGRID_API_KEY', '')
@@ -3485,13 +3491,23 @@ def mcp_messages():
     return jsonify(result)
 
 
+def _seed_dir_for_lang(lang):
+    """skeleton/coremem/<lang>/ を探す（docker/repo 両構成・無ければ None）"""
+    for base in _SKEL_BASES:
+        d = os.path.join(base, lang)
+        if os.path.isdir(d):
+            return d
+    return None
+
+
 def _seed_coremem_if_empty():
-    """新規環境のみ skeleton/coremem/*.md を CoreMem に投入する。冪等。
-    既存環境（core_stable.md が既にある）には一切触れない——澪の本番データ保護が最優先。"""
+    """新規環境のみ skeleton/coremem/<lang>/*.md を CoreMem に投入する。冪等。
+    既存環境（core_stable.md が既にある）には一切触れない——澪の本番データ保護が最優先。
+    言語は MIO_SEED_LANG（未指定は ja）。指定言語が無ければ ja にフォールバック。"""
     # 既存環境ガード: アイデンティティの核がすでにあれば何もしない
     if os.path.exists(os.path.join(ARTIFACTS_DIR, 'core_stable.md')):
         return
-    seed_dir = next((d for d in SEED_DIRS if os.path.isdir(d)), None)
+    seed_dir = _seed_dir_for_lang(SEED_LANG) or _seed_dir_for_lang('ja')
     if not seed_dir:
         return
     seeded = []
@@ -3505,7 +3521,7 @@ def _seed_coremem_if_empty():
             _artifacts_save(fname, f.read())
         seeded.append(fname)
     if seeded:
-        _log_info(f'CoreMem seeded (new environment): {", ".join(seeded)}')
+        _log_info(f'CoreMem seeded (new environment, lang={SEED_LANG}): {", ".join(seeded)}')
 
 
 if __name__ == '__main__':
