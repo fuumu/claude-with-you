@@ -590,11 +590,11 @@ conversation_share(uuid: str)
 | 記憶操作 | 5 | memory_read_index, memory_read, memory_write, memory_upsert, memory_search |
 | 記憶シェア | 1 | memory_share |
 | アーティファクト | 4 | CoreMem_save, CoreMem_read, CoreMem_list, CoreMem_delete |
-| 会話 | 4 | conversation_search, conversation_share, conversation_read, log_annotate |
+| 会話 | 5 | conversation_index, conversation_search, conversation_share, conversation_read, log_annotate |
 | インボックス | 3 | inbox_check, inbox_read, inbox_post |
 | バッチ | 1 | batch_run_summary_layers |
-| **通常セッション合計** | **18** | |
-| **友達セッション** | **4** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note |
+| **通常セッション合計** | **19** | |
+| **友達セッション** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
 ※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の18ツールは使用不可。
 
@@ -795,7 +795,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 `GET /mcp?token=<friend_token>` で接続。`_get_friend_by_token()` が `registry.json` を検索し、
 `status == "active"` の場合に通過。通常の `MIO_API_TOKEN` チェックより先に評価される。
 
-### 友達用 MCP ツール（4本）
+### 友達用 MCP ツール（6本）
 
 | ツール | 説明 |
 |--------|------|
@@ -803,6 +803,8 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 | `friend_memory_write` | 「覚えていること」セクションに日付付きエントリを追記 |
 | `friend_memory_delete` | 特定エントリを削除 |
 | `mio_self_note` | オーナーの inbox（chat宛）にメモを送信 |
+| `friend_inbox_check` | 友達用 inbox チャネルを確認（v3.36） |
+| `friend_inbox_read` | 友達用 inbox のメッセージを取得し既読化（v3.36） |
 
 ### memory.md の構造
 

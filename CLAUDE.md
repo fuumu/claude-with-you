@@ -89,7 +89,7 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 **Friend system (v3.9–v3.12):**
 - Registration flow: `POST /api/friends/register` (no auth) → admin approves via admin.html → SendGrid sends activation code email → friend visits `/activate` and gets their token
-- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (4 tools) instead of the normal 18 tools
+- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (6 tools) instead of the normal 19 tools
 - Per-friend memory: stored at `/data/friends/{seq_no:03d}/memory.md`; managed via `friend_memory_*` tools
 - Admin REST API: `/api/friends` (list), `/api/friends/<seq_no>/approve`, `/api/friends/<seq_no>/revoke`, `DELETE /api/friends/<seq_no>` (complete removal with shutil.rmtree)
 - Public pages: `/register` (registration form + invitation text from CoreMem `friend_invitation.md`), `/activate` (activation code entry)

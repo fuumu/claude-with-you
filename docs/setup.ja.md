@@ -142,6 +142,36 @@ curl <YOUR_SERVER_URL>/health
 
 ---
 
+## 新規インストール時の初期化（CoreMem スケルトン）
+
+`memory/data/` は `.gitignore` 対象のため、まっさらな環境には記憶もルールも付いてこない。
+mio-memory は**空でも起動するが**、アシスタントの「自分は誰か」を定義する CoreMem `core.md` だけは
+中身が無いと意味をなさない（MCP initialize が起動時に `CoreMem_read("core.md")` を指示するため）。
+
+これを埋めるのが **`memory/skeleton/`**（リポジトリに同梱・v3.43〜）。
+
+### 自動シードの挙動（冪等・既存環境は不変）
+
+初回起動時、`_seed_coremem_if_empty()` が次の契約で動く：
+
+1. CoreMem に `core_stable.md` が**無い新規環境のときだけ** `skeleton/coremem/*.md` を投入する
+2. 同名ファイルが既にあればスキップ（**冪等**。再起動で二重投入しない）
+3. `core_stable.md` がある既存環境では**一切何もしない**（運用中のデータを保護）
+
+投入されるファイル：`core_manifest.md` / `core_stable.md` / `core_rules.md` / `core_infra.md` /
+`core_history.md` / `todo.md` / `protocol_guide.md`
+
+### セットアップ後の記入
+
+1. `core_stable.md`（アイデンティティ）・`core_infra.md`（host/URL/version）の `<...>` を自分の環境に書き換える
+   - admin.html の CoreMem タブ、または MCP `CoreMem_save` で編集
+2. `core_rules.md` の運用ルールを必要に応じて調整
+3. `protocol_guide.md`（MCPツール全19本ガイド）はそのまま使える（install 非依存）
+
+> スケルトンの中身・方針の詳細は `memory/skeleton/README.md` を参照。
+
+---
+
 ## お友達システム セットアップ
 
 ### SendGrid 設定

@@ -141,7 +141,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.42","mcp_tool_count":18}
+# {"status":"ok","version":"3.43","mcp_tool_count":19}
 ```
 
 ### 5. Claude Code への登録

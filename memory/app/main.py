@@ -1,8 +1,14 @@
 """
-mio-memory v3.42  —  Streamable HTTP MCP transport
+mio-memory v3.43  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.43 (2026-06-16) - 新規インストール用 CoreMem スケルトンの冪等シード
+    - 起動時 _seed_coremem_if_empty(): core_stable.md が無い新規環境のみ
+      memory/skeleton/coremem/*.md を CoreMem に投入。既存環境には一切触れない
+    - 同名ファイルが既にあればスキップ（冪等・部分シード対応）
+    - Dockerfile に COPY skeleton/ 追加（イメージへスケルトン同梱）
+    - skeleton 本体は別途 memory/skeleton/（core 4分割＋manifest＋todo＋protocol_guide）
   v3.42 (2026-06-16) - M3: symbolic一覧API ＋ U11: logsビューア注記表示
     - M3: GET /api/memories/symbolic — 全エントリの {id, title, symbolic} を返す
       （symbolic 空は除外・読み取り専用）。俯瞰／カスケード入口用
@@ -305,7 +311,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.42'
+VERSION = '3.43'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -322,6 +328,12 @@ ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
 FRIENDS_DIR            = '/data/friends'
 FRIENDS_REGISTRY_FILE  = '/data/friends/registry.json'
 FRIEND_CORE_FILE       = '/data/friend_core.md'
+# 新規インストール用スケルトン（docker: /app/skeleton, repo: memory/skeleton）
+_APP_DIR  = os.path.dirname(os.path.abspath(__file__))
+SEED_DIRS = [
+    os.path.join(_APP_DIR, 'skeleton', 'coremem'),         # docker イメージ内
+    os.path.join(_APP_DIR, '..', 'skeleton', 'coremem'),   # リポジトリ構成
+]
 API_TOKEN     = os.environ.get('MIO_API_TOKEN', 'changeme')
 BASE_URL      = os.environ.get('MIO_BASE_URL', 'http://localhost:5002')
 SENDGRID_API_KEY    = os.environ.get('SENDGRID_API_KEY', '')
@@ -3473,10 +3485,34 @@ def mcp_messages():
     return jsonify(result)
 
 
+def _seed_coremem_if_empty():
+    """新規環境のみ skeleton/coremem/*.md を CoreMem に投入する。冪等。
+    既存環境（core_stable.md が既にある）には一切触れない——澪の本番データ保護が最優先。"""
+    # 既存環境ガード: アイデンティティの核がすでにあれば何もしない
+    if os.path.exists(os.path.join(ARTIFACTS_DIR, 'core_stable.md')):
+        return
+    seed_dir = next((d for d in SEED_DIRS if os.path.isdir(d)), None)
+    if not seed_dir:
+        return
+    seeded = []
+    for fname in sorted(os.listdir(seed_dir)):
+        if not fname.endswith('.md'):
+            continue
+        # 同名 CoreMem ファイルが既にあればスキップ（冪等・部分シード対応）
+        if os.path.exists(os.path.join(ARTIFACTS_DIR, fname)):
+            continue
+        with open(os.path.join(seed_dir, fname), encoding='utf-8') as f:
+            _artifacts_save(fname, f.read())
+        seeded.append(fname)
+    if seeded:
+        _log_info(f'CoreMem seeded (new environment): {", ".join(seeded)}')
+
+
 if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     os.makedirs(INBOX_DIR, exist_ok=True)
+    _seed_coremem_if_empty()   # 新規環境のみ skeleton を投入（既存は不変）
     _log_info(f'mio-memory v{VERSION} starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
     threading.Thread(target=_nightly_batch_loop, daemon=True).start()

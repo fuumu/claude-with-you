@@ -589,13 +589,13 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Memory ops | 5 | memory_read_index, memory_read, memory_write, memory_upsert, memory_search |
 | Memory share | 1 | memory_share |
 | Artifacts | 4 | CoreMem_save, CoreMem_read, CoreMem_list, CoreMem_delete |
-| Conversations | 4 | conversation_search, conversation_share, conversation_read, log_annotate |
+| Conversations | 5 | conversation_index, conversation_search, conversation_share, conversation_read, log_annotate |
 | Inbox | 3 | inbox_check, inbox_read, inbox_post |
 | Batch | 1 | batch_run_summary_layers |
-| **Regular session total** | **18** | |
-| **Friend sessions** | **4** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note |
+| **Regular session total** | **19** | |
+| **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 18 tools are unavailable there.
+※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 19 tools are unavailable there.
 
 ### Conversation log annotations (log_annotate, v3.22)
 
@@ -797,7 +797,7 @@ Example `registry.json` entry:
 Connect via `GET /mcp?token=<friend_token>`. `_get_friend_by_token()` looks up `registry.json`
 and passes when `status == "active"`. Evaluated before the regular `MIO_API_TOKEN` check.
 
-### Friend MCP tools (4)
+### Friend MCP tools (6)
 
 | Tool | Description |
 |--------|------|
@@ -805,6 +805,8 @@ and passes when `status == "active"`. Evaluated before the regular `MIO_API_TOKE
 | `friend_memory_write` | Append a dated entry to the "覚えていること" section |
 | `friend_memory_delete` | Delete a specific entry |
 | `mio_self_note` | Send a note to the owner's inbox (addressed to chat) |
+| `friend_inbox_check` | Check this friend's inbox channel (v3.36) |
+| `friend_inbox_read` | Read a message from this friend's inbox and mark it read (v3.36) |
 
 ### memory.md structure
 

@@ -142,6 +142,36 @@ curl <YOUR_SERVER_URL>/health
 
 ---
 
+## First-run initialization (CoreMem skeleton)
+
+`memory/data/` is `.gitignore`d, so a brand-new environment ships with no memory and no rules.
+mio-memory **boots fine when empty**, but the CoreMem `core.md` that defines who the assistant is
+is meaningless without content (the MCP `initialize` tells clients to run `CoreMem_read("core.md")` at session start).
+
+**`memory/skeleton/`** (bundled in the repo, v3.43+) fills this gap.
+
+### Auto-seed behavior (idempotent; existing environments untouched)
+
+On first boot, `_seed_coremem_if_empty()` runs under this contract:
+
+1. Seed `skeleton/coremem/*.md` **only when CoreMem has no `core_stable.md`** (a fresh environment)
+2. Skip any file that already exists (**idempotent** — no double-seeding on restart)
+3. Do **nothing** when `core_stable.md` is present (protects a running environment's data)
+
+Files seeded: `core_manifest.md` / `core_stable.md` / `core_rules.md` / `core_infra.md` /
+`core_history.md` / `todo.md` / `protocol_guide.md`
+
+### Filling in after setup
+
+1. Replace the `<...>` placeholders in `core_stable.md` (identity) and `core_infra.md` (host/URL/version)
+   — edit via the admin.html CoreMem tab or the MCP `CoreMem_save` tool
+2. Adjust the operating rules in `core_rules.md` as needed
+3. `protocol_guide.md` (the 19-tool MCP guide) works as-is (install-agnostic)
+
+> See `memory/skeleton/README.md` for the full rationale and policy.
+
+---
+
 ## Friend system setup
 
 ### SendGrid configuration
