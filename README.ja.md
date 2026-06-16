@@ -129,7 +129,16 @@ MIO_API_TOKEN=your_secret_token_here
 MIO_BASE_URL=https://memory.example.com   # Cloudflare Tunnel など外部公開 URL
 MIO_LOG_LEVEL=info
 # MIO_ALLOWED_ORIGINS=https://claude.ai  # 必要なら設定
+# MIO_SEED_LANG=en        # 英語で始める場合（未指定はデフォルト ja）
+# MIO_SEED_WELCOME=off    # 初回ヘルプ導線が不要な場合（デフォルト on）
 ```
+
+> **初回起動時の自動セットアップ：** まっさらな環境では、初回起動時に CoreMem スケルトン
+> （`core.md` の元になる `core_stable.md`・`core_rules.md` 等、`protocol_guide.md`、`welcome.md`）が
+> 自動で投入される。投入後に `core_stable.md`（アシスタントの人物像）と `core_infra.md`（URL等）の
+> `<...>` を埋めればよい。**使い方が分からなくなったら、接続中の Claude に「mio-memory の使い方を教えて」
+> と聞けば案内してくれる。** 詳細は [docs/setup.ja.md](docs/setup.ja.md) と
+> [memory/skeleton/README.md](memory/skeleton/README.md)。
 
 ### 3. 起動
 

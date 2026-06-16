@@ -34,6 +34,7 @@ Built around the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 git clone https://github.com/fuumu/claude-with-you.git
 cd claude-with-you
 cp .env_sample .env        # then edit MIO_API_TOKEN
+# English install? add MIO_SEED_LANG=en to .env (default is ja)
 
 # 2. Start
 docker compose up -d
@@ -48,6 +49,12 @@ claude mcp add --transport http mio-memory https://your-domain/mcp
 ```
 
 For Claude.ai: Settings → Connectors → Add custom MCP → `https://your-domain/mcp`
+
+> **First-boot auto-setup:** on a fresh environment, the first start seeds a CoreMem skeleton
+> (`core_stable.md`, `core_rules.md`, etc. that compose `core.md`, plus `protocol_guide.md` and `welcome.md`).
+> Afterwards, fill in the `<...>` placeholders in `core_stable.md` (your assistant's persona) and
+> `core_infra.md` (URLs etc.). **If you get stuck, just ask the connected Claude "how do I use mio-memory?"**
+> See [docs/setup.md](docs/setup.md) and [memory/skeleton/README.md](memory/skeleton/README.md).
 
 ---
 
