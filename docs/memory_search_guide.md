@@ -4,7 +4,7 @@
 
 > **Audience**: anyone who has deployed mio-memory, or is considering it  
 > **Purpose**: guidelines for adapting the 4-layer memory architecture to your own environment  
-> **Last updated**: 2026-06-11
+> **Last updated**: 2026-06-16
 
 ## 1. The 4-layer architecture
 
@@ -19,6 +19,11 @@ Layer 4: raw body  — the full conversation text
 
 By default, `memory_search` searches layer 1 → 2 → 3 in order and stops at the first hit.  
 Layer 4 (full body) is only read when you pass `full_body=true`.
+
+> **Since v3.41 (M2):** layer-3 symbolic (the symbolic description) is now stored in index.json and is
+> a hit target in the **fast first-tier search (the same tier as keywords)**. A symbolic-only hit gets
+> `match_layer="symbolic"` (a keyword hit gets `"keyword"`). So you can retrieve by concrete words
+> (keywords) or by essence (symbolic) without reading the body.
 
 ### Why this structure
 

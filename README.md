@@ -503,7 +503,7 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.34)**
+**Implemented (v3.9–v3.46)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
@@ -520,6 +520,10 @@ claude-with-you/
 - `CoreMem_save` `mode="append"` with automatic separator insertion (v3.31/v3.32)
 - `conversation_read` `include_body=false` to return annotations only without message body (v3.33)
 - `conversation_index` MCP tool + `GET /api/conversations/index` REST endpoint (v3.34)
+- Logs full-text search (v3.35), friend inbox (v3.36), `CoreMem_delete` rename (v3.37), inbox UI/threading (v3.38–v3.40)
+- Search improvements — layer-3 symbolic added to the first-tier index search (M2/v3.41), `GET /api/memories/symbolic` (M3), annotation display in the logs viewer (U11/v3.42)
+- First-install foundation — CoreMem skeleton + idempotent seed on boot (existing environments untouched), bilingual ja/en (`MIO_SEED_LANG`), "ask the connected Claude for help" on-ramp (`MIO_SEED_WELCOME`), `protocol_guide.md` (v3.43–v3.45)
+- `POST /api/memory/reindex` (explicit reindex) + `GET /api/export` (CoreMem + ExtMemory backup ZIP, B1 first half) (v3.46)
 
 ---
 
