@@ -80,7 +80,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 **`conversation_search`** — `q` · `date_from` · `date_to` · `limit` (def 5). Conversation metadata (uuid/title/date/count). **light**.
 
-**`conversation_read`** — `uuid` (req) · `include_thinking` · `thinking_limit` (def 1500) · `include_annotations` · `include_body`. With `include_annotations=true`, annotations inline + `[No.X]` numbering. **med**.
+**`conversation_read`** — `uuid` (req) · `include_thinking` · `thinking_limit` (def 1500) · `include_annotations` · `include_body` · `turn_offset` (opt, negative = from end) · `turn_limit` (opt, 0 = unlimited). With `include_annotations=true`, annotations inline + `[No.X]` numbering. `turn_offset`/`turn_limit` slice by message (head = `turn_limit=4`, tail = `turn_offset=-4`). **med**.
 
 **`conversation_share`** — `uuid` (req). 24h share URL. **light**.
 
