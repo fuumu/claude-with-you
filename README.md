@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.46","mcp_tool_count":19}
+# {"status":"ok","version":"3.47","mcp_tool_count":19}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -219,7 +219,7 @@ Browse, share, and annotate past conversations imported from Claude.ai export ZI
 |------|-------------|----------|
 | `conversation_index` | List conversation titles in descending date order with pagination — for browsing when UUID is unknown (v3.34); REST: `GET /api/conversations/index`, rebuild: `POST /api/conversations/index/rebuild` | `search`, `limit`, `offset` |
 | `conversation_search` | Search conversation titles by keyword and date range | `q`, `limit` |
-| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22); `include_body=false` returns annotations only without message body (v3.33) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations`, `include_body` |
+| `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22); `include_body=false` returns annotations only without message body (v3.33); `turn_offset`/`turn_limit` slice by message — negative offset = from end (first 4 = `turn_limit=4`, last 4 = `turn_offset=-4`) (v3.47) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations`, `include_body`, `turn_offset`, `turn_limit` |
 | `conversation_share` | Generate 24h shareable URL (`/share.html?token=` — standalone read-only viewer, v3.23) | `uuid` |
 | `log_annotate` | Append-only audit annotation on a conversation; raw logs never change, stored in `/data/annotations/{uuid}.json` (v3.22) | `uuid`, `note`, `author`, `target` |
 
@@ -503,7 +503,7 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.46)**
+**Implemented (v3.9–v3.47)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
@@ -524,6 +524,7 @@ claude-with-you/
 - Search improvements — layer-3 symbolic added to the first-tier index search (M2/v3.41), `GET /api/memories/symbolic` (M3), annotation display in the logs viewer (U11/v3.42)
 - First-install foundation — CoreMem skeleton + idempotent seed on boot (existing environments untouched), bilingual ja/en (`MIO_SEED_LANG`), "ask the connected Claude for help" on-ramp (`MIO_SEED_WELCOME`), `protocol_guide.md` (v3.43–v3.45)
 - `POST /api/memory/reindex` (explicit reindex) + `GET /api/export` (CoreMem + ExtMemory backup ZIP, B1 first half) (v3.46)
+- `conversation_read` `turn_offset`/`turn_limit` message-level slicing (read head/tail of long conversations) (v3.47)
 
 ---
 
