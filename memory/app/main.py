@@ -326,7 +326,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.46'
+VERSION = '3.47'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2860,13 +2860,15 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_read",
-        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）。include_body=falseで本文を省略し注記のみ取得可能",
+        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）。include_body=falseで本文を省略し注記のみ取得可能。turn_offset/turn_limitでメッセージ単位スライス（turn_offset負値=末尾起点・turn_limit=0で全件）",
         "inputSchema": {"type": "object", "properties": {
             "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
             "include_thinking": {"type": "boolean", "description": "trueの場合、thinkingブロックも💭[thinking]マーカー付きで含める。デフォルト: false"},
             "thinking_limit": {"type": "integer", "description": "thinking 1件あたりの文字数上限（デフォルト1500、0以下で無制限）"},
             "include_annotations": {"type": "boolean", "description": "trueの場合、log_annotateで積んだ注記を該当位置にインライン表示し、各メッセージに[No.X]通番を付ける。デフォルト: false"},
-            "include_body": {"type": "boolean", "description": "falseの場合、本文を省略し注記のみ返す（include_annotations=trueと併用）。デフォルト: true"}
+            "include_body": {"type": "boolean", "description": "falseの場合、本文を省略し注記のみ返す（include_annotations=trueと併用）。デフォルト: true"},
+            "turn_offset": {"type": "integer", "description": "先頭から飛ばすメッセージ数。負値で末尾起点（例: -6 = 最後の6件）。デフォルト: 0"},
+            "turn_limit": {"type": "integer", "description": "返す最大メッセージ数。0=無制限（全件）。デフォルト: 0"}
         }, "required": ["uuid"]}
     },
     {
@@ -3181,12 +3183,22 @@ def _handle_tool_call_raw(name, arguments):
         include_body        = bool(arguments.get("include_body", True))
         raw_tl = arguments.get("thinking_limit")
         thinking_limit = int(raw_tl) if raw_tl is not None else 1500  # 0 / 負数 = 無制限
+        turn_offset = int(arguments.get("turn_offset", 0) or 0)  # 負値=末尾起点
+        turn_limit  = int(arguments.get("turn_limit", 0) or 0)   # 0=無制限
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
         if not os.path.exists(fpath):
             return {"error": f"conversation not found: {uid}"}
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
         messages = conv.get('chat_messages', [])
+        total_msgs = len(messages)
+        # メッセージ単位スライス（turn_offset 負値=末尾起点 / turn_limit 0=無制限）。両方0で従来と完全同一
+        if turn_offset < 0:
+            slice_lo = max(0, total_msgs + turn_offset)
+        else:
+            slice_lo = min(turn_offset, total_msgs)
+        slice_hi = min(slice_lo + turn_limit, total_msgs) if turn_limit > 0 else total_msgs
+        slicing_active = (turn_offset != 0 or turn_limit != 0)
         # include_thinking 時はメッセージ上限を緩和（thinkingは長文になりがち）
         if include_thinking:
             msg_cap = max(2000, thinking_limit + 500) if thinking_limit > 0 else None
@@ -3205,6 +3217,8 @@ def _handle_tool_call_raw(name, arguments):
         thinking_found = 0
         lines = []
         for no, m in enumerate(messages, 1):
+            if slicing_active and not (slice_lo < no <= slice_hi):
+                continue
             role    = m.get('sender') or m.get('role') or '?'
             content = m.get('content') or m.get('text') or ''
             text    = ''
@@ -3240,11 +3254,18 @@ def _handle_tool_call_raw(name, arguments):
                 lines.append(line)
         title  = conv.get('name') or conv.get('title') or '無題'
         result = f'# {title}\n\n'
+        if slicing_active:
+            if slice_hi > slice_lo:
+                result += f'表示: 全{total_msgs}件中 {slice_lo + 1}-{slice_hi}\n\n'
+            else:
+                result += f'表示: 全{total_msgs}件中 該当なし\n\n'
         if ann_global:
             result += '\n'.join(_format_annotation(a) for a in ann_global) + '\n\n'
         result += '\n\n'.join(lines)
         # 対象メッセージが非表示（空テキスト等）だった注記は末尾にまとめる
-        leftover = [a for no, anns_ in ann_by_no.items() if no not in emitted_nos for a in anns_]
+        leftover = [a for no, anns_ in ann_by_no.items()
+                    if no not in emitted_nos and (not slicing_active or slice_lo < no <= slice_hi)
+                    for a in anns_]
         if leftover:
             result += '\n\n---\n（以下は対象メッセージが表示されなかった注記）\n'
             result += '\n'.join(f'[No.{_ann_target_no(a.get("target"))}] {_format_annotation(a)}' for a in leftover)
