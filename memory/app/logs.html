@@ -296,29 +296,30 @@
       z-index: 40;
     }
 
-    /* ── モバイル幅（<=768px）: サイドバーをオフキャンバス化、右パネルをボトムシート化 ── */
-    @media (max-width: 768px) {
-      .hamburger { display: flex; }
-      .sidebar {
-        position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
-        width: 86%; max-width: 340px; min-width: 0;
-        transform: translateX(-100%); transition: transform .25s ease;
-        box-shadow: 2px 0 18px rgba(0,0,0,.55);
-      }
-      .sidebar.open { transform: translateX(0); }
-      .sidebar-backdrop.show { display: block; }
-      .content { width: 100%; min-width: 0; }
-
-      /* 右スライダーパネル → 画面下から這い上がるボトムシート */
-      .right-panel {
-        position: fixed; left: 0; right: 0; bottom: 0; top: auto;
-        width: auto !important; height: 40px; max-height: 82vh; z-index: 45;
-        border-left: none; border-top: 1px solid #21262d;
-        transition: height .25s ease;
-      }
-      .right-panel.open { height: 72vh; }
-      .right-panel-toggle { border-bottom: none; }
+    /* ── モバイルレイアウト ──
+       サイドバーをオフキャンバス化・本文フル幅・右パネルをボトムシート化。
+       適用トリガーは body.force-mobile クラス。JS が「画面幅<=768px の自動判定」と
+       「⛶ 表示切替ボタンの手動トグル（localStorage 保持）」の OR でこのクラスを付け外しする。
+       → 自動判定の境界またぎ問題を避けつつ、iPad/PC でも手動でモバイル表示に切り替えられる */
+    body.force-mobile .hamburger { display: flex; }
+    body.force-mobile .sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+      width: 86%; max-width: 340px; min-width: 0;
+      transform: translateX(-100%); transition: transform .25s ease;
+      box-shadow: 2px 0 18px rgba(0,0,0,.55);
     }
+    body.force-mobile .sidebar.open { transform: translateX(0); }
+    body.force-mobile .sidebar-backdrop.show { display: block; }
+    body.force-mobile .content { width: 100%; min-width: 0; }
+    /* 右スライダーパネル → 画面下から這い上がるボトムシート */
+    body.force-mobile .right-panel {
+      position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+      width: auto !important; height: 40px; max-height: 82vh; z-index: 45;
+      border-left: none; border-top: 1px solid #21262d;
+      transition: height .25s ease;
+    }
+    body.force-mobile .right-panel.open { height: 72vh; }
+    body.force-mobile .right-panel-toggle { border-bottom: none; }
   </style>
 </head>
 <body>
@@ -406,6 +407,7 @@
       <button class="toggle-btn" onclick="copyConvId()" title="この会話のIDをコピー（澪に渡せます）">📋 ID</button>
       <button class="toggle-btn" id="share-btn" onclick="shareConv()" title="24時間有効な共有リンクを生成" data-i18n="btn.share">🔗 共有</button>
       <button class="toggle-btn" id="thinking-toggle" onclick="toggleThinking()" data-i18n="thinking.show">🧠 思考を表示</button>
+      <button class="toggle-btn" id="layout-toggle" onclick="toggleLayoutMode()" title="表示レイアウトを切り替え（サイドバー収納・本文フル幅）" data-i18n="layout.toggle">⛶ 表示切替</button>
     </div>
     <div class="summary-panel" id="summary-panel" style="display:none">
       <div class="summary-head" onclick="toggleSummary()">
@@ -729,8 +731,8 @@ async function loadSummaryPanel(conv) {
 async function selectConv(uuid) {
   activeUuid = uuid;
   renderList();
-  // モバイル: 会話を選んだらサイドバーを自動で閉じて本文を見せる
-  if (window.matchMedia('(max-width: 768px)').matches) toggleSidebar(false);
+  // モバイルレイアウト時: 会話を選んだらサイドバーを自動で閉じて本文を見せる
+  if (document.body.classList.contains('force-mobile')) toggleSidebar(false);
 
   // Use cached full data or fetch from server
   let conv = convCache.get(uuid);
@@ -1169,6 +1171,7 @@ const I18N = {
   'btn.share':       { ja: '🔗 共有', en: '🔗 Share' },
   'thinking.show':   { ja: '🧠 思考を表示', en: '🧠 Show thinking' },
   'thinking.hide':   { ja: '🧠 思考を非表示', en: '🧠 Hide thinking' },
+  'layout.toggle':   { ja: '⛶ 表示切替', en: '⛶ Layout' },
   'summary.title':   { ja: '📝 2層要約', en: '📝 Summary (L2)' },
   'summary.none':    { ja: '要約なし', en: 'No summary' },
   'summary.notgen':  { ja: 'この会話の2層要約はまだ生成されていません', en: "The L2 summary hasn't been generated for this conversation yet" },
@@ -1203,6 +1206,26 @@ window.addEventListener('message', e => {
   }
 });
 applyLang();
+
+// ── モバイルレイアウト切替（自動<=768px OR 手動トグル localStorage） ──
+function isManualMobile() { return localStorage.getItem('mioForceMobile') === '1'; }
+function applyMobileLayout() {
+  const auto = window.matchMedia('(max-width: 768px)').matches;
+  const on   = auto || isManualMobile();
+  document.body.classList.toggle('force-mobile', on);
+  const btn = document.getElementById('layout-toggle');
+  if (btn) btn.classList.toggle('active', isManualMobile());
+  if (!on) {  // PC表示へ戻すときはオフキャンバスの開状態を解除
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-backdrop').classList.remove('show');
+  }
+}
+function toggleLayoutMode() {
+  localStorage.setItem('mioForceMobile', isManualMobile() ? '0' : '1');
+  applyMobileLayout();
+}
+window.matchMedia('(max-width: 768px)').addEventListener('change', applyMobileLayout);
+applyMobileLayout();
 
 (async function() {
   // Handle ?token= (shared conversation link — no login required)

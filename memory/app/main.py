@@ -1,8 +1,18 @@
 """
-mio-memory v3.48  —  Streamable HTTP MCP transport
+mio-memory v3.49  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.49 (2026-06-25) - logs.html: 表示レイアウトを手動トグルボタン化（v3.48の方針変更）
+    - v3.48 の @media(max-width:768px) 自動判定は iPad 縦向き（768px超）で発動せず
+      実機で変化が見えなかった。画面幅の自動判定をやめ、会話ビュー上部に「⛶ 表示切替」
+      ボタンを追加して手動でモバイルレイアウト（サイドバーのオフキャンバス・本文フル幅・
+      右パネルのボトムシート）を ON/OFF できるようにした
+    - モバイル用CSSを @media から body.force-mobile クラス基準へ移行。JS が
+      「画面幅<=768px の自動判定 OR 手動トグル(localStorage: mioForceMobile)」の OR で
+      クラスを付け外しし、自動判定と手動トグルを一元管理（境界またぎ問題を解消）
+    - 状態は localStorage 保持で次回アクセス時も復元。i18n キー layout.toggle 追加
+    - admin.html は変更なし（タブ型でオフキャンバス問題は無い・Searchタブ縦積みは768px据置）
   v3.48 (2026-06-25) - 検索品質3点（複合語AND検索・memory_write由来のキーワード層
                        バックフィル）＋ logs/admin のモバイルレスポンシブ対応
     - memory_search / GET /api/memory/hsearch: 複合キーワード（スペース区切り）を
@@ -344,7 +354,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.48'
+VERSION = '3.49'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
