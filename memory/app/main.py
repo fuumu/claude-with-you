@@ -1,8 +1,14 @@
 """
-mio-memory v3.49  —  Streamable HTTP MCP transport
+mio-memory v3.50  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.50 (2026-06-25) - memory_read_index に random 引数追加（記憶の偶発的な再会）
+    - MCP memory_read_index(random=N): index から deleted を除外し random.sample で
+      N件抽出（1〜5 にクランプ）。未指定は従来どおり全件返却（後方互換）
+    - filter="summarized" で raw（未要約・タイトルのみ）エントリを除外し空振りを減らす
+    - REST GET /api/memory/index?random=N&filter=summarized も同ロジック（共通実装
+      _random_index_sample）。random 未指定時の挙動は従来と完全同一
   v3.49 (2026-06-25) - logs.html: 表示レイアウトを手動トグルボタン化（v3.48の方針変更）
     - v3.48 の @media(max-width:768px) 自動判定は iPad 縦向き（768px超）で発動せず
       実機で変化が見えなかった。画面幅の自動判定をやめ、会話ビュー上部に「⛶ 表示切替」
@@ -343,6 +349,7 @@ import secrets
 import time
 import uuid
 import re
+import random
 import zipfile
 import tempfile
 import logging
@@ -354,7 +361,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.49'
+VERSION = '3.50'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -922,13 +929,40 @@ def health():
 
 # ── 記憶 REST API ─────────────────────────────────────────────────────
 
+def _load_index_list():
+    """index.json を生のリストで読む（無ければ空）。deleted も含む（呼び出し側で必要に応じて除外）"""
+    if os.path.exists(INDEX_FILE):
+        with open(INDEX_FILE) as f:
+            return json.load(f)
+    return []
+
+
+def _random_index_sample(index, random_n, filter_summarized=False):
+    """deleted を除外（filter_summarized=True なら raw タグも除外）し、
+    件数を 1〜5 にクランプして random.sample で抽出する。プール不足時はプール全件。
+    MCP memory_read_index(random=N) と REST GET /api/memory/index?random=N の共通実装"""
+    pool = [e for e in index if not e.get('deleted')]
+    if filter_summarized:
+        # raw（未要約・タイトルのみ）は空振りしやすいので除外。要約済み・手書きエントリは残す
+        pool = [e for e in pool if 'raw' not in (e.get('tags') or [])]
+    try:
+        n = int(random_n)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(5, n))
+    if len(pool) <= n:
+        return pool
+    return random.sample(pool, n)
+
+
 @app.route('/api/memory/index')
 @require_auth
 def get_index():
-    if os.path.exists(INDEX_FILE):
-        with open(INDEX_FILE) as f:
-            return jsonify(json.load(f))
-    return jsonify([])
+    index = _load_index_list()
+    rnd = request.args.get('random')
+    if rnd is not None and rnd != '':
+        return jsonify(_random_index_sample(index, rnd, request.args.get('filter') == 'summarized'))
+    return jsonify(index)
 
 @app.route('/api/memories/symbolic')
 @require_auth
@@ -2781,8 +2815,11 @@ def oauth_token():
 _MCP_TOOLS = [
     {
         "name": "memory_read_index",
-        "description": "澪の外部記憶インデックスを取得する",
-        "inputSchema": {"type": "object", "properties": {}, "required": []}
+        "description": "澪の外部記憶インデックスを取得する。random=N でランダムにN件だけ取得できる（記憶の偶発的な再会用）",
+        "inputSchema": {"type": "object", "properties": {
+            "random": {"type": "integer", "description": "指定すると deleted を除外したうえで N件ランダム抽出（1〜5にクランプ）。未指定なら全件返却（後方互換）"},
+            "filter": {"type": "string", "enum": ["summarized"], "description": "summarized 指定で raw（未要約・タイトルのみ）エントリを除外する。random と併用して空振りを減らす用途"}
+        }, "required": []}
     },
     {
         "name": "memory_read",
@@ -3012,10 +3049,11 @@ def _handle_tool_call(name, arguments):
 
 def _handle_tool_call_raw(name, arguments):
     if name == "memory_read_index":
-        if os.path.exists(INDEX_FILE):
-            with open(INDEX_FILE) as f:
-                return json.load(f)
-        return []
+        index = _load_index_list()
+        rnd = arguments.get("random")
+        if rnd is not None:
+            return _random_index_sample(index, rnd, arguments.get("filter") == "summarized")
+        return index
 
     elif name == "memory_read":
         path = f"{DATA_DIR}/{arguments.get('id','')}.json"
