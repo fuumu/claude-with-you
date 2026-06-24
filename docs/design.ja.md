@@ -436,12 +436,15 @@ anthropic / LMStudio API で生成:
 
 | 項目 | 値 |
 |------|----|
-| 対象タグ | `raw` |
-| スキップ条件 | body に `## 2層: 要約` と `## 3層:` 両方が含まれる |
+| 対象（非force） | `raw` タグ **または** `keywords` 未生成のエントリ（v3.48） |
+| 処理分岐 | `raw` → 会話全文から2層3層4層を生成し body に追記・`summarized` タグ付与／`raw` でなく keywords 未生成（summarized済み or **memory_write 由来の本文エントリ**）→ 本文（または2層要約）から**キーワードのみ生成**し `keywords` だけ更新（body・tags は変更しない・v3.48） |
+| スキップ条件 | 2層3層マーカーが揃い **かつ** `keywords` 生成済み |
 | 使用モデル（anthropic） | `claude-haiku-4-5-20251001` |
 | 使用モデル（lmstudio） | `qwen/qwen3.6-35b-a3b` |
 | レート制限 | 処理間 0.5秒スリープ |
-| 冪等性 | マーカーによる処理済みチェックで担保 |
+| 冪等性 | マーカー＋`keywords` の有無でチェック（生成後は対象から外れる） |
+
+> **v3.48 修正：** 旧版は対象判定が「`raw` または（`summarized` かつ keywords 未生成）」だったため、`memory_write`/`memory_upsert` で作られたエントリ（`raw` も `summarized` も持たない）がキーワード層生成の対象に一度も入らず、`memory_search` の階層検索で常に3層（全文）でしか引けなかった。判定を「`raw` または keywords 未生成」に統一し、本文を持つユーザーエントリはキーワードのみ軽量生成する分岐を追加した。`_count_pending_entries` の `keywords_pending` も同条件に揃え、夜間バッチ・`batch_run_summary_layers(status_only=true)` でも正しく拾われる。
 
 ---
 

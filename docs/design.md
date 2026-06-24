@@ -435,12 +435,15 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 
 | Item | Value |
 |------|----|
-| Target tag | `raw` |
-| Skip condition | body contains both `## 2層: 要約` and `## 3層:` |
+| Target (non-force) | entries tagged `raw` **or** with no `keywords` yet (v3.48) |
+| Branching | `raw` → generate layers 2/3/4 from the full conversation, append to body, add `summarized` tag / not `raw` and no keywords (already `summarized`, or **a memory_write-originated body entry**) → generate **keywords only** from the body (or layer-2 summary) and update `keywords` only (body/tags unchanged, v3.48) |
+| Skip condition | layer-2 and layer-3 markers present **and** `keywords` already generated |
 | Model (anthropic) | `claude-haiku-4-5-20251001` |
 | Model (lmstudio) | `qwen/qwen3.6-35b-a3b` |
 | Rate limiting | 0.5 s sleep between items |
-| Idempotency | guaranteed via the processed-marker check |
+| Idempotency | checked via markers + presence of `keywords` (entry drops out of the target set once generated) |
+
+> **v3.48 fix:** the old target selection was "`raw` or (`summarized` and no keywords)", so entries created via `memory_write`/`memory_upsert` (which carry neither `raw` nor `summarized`) never entered keyword-layer generation and could only be found by `memory_search`'s tier-3 (full body) search. The selection is now unified to "`raw` or no keywords", with a lightweight keyword-only branch for user entries that already have a body. `_count_pending_entries`'s `keywords_pending` uses the same condition, so the nightly batch and `batch_run_summary_layers(status_only=true)` pick them up too.
 
 ---
 

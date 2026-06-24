@@ -143,6 +143,8 @@ Fix: try alternative spellings; check with batch_run_summary_layers(status_only=
 Fix: add proper nouns; skim summaries and narrow down manually
 ```
 
+> **Multi-word queries are AND-matched (v3.48)**: split the query on spaces (half/full-width) and each term is AND-matched individually across all layers. e.g. `friend system test` only hits entries containing both. Adding terms narrows the result. A single word behaves like the previous substring match.
+
 ### You read full_body but the information wasn't there
 
 ```

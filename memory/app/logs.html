@@ -284,6 +284,41 @@
     .rp-item-meta  { font-size: .66rem; color: #484f58; margin-top: .15rem; }
     .rp-empty { padding: .75rem .65rem; font-size: .75rem; color: #484f58; }
     .rp-loading { padding: .75rem .65rem; font-size: .75rem; color: #484f58; }
+
+    /* Hamburger (mobile only) + sidebar backdrop */
+    .hamburger {
+      display: none; align-items: center; justify-content: center;
+      background: none; border: none; color: #58a6ff; font-size: 1.15rem;
+      cursor: pointer; padding: .1rem .5rem .1rem 0; line-height: 1; margin-right: .25rem;
+    }
+    .sidebar-backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      z-index: 40;
+    }
+
+    /* ── モバイル幅（<=768px）: サイドバーをオフキャンバス化、右パネルをボトムシート化 ── */
+    @media (max-width: 768px) {
+      .hamburger { display: flex; }
+      .sidebar {
+        position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+        width: 86%; max-width: 340px; min-width: 0;
+        transform: translateX(-100%); transition: transform .25s ease;
+        box-shadow: 2px 0 18px rgba(0,0,0,.55);
+      }
+      .sidebar.open { transform: translateX(0); }
+      .sidebar-backdrop.show { display: block; }
+      .content { width: 100%; min-width: 0; }
+
+      /* 右スライダーパネル → 画面下から這い上がるボトムシート */
+      .right-panel {
+        position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+        width: auto !important; height: 40px; max-height: 82vh; z-index: 45;
+        border-left: none; border-top: 1px solid #21262d;
+        transition: height .25s ease;
+      }
+      .right-panel.open { height: 72vh; }
+      .right-panel-toggle { border-bottom: none; }
+    }
   </style>
 </head>
 <body>
@@ -298,6 +333,7 @@
 </div>
 
 <header>
+  <button class="hamburger" onclick="toggleSidebar()" title="メニュー" aria-label="メニュー">☰</button>
   <h1 data-i18n="app.title">澪の記憶サーバー — Logs</h1>
   <div class="header-right">
     <span id="token-status" onclick="resetToken()" data-i18n="token.change">トークン変更</span>
@@ -305,7 +341,8 @@
 </header>
 
 <div class="main">
-  <div class="sidebar">
+  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
+  <div class="sidebar" id="sidebar">
     <div class="sidebar-controls">
       <div id="load-status" style="font-size:.72rem;color:#484f58;margin-bottom:.5rem;"></div>
       <div class="filter-section">
@@ -692,6 +729,8 @@ async function loadSummaryPanel(conv) {
 async function selectConv(uuid) {
   activeUuid = uuid;
   renderList();
+  // モバイル: 会話を選んだらサイドバーを自動で閉じて本文を見せる
+  if (window.matchMedia('(max-width: 768px)').matches) toggleSidebar(false);
 
   // Use cached full data or fetch from server
   let conv = convCache.get(uuid);
@@ -1212,6 +1251,15 @@ applyLang();
 // ── Right panel ───────────────────────────────────────────────────────
 let rpOpen = false;
 let rpTab = 'inbox';
+
+// モバイル: 左サイドバーのオフキャンバス開閉（force省略でトグル、false で閉じる）
+function toggleSidebar(force) {
+  const sb = document.getElementById('sidebar');
+  const bd = document.getElementById('sidebar-backdrop');
+  const open = (force === undefined) ? !sb.classList.contains('open') : !!force;
+  sb.classList.toggle('open', open);
+  bd.classList.toggle('show', open);
+}
 
 function toggleRightPanel() {
   rpOpen = !rpOpen;

@@ -1,8 +1,26 @@
 """
-mio-memory v3.46  —  Streamable HTTP MCP transport
+mio-memory v3.48  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.48 (2026-06-25) - 検索品質3点（複合語AND検索・memory_write由来のキーワード層
+                       バックフィル）＋ logs/admin のモバイルレスポンシブ対応
+    - memory_search / GET /api/memory/hsearch: 複合キーワード（スペース区切り）を
+      AND検索化。_query_terms() で半角・全角スペース分割し、1次（keyword/symbolic）・
+      2次（summary）・3次（full）の全層で各語をAND判定。単語1つなら従来の部分一致と
+      同じ（後方互換）。空クエリは0件（従来は全件マッチだったが REST 側は元々ガード済み）
+    - 要約バッチ（_run_summary_batch / _count_pending_entries /
+      scripts/generate_summary_layers.py）: memory_write 由来エントリ（raw/summarized
+      どちらも持たず keywords 未生成）がキーワード層生成の対象外だったバグを修正。
+      対象判定を「raw または keywords 未生成」に統一。raw でない本文エントリは
+      本文からキーワードのみ生成し body/tags は変更しない（要約セクションを追記しない）
+    - logs.html: モバイル幅（<=768px）で左サイドバーをオフキャンバス化
+      （ハンバーガー☰で開閉・背景タップで閉じる・会話選択で自動クローズ）、
+      本文をフル幅、右スライダーパネルをボトムシート化。PC表示は @media で不変
+    - admin.html: Search タブの横並びレイアウトをモバイルで縦積み化。
+      認証カード・friends テーブルの幅調整（タブバーは元々横スクロール対応済み）
+  v3.47 (2026-06-20) - conversation_read に turn_offset / turn_limit（メッセージ単位
+                       スライス表示・後方互換あり）
   v3.46 (2026-06-16) - reindex エンドポイント ＋ バックアップ export（B1前半）
     - POST /api/memory/reindex: index.json を全エントリから再構築（層の再生成後など
       明示的に叩ける。M2バックフィルで踏んだ痛点の解消）
@@ -326,7 +344,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.47'
+VERSION = '3.48'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2217,10 +2235,21 @@ def _extract_layer3(body: str) -> str:
     return seg.strip()
 
 
+def _query_terms(q: str) -> list:
+    """クエリをスペース（半角・全角）区切りで分割し、空要素を除いた小文字リストを返す"""
+    return [t for t in re.split(r'[\s　]+', (q or '').lower()) if t]
+
+
+def _all_terms_in(terms: list, text: str) -> bool:
+    """terms の全語が text に含まれるか（AND判定）。terms が空なら False"""
+    return bool(terms) and all(t in text for t in terms)
+
+
 def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False) -> dict:
     """階層検索（1次:インデックス title+tags+keywords+3層symbolic → 2次:2層要約 → 3次:全文）。
-    MCP memory_search と REST /api/memory/hsearch の共通実装"""
-    q = (q or '').lower()
+    MCP memory_search と REST /api/memory/hsearch の共通実装。
+    クエリはスペース区切りで分割し各語をAND判定する（単語1つなら従来の部分一致と同じ）"""
+    terms = _query_terms(q)
     index = []
     if os.path.exists(INDEX_FILE):
         with open(INDEX_FILE) as f:
@@ -2235,9 +2264,9 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
             ' '.join(str(t) for t in (e.get('tags') or [])),
             ' '.join(str(k) for k in (e.get('keywords') or [])),
         ]).lower()
-        if q in text:
+        if _all_terms_in(terms, text):
             matched[e['id']] = 'keyword'
-        elif q in str(e.get('symbolic') or '').lower():
+        elif _all_terms_in(terms, str(e.get('symbolic') or '').lower()):
             matched[e['id']] = 'symbolic'
 
     # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
@@ -2249,9 +2278,9 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
             if entry.get('deleted') or eid in matched:
                 continue
             body = str(entry.get('body') or '')
-            if q in _extract_summary(body).lower():
+            if _all_terms_in(terms, _extract_summary(body).lower()):
                 summary_hits.append(eid)
-            elif q in body.lower():
+            elif _all_terms_in(terms, body.lower()):
                 full_hits.append(eid)
         for eid in summary_hits:
             matched[eid] = 'summary'
@@ -2335,10 +2364,10 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                            ('raw' in (e.get('tags') or []) or 'summarized' in (e.get('tags') or []))
                            and not e.get('deleted')]
         else:
-            # 対象: raw（未要約）＋ summarized だが keywords 未生成（4層バックフィル）
+            # 対象: raw（未要約・要約生成）＋ keywords 未生成エントリ（4層バックフィル）
+            #   keywords 未生成には summarized 済み・memory_write 由来ユーザーエントリ両方が含まれる
             raw_entries = [e for e in index if not e.get('deleted') and (
-                'raw' in (e.get('tags') or []) or
-                ('summarized' in (e.get('tags') or []) and 'keywords' not in e)
+                'raw' in (e.get('tags') or []) or not e.get('keywords')
             )]
         _batch_status['total'] = len(raw_entries)
         _log_info(f'batch summary start: backend={backend} force={force} entries={len(raw_entries)}')
@@ -2354,17 +2383,21 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                 entry = json.load(f)
             body = entry.get('body', '')
             has_layers = SUMMARY_MARKER in body and LAYER3_MARKER in body
+            is_raw     = 'raw' in (entry.get('tags') or [])
 
-            if not force and has_layers and 'keywords' in entry:
+            if not force and entry.get('keywords') and has_layers:
                 _batch_status['skipped'] += 1
                 continue
 
-            # 2層・3層は生成済みで keywords だけ欠けている → 軽量プロンプトでキーワードのみ生成
-            if not force and has_layers:
+            # キーワードのみ生成すればよいケース:
+            #   has_layers（2層3層生成済み）→ 2層要約からキーワード生成
+            #   raw でない本文エントリ（memory_write 由来）→ 本文からキーワード生成（本文・タグは変更しない）
+            if not force and (has_layers or not is_raw):
                 try:
+                    kw_src = _extract_summary(body) if has_layers else body[:2000]
                     kw_prompt = (
-                        f'以下は会話の要約と圧縮表現です。検索に使うキーワードを3〜5個生成してください。\n\n'
-                        f'会話タイトル: {title}\n\n{_extract_summary(body)}\n\n'
+                        f'以下はメモの内容です。検索に使うキーワードを3〜5個生成してください。\n\n'
+                        f'タイトル: {title}\n\n{kw_src}\n\n'
                         f'出力形式（1行、半角カンマ区切り、説明文は不要）:\nキーワード1, キーワード2, キーワード3'
                     )
                     msg = client.messages.create(
@@ -2469,10 +2502,10 @@ def _count_pending_entries():
         with open(INDEX_FILE) as f:
             idx = json.load(f)
         raw = sum(1 for e in idx if 'raw' in (e.get('tags') or []) and not e.get('deleted'))
+        # keywords 未生成（rawを除く）: summarized済み・memory_write由来ユーザーエントリ両方
         kw  = sum(1 for e in idx if not e.get('deleted')
                   and 'raw' not in (e.get('tags') or [])
-                  and 'summarized' in (e.get('tags') or [])
-                  and 'keywords' not in e)
+                  and not e.get('keywords'))
         return raw, kw
     except Exception:
         return None, None

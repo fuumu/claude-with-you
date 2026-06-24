@@ -425,6 +425,17 @@
     .friends-btn.danger:hover { border-color:#e74c3c; color:#e74c3c; }
     .friends-empty { color:#5a6a7a; font-size:.85rem; padding:.8rem 0; }
     .friends-toolbar { display:flex; gap:.5rem; margin-bottom:1rem; align-items:center; }
+
+    /* ── モバイル幅（<=768px）── タブバーは元々 overflow-x スクロール対応済み。
+       Searchタブの横並びレイアウトを縦積みにし、認証カードを画面内に収める ── */
+    @media (max-width: 768px) {
+      .ms-main { flex-direction: column; height: auto; }
+      .ms-left { width: 100%; flex: none; max-height: 45vh; }
+      .ms-right { min-height: 50vh; }
+      .auth-card { width: 92%; max-width: 340px; padding: 1.5rem 1.25rem; }
+      .friends-table { font-size: .76rem; }
+      .friends-table th, .friends-table td { padding: .35rem .4rem; }
+    }
   </style>
 </head>
 <body>

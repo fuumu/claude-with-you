@@ -231,10 +231,10 @@ def main(backend: str, model: str, dry_run: bool):
         targets = [e for e in index if not e.get('deleted') and (
             'raw' in (e.get('tags') or []) or 'summarized' in (e.get('tags') or []))]
     else:
-        # 対象: raw（未要約）＋ summarized だが keywords 未生成（4層バックフィル）
+        # 対象: raw（未要約・要約生成）＋ keywords 未生成エントリ（4層バックフィル）
+        #   keywords 未生成には summarized 済み・memory_write 由来ユーザーエントリ両方が含まれる
         targets = [e for e in index if not e.get('deleted') and (
-            'raw' in (e.get('tags') or []) or
-            ('summarized' in (e.get('tags') or []) and 'keywords' not in e))]
+            'raw' in (e.get('tags') or []) or not e.get('keywords'))]
     print(f"対象エントリ: {len(targets)} 件 / 全体: {len(index)} 件\n")
 
     processed = skipped = errors = 0
@@ -252,20 +252,24 @@ def main(backend: str, model: str, dry_run: bool):
 
         body = entry.get('body', '')
         has_layers = SUMMARY_MARKER in body and LAYER3_MARKER in body
+        is_raw     = 'raw' in (entry.get('tags') or [])
 
-        if not FORCE_REPROCESS and has_layers and 'keywords' in entry:
+        if not FORCE_REPROCESS and entry.get('keywords') and has_layers:
             print(f"[{i:>3}/{len(targets)}] SKIP   {title[:55]}")
             skipped += 1
             continue
 
-        # keywords だけ欠けている → 軽量プロンプトでキーワードのみ生成
-        if not FORCE_REPROCESS and has_layers:
+        # キーワードのみ生成すればよいケース:
+        #   has_layers（2層3層生成済み）→ 2層要約からキーワード生成
+        #   raw でない本文エントリ（memory_write 由来）→ 本文からキーワード生成（本文・タグは変更しない）
+        if not FORCE_REPROCESS and (has_layers or not is_raw):
             print(f"[{i:>3}/{len(targets)}] KW生成 {title[:55]}")
             if dry_run:
                 processed += 1
                 continue
             try:
-                keywords = generate_keywords_only(client, model, title, extract_summary(body))
+                kw_src = extract_summary(body) if has_layers else body[:2000]
+                keywords = generate_keywords_only(client, model, title, kw_src)
                 api_patch(f'/api/memory/{urllib.parse.quote(entry_id, safe="")}', {'keywords': keywords})
                 processed += 1
                 time.sleep(RATE_LIMIT_SLEEP)
