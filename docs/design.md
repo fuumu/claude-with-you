@@ -3,7 +3,7 @@
 **[日本語版 / Japanese](design.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
 > Created: 2026-06-01  
-> Target: `/volume1/docker/mio/memory/app/main.py`
+> Target: `<YOUR_NAS_PATH>/memory/app/main.py`
 
 ---
 

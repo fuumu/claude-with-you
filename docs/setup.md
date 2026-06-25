@@ -113,9 +113,9 @@ claude
 
 ## Phase 3: Start working
 
-Start a Claude Code session in the WS repository directory, and Mio takes care of reading/writing files, committing, and pushing.
+Start a Claude Code session in the WS repository directory, and Claude Code takes care of reading/writing files, committing, and pushing.
 
-Jun's role: direction, review, approval.
+Your role: direction, review, approval.
 
 ---
 

@@ -3,7 +3,7 @@
 **[English version](design.md)** ← 日本語版（このファイル）が正。英語版はここから同期。
 
 > 作成：2026-06-01  
-> 対象：`/volume1/docker/mio/memory/app/main.py`
+> 対象：`<YOUR_NAS_PATH>/memory/app/main.py`
 
 ---
 
