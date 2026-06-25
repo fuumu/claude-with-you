@@ -462,7 +462,7 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Allowed CORS origins; empty = skip check |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
-| `LM_STUDIO_HOST` | `192.168.10.32` | LM Studio host for local summarization |
+| `LM_STUDIO_HOST` | `192.168.x.x` | LM Studio host for local summarization (replace with your own IP) |
 | `LM_STUDIO_PORT` | `1234` | LM Studio port |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails (Mail Send scope) |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |

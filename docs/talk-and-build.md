@@ -4,6 +4,8 @@
 
 > Created: 2026-06-01
 
+> **Note**: This document is Jun Kikuchi's personal operations record. "Mio (chat)," "Mio (code)," and "Jun-san" refer to the actual AI's name and user's name, not generic placeholders. If you're adapting this workflow for your own setup, substitute your own environment's names accordingly.
+
 ---
 
 ## Overview

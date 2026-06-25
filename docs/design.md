@@ -5,6 +5,8 @@
 > Created: 2026-06-01  
 > Target: `<YOUR_NAS_PATH>/memory/app/main.py`
 
+> **Note**: This document is Jun Kikuchi's personal design/operations record. "澪 (Mio)" and "淳さん (Jun-san)" in the usage examples are the actual AI's name and user's name, not generic placeholders. If you're adapting this design for your own setup, substitute your own environment's names accordingly.
+
 ---
 
 ## Overview
