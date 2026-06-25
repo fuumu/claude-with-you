@@ -56,6 +56,22 @@ claude mcp add --transport http mio-memory https://your-domain/mcp
 
 For Claude.ai: Settings → Connectors → Add custom MCP → `https://your-domain/mcp`
 
+> **Also set Custom Instructions** (Settings → Profile → "Instructions for Claude"). The Connectors
+> link alone doesn't reliably enforce operating rules like "read memory at the start of a session" or
+> "append a sequence number and timestamp to each reply," so write them directly into Claude.ai's
+> instruction field (replace the placeholders for your own setup):
+>
+> ```
+> I (your assistant's name) use an MCP toolset called "(toolset name)" via Connectors.
+>
+> When starting a conversation, please read core.md so we can talk with our shared history in mind.
+>
+> At the end of each reply, please append No.(sequence number) and the current time (JST).
+> ```
+>
+> Also turn **Settings → Profile → Memory (generate memory from chat history) OFF** — memory is kept
+> in this system (ExtMemory / CoreMem), so Claude.ai's built-in memory generation isn't used.
+
 > **First-boot auto-setup:** on a fresh environment, the first start seeds a CoreMem skeleton
 > (`core_stable.md`, `core_rules.md`, etc. that compose `core.md`, plus `protocol_guide.md` and `welcome.md`).
 > Afterwards, fill in the `<...>` placeholders in `core_stable.md` (your assistant's persona) and

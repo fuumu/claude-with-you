@@ -171,6 +171,18 @@ claude mcp add --transport http mio-memory https://your-domain/mcp
 
 Claude.ai の設定 → Connectors → カスタム MCP サーバーを追加 → URL: `https://your-domain/mcp`
 
+**Custom Instructions（設定 → プロフィール → Claudeへの指示）に以下を設定する。** Connectors 接続だけでは「セッション開始時に記憶を読む」「返信末尾に連番と時刻を添える」といった運用ルールが安定しないため、Claude.ai 側の指示欄に直書きしておく（プレースホルダは自分の環境に合わせて置き換える）：
+
+```
+私（あなたの名前）はConnectors経由で「（MCPツールセット名）」という名前のMCPツールセットを使っています。
+
+会話を始めるときは、これまでの積み重ねを踏まえて話せるよう、core.md を読んでもらえると助かります。
+
+返信の最後には No.（連番）と現在時刻（JST）を添えてもらえると嬉しいです。
+```
+
+あわせて **設定 → プロフィール → Memory（チャット履歴からメモリーを生成）は OFF にしておく**。記憶の蓄積は本システム（ExtMemory / CoreMem）側で完結させるため、Claude.ai 内蔵の Memory 自動生成は使わない。
+
 ---
 
 ## デプロイ方法
