@@ -22,13 +22,13 @@
 
 ---
 
-## MCPツール一覧（19本・通常セッション）
+## MCPツール一覧（20本・通常セッション）
 
 ツールごとの用途・引数・コスト感は **`protocol_guide.md`** を参照。
 
 - **ExtMemory（6）**: memory_write / memory_read / memory_read_index / memory_search / memory_upsert / memory_share
 - **UserCoreMemory（4）**: CoreMem_save / CoreMem_read / CoreMem_list / CoreMem_delete
-- **LogStore（5）**: conversation_index / conversation_search / conversation_read / conversation_share / log_annotate
+- **LogStore（6）**: conversation_index / conversation_search / conversation_read / conversation_share / conversation_digest / log_annotate
 - **inbox（3）**: inbox_check / inbox_read / inbox_post
 - **batch（1）**: batch_run_summary_layers
 

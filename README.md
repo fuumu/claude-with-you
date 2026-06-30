@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.52","mcp_tool_count":23}
+# {"status":"ok","version":"3.53","mcp_tool_count":24}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -227,9 +227,9 @@ CoreMem_save(name="config.md", content="# Config\n...", source_conversation_uuid
 → {"name": "config.md", "version": 2, "server_time": "..."}
 ```
 
-### Conversation tools (5)
+### Conversation tools (6)
 
-Browse, share, and annotate past conversations imported from Claude.ai export ZIPs.
+Browse, share, digest, and annotate past conversations imported from Claude.ai export ZIPs.
 
 | Tool | Description | Key args |
 |------|-------------|----------|
@@ -237,6 +237,7 @@ Browse, share, and annotate past conversations imported from Claude.ai export ZI
 | `conversation_search` | Search conversation titles by keyword and date range | `q`, `limit` |
 | `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22); `include_body=false` returns annotations only without message body (v3.33); `turn_offset`/`turn_limit` slice by message — negative offset = from end (first 4 = `turn_limit=4`, last 4 = `turn_offset=-4`) (v3.47) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations`, `include_body`, `turn_offset`, `turn_limit` |
 | `conversation_share` | Generate 24h shareable URL (`/share.html?token=` — standalone read-only viewer, v3.23) | `uuid` |
+| `conversation_digest` | Generate/retrieve a conversation digest via local LLM (LMStudio); chunks into 20-turn segments, digests each, then integrates; `safe_mode=true` for policy-safe abstract expressions; cached at `/data/conversations/{uuid}_digest.json`; REST: `POST /api/conversations/<uuid>/digest` (v3.53) | `uuid`, `force`, `safe_mode` |
 | `log_annotate` | Append-only audit annotation on a conversation; raw logs never change, stored in `/data/annotations/{uuid}.json` (v3.22) | `uuid`, `note`, `author`, `target` |
 
 **Example — find a past discussion:**
@@ -309,6 +310,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/conversations/` | Search conversations |
 | GET | `/api/conversations/<uuid>` | Get conversation |
 | GET | `/api/conversations/<uuid>/annotations` | List a conversation's annotations (read-only, v3.42) |
+| POST | `/api/conversations/<uuid>/digest` | Generate/retrieve conversation digest (`?force=true&safe_mode=true`, v3.53) |
 | GET | `/api/inbox` | List inbox messages |
 | POST | `/api/inbox` | Post a message |
 | PATCH | `/api/inbox/<id>/read` | Mark as read |
@@ -561,6 +563,7 @@ claude-with-you/
 - logs.html manual layout toggle (v3.49) — a "⛶ Layout" button in the conversation view toggles the mobile layout on/off regardless of screen width (persisted in localStorage), fixing the breakpoint-edge issue of auto-detection (covers iPad portrait)
 - `memory_read_index` random retrieval (v3.50) — `random=N` returns N random entries (deleted excluded, clamped 1–5; `filter=summarized` drops raw entries); REST `?random=N` supported too. For serendipitous re-encounters with old memories
 - Album (image memory) system (v3.51–v3.52) — 4 new MCP tools (`album_save`/`album_read`/`album_list`/`album_share`). Downloads from direct URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves to `/data/album/`. MCP image content type support. 7 REST endpoints (list, image, upload, metadata update, delete, share URL, shared image). admin.html Album tab (thumbnail grid, drag-and-drop upload, edit, delete, share). v3.52: HTML page image extraction (Gemini shared links etc.) — auto-extracts og:image/img tags
+- Conversation log digest generation (v3.53) — `conversation_digest` MCP tool. Local LLM (LMStudio) chunks conversation into 20-turn segments, digests each, then integrates. `safe_mode` for policy-safe expression conversion. Cached results returned instantly. REST `POST /api/conversations/<uuid>/digest`
 
 ---
 

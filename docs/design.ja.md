@@ -925,3 +925,46 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 
 内部実装: ツールハンドラが `_mcp_content` キーを持つ dict を返すと、
 `_process_mcp_message` がそれを直接 `content` として使用する（`_inject_server_time` をスキップ）。
+
+---
+
+## 14. conversation_digest（会話ログダイジェスト、v3.53）
+
+### 概要
+
+会話ログをローカル LLM（LMStudio）でダイジェスト化する。チャンク分割→各チャンクダイジェスト→統合ダイジェストの2段階処理。キャッシュ済みなら即返却。
+
+### 処理フロー
+
+1. `/data/conversations/{uuid}.json` からログ全文取得
+2. テキスト部分のみ抽出（先頭500文字。`tool_use` → `[ツール使用: {name}]`、`tool_result` → `[ツール結果]`）
+3. 20ターンずつチャンク分割
+4. 各チャンクを LMStudio でダイジェスト化（1チャンク→3〜5文）
+5. 全チャンクダイジェストを統合→最終ダイジェスト生成（チャンク1つなら統合スキップ）
+6. キャッシュ保存
+
+### LLM接続
+
+既存 `batch_run_summary_layers` と同じパターン:
+- `anthropic.Anthropic(base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)`
+- モデル: `qwen/qwen3.6-35b-a3b`
+
+### safe_mode
+
+`safe_mode=true` で身体的・性的な直接表現をポリシーセーフな抽象表現に変換。チャンクダイジェスト・統合ダイジェストの両方のプロンプトに追加指示を付与。
+
+### キャッシュ
+
+- 通常: `/data/conversations/{uuid}_digest.json`
+- safe: `/data/conversations/{uuid}_digest_safe.json`
+- `force=true` で既存キャッシュを無視して再生成
+
+### エンドポイント
+
+| メソッド | パス | 認証 | 説明 |
+|---------|------|------|------|
+| POST | `/api/conversations/<uuid>/digest` | admin | ダイジェスト生成/取得（`?force=true&safe_mode=true`） |
+
+### MCP ツール
+
+`conversation_digest(uuid, force, safe_mode)` — LogStore 系6本目（ツール数 23→24）。同期処理。

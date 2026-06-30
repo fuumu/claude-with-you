@@ -929,3 +929,46 @@ The `album_read` MCP response includes image content instead of the usual `type:
 
 Internal implementation: when a tool handler returns a dict with a `_mcp_content` key,
 `_process_mcp_message` uses it directly as the `content` array (skipping `_inject_server_time`).
+
+---
+
+## 14. conversation_digest (conversation log digest, v3.53)
+
+### Overview
+
+Generates a digest of conversation logs using a local LLM (LMStudio). Two-stage processing: chunk digestion → integration. Returns cached result instantly if available.
+
+### Processing flow
+
+1. Load full log from `/data/conversations/{uuid}.json`
+2. Extract text only (first 500 chars per turn; `tool_use` → `[ツール使用: {name}]`, `tool_result` → `[ツール結果]`)
+3. Chunk into 20-turn segments
+4. Digest each chunk via LMStudio (1 chunk → 3–5 sentences)
+5. Integrate all chunk digests into a final digest (skipped if only 1 chunk)
+6. Save to cache
+
+### LLM connection
+
+Same pattern as `batch_run_summary_layers`:
+- `anthropic.Anthropic(base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)`
+- Model: `qwen/qwen3.6-35b-a3b`
+
+### safe_mode
+
+With `safe_mode=true`, physical/sexual direct expressions are converted to policy-safe abstract expressions. Additional instructions are appended to both chunk-digest and integration prompts.
+
+### Cache
+
+- Normal: `/data/conversations/{uuid}_digest.json`
+- Safe: `/data/conversations/{uuid}_digest_safe.json`
+- `force=true` ignores existing cache and regenerates
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/conversations/<uuid>/digest` | admin | Generate/retrieve digest (`?force=true&safe_mode=true`) |
+
+### MCP tool
+
+`conversation_digest(uuid, force, safe_mode)` — 6th LogStore tool (tool count 23→24). Synchronous processing.

@@ -38,13 +38,14 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 | 12 | `conversation_search` | LogStore | Search conversations by keyword/date | light |
 | 13 | `conversation_read` | LogStore | Read conversation body | med |
 | 14 | `conversation_share` | LogStore | 24h share URL for a conversation | light |
-| 15 | `log_annotate` | LogStore | Append an annotation to a conversation | light |
-| 16 | `inbox_check` | inbox | Unread count + standing bodies (light) | light |
-| 17 | `inbox_read` | inbox | Get one message, mark read | light |
-| 18 | `inbox_post` | inbox | Send a message | light |
-| 19 | `batch_run_summary_layers` | batch | Start summary-layer batch | **heavy** (LLM, async) |
+| 15 | `conversation_digest` | LogStore | Generate digest via local LLM (cached) | **heavy** (LLM, sync) |
+| 16 | `log_annotate` | LogStore | Append an annotation to a conversation | light |
+| 17 | `inbox_check` | inbox | Unread count + standing bodies (light) | light |
+| 18 | `inbox_read` | inbox | Get one message, mark read | light |
+| 19 | `inbox_post` | inbox | Send a message | light |
+| 20 | `batch_run_summary_layers` | batch | Start summary-layer batch | **heavy** (LLM, async) |
 
-※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate set of 6 tools. This guide covers the 19 regular-session tools.
+※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate set of 6 tools. This guide covers the 20 regular-session tools.
 
 ---
 
@@ -83,6 +84,8 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 **`conversation_read`** — `uuid` (req) · `include_thinking` · `thinking_limit` (def 1500) · `include_annotations` · `include_body` · `turn_offset` (opt, negative = from end) · `turn_limit` (opt, 0 = unlimited). With `include_annotations=true`, annotations inline + `[No.X]` numbering. `turn_offset`/`turn_limit` slice by message (head = `turn_limit=4`, tail = `turn_offset=-4`). **med**.
 
 **`conversation_share`** — `uuid` (req). 24h share URL. **light**.
+
+**`conversation_digest`** — `uuid` (req) · `force` (opt, true = ignore cache and regenerate) · `safe_mode` (opt, true = policy-safe abstract expressions). Uses local LLM (LMStudio) to chunk-digest then integrate. Returns cached result if available. **heavy** (LLM, sync).
 
 **`log_annotate`** — `uuid` (req) · `note` (req) · `author` (req) · `target` (opt = message number, omit = whole conversation). **Raw log immutable, append-only**. **light**.
 

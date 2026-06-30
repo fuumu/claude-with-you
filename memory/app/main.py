@@ -1,8 +1,14 @@
 """
-mio-memory v3.52  —  Streamable HTTP MCP transport
+mio-memory v3.53  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.53 (2026-06-30) - conversation_digest（会話ログダイジェスト生成）
+    - MCPツール conversation_digest 追加（ツール数 23→24）
+    - REST POST /api/conversations/<uuid>/digest 追加
+    - LMStudioでチャンク分割ダイジェスト→統合ダイジェスト生成
+    - safe_mode: ポリシーセーフな抽象表現に変換
+    - キャッシュ: /data/conversations/{uuid}_digest.json / _digest_safe.json
   v3.52 (2026-06-30) - アルバム機能改善
     - album_save: HTMLページ（Gemini共有リンク等）からの画像抽出に対応
       Content-Typeがtext/htmlの場合、og:image → <img src> を解析し画像URLを取得→保存
@@ -382,7 +388,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.52'
+VERSION = '3.53'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -881,6 +887,16 @@ def api_conversations_annotations(uuid):
     """会話の注記一覧（U11・logs.html ビューア用）。生ログとは別レイヤー・読み取り専用。
     各注記: {seq, target, note, author, created_at}（target は通番 / "No.X" / null=会話全体）"""
     return jsonify(_load_annotations(uuid))
+
+@app.route('/api/conversations/<uuid>/digest', methods=['POST'])
+@require_auth
+def api_conversations_digest(uuid):
+    force = request.args.get('force', '').lower() in ('true', '1')
+    safe_mode = request.args.get('safe_mode', '').lower() in ('true', '1')
+    result = _conversation_digest(uuid, force=force, safe_mode=safe_mode)
+    if 'error' in result:
+        return jsonify(result), 404
+    return jsonify(result)
 
 @app.route('/api/conversations/share/<uuid>', methods=['POST'])
 @require_auth
@@ -2602,6 +2618,120 @@ def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, 
     return True, info
 
 
+def _conversation_digest(uuid, force=False, safe_mode=False):
+    """会話ログをLMStudioでダイジェスト化。キャッシュがあればそれを返す"""
+    suffix = '_digest_safe.json' if safe_mode else '_digest.json'
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}{suffix}')
+
+    if not force and os.path.exists(cache_path):
+        with open(cache_path, encoding='utf-8') as f:
+            cached = json.load(f)
+        cached['cached'] = True
+        return cached
+
+    conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if not os.path.exists(conv_path):
+        return {"error": f"conversation not found: {uuid}"}
+    with open(conv_path, encoding='utf-8') as f:
+        conv = json.load(f)
+
+    messages = conv.get('chat_messages', [])
+    if not messages:
+        return {"error": "conversation has no messages"}
+
+    turns = []
+    for m in messages:
+        role = m.get('sender') or m.get('role') or '?'
+        content = m.get('content') or m.get('text') or ''
+        text = ''
+        if isinstance(content, list):
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get('type') == 'text':
+                    text += c.get('text', '')
+                elif c.get('type') == 'tool_use':
+                    text += f"\n[ツール使用: {c.get('name', '?')}]"
+                elif c.get('type') == 'tool_result':
+                    text += '\n[ツール結果]'
+        else:
+            text = str(content)
+        text = text.strip()
+        if text:
+            turns.append(f'[{role}] {text[:500]}')
+
+    chunk_size = 20
+    chunks = [turns[i:i + chunk_size] for i in range(0, len(turns), chunk_size)]
+
+    import anthropic as _anthropic
+    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
+    client = _anthropic.Anthropic(
+        base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
+    model = 'qwen/qwen3.6-35b-a3b'
+
+    safe_instruction = ('\n\n※重要：身体的・性的な直接表現は使わないでください。'
+                        '体験の構造と感情の動きを抽象的に伝える表現に変換してください。'
+                        '例：「触れた」→「言葉で距離が縮まった」、「体が反応した」→「強い感情的反応があった」') if safe_mode else ''
+
+    chunk_digests = []
+    for i, chunk in enumerate(chunks):
+        chunk_text = '\n\n'.join(chunk)
+        prompt = (
+            '以下は会話ログの一部です。この部分で何が起きたかをダイジェストにしてください。\n'
+            '- 誰が何を言い、何が起き、何が変わったか\n'
+            '- 感情の流れと転換点を保持\n'
+            '- 具体的なやりとりの内容・決定事項・重要な発言を残す\n'
+            f'- 3〜5文程度で{safe_instruction}\n\n'
+            f'会話ログ:\n{chunk_text}'
+        )
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}])
+            digest_text = resp.content[0].text.strip() if resp.content else ''
+        except Exception as e:
+            _log_info(f'conversation_digest chunk {i} error: {e}')
+            digest_text = f'[チャンク{i+1}のダイジェスト生成失敗: {e}]'
+        chunk_digests.append(digest_text)
+
+    if len(chunk_digests) == 1:
+        final_digest = chunk_digests[0]
+    else:
+        all_digests = '\n\n'.join(f'パート{i+1}:\n{d}' for i, d in enumerate(chunk_digests))
+        prompt = (
+            '以下は長い会話の各パートのダイジェストです。全体を通した統合ダイジェストを作成してください。\n'
+            '- 会話全体の流れ・目的・結論\n'
+            '- 重要な転換点\n'
+            '- 感情の変化\n'
+            f'- 決定事項やアクション{safe_instruction}\n\n'
+            f'各パートのダイジェスト:\n{all_digests}'
+        )
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}])
+            final_digest = resp.content[0].text.strip() if resp.content else ''
+        except Exception as e:
+            _log_info(f'conversation_digest integration error: {e}')
+            final_digest = '\n\n'.join(chunk_digests)
+
+    result = {
+        'uuid': uuid,
+        'digest': final_digest,
+        'safe_mode': safe_mode,
+        'chunks': len(chunk_digests),
+        'created_at': now_jst(),
+        'model': model,
+    }
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    _log_info(f'conversation_digest: uuid={uuid} safe={safe_mode} chunks={len(chunk_digests)}')
+    result['cached'] = False
+    return result
+
+
 def _nightly_batch_loop():
     """夜間自動バッチ: 毎日 MIO_NIGHTLY_BATCH_HOUR 時（JST）に raw 残数を確認し、あればバッチを起動する。
 
@@ -3269,6 +3399,15 @@ _MCP_TOOLS = [
         }, "required": ["uuid"]}
     },
     {
+        "name": "conversation_digest",
+        "description": "会話ログのダイジェストを生成・取得する。ローカルLLMで要約。safe_mode=trueでポリシーセーフな抽象表現に変換",
+        "inputSchema": {"type": "object", "properties": {
+            "uuid":      {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
+            "force":     {"type": "boolean", "description": "trueでキャッシュを無視して再生成。デフォルト: false"},
+            "safe_mode": {"type": "boolean", "description": "trueでポリシーセーフな抽象表現に変換。デフォルト: false"}
+        }, "required": ["uuid"]}
+    },
+    {
         "name": "log_annotate",
         "description": "会話ログに監査・追体験用の注記を積む。生ログは不変、注記はappend-only（編集・削除なし、反論も新規注記として積む）。conversation_read(include_annotations=true)でインライン表示される",
         "inputSchema": {"type": "object", "properties": {
@@ -3704,6 +3843,16 @@ def _handle_tool_call_raw(name, arguments):
         if thinking_found and not include_thinking:
             result += f'\n\n---\n（この会話には thinking ブロックが {thinking_found} 件あります。include_thinking=true で取得できます）'
         return result
+
+    elif name == "conversation_digest":
+        uid = arguments.get("uuid", "")
+        if not uid:
+            return {"error": "uuid is required"}
+        return _conversation_digest(
+            uid,
+            force=bool(arguments.get("force", False)),
+            safe_mode=bool(arguments.get("safe_mode", False)),
+        )
 
     elif name == "log_annotate":
         uid    = arguments.get("uuid", "")
