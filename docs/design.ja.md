@@ -897,7 +897,17 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 |---------|------|------|------|
 | GET | `/api/album/` | admin | 画像メタデータ一覧（`?tag=...` でフィルタ） |
 | GET | `/api/album/<id>` | admin | 画像本体を返却（ブラウザで直接表示可） |
+| POST | `/api/album/upload` | admin | 画像アップロード（multipart/form-data or URL） |
+| PATCH | `/api/album/<id>` | admin | メタデータ更新（comment・tags） |
+| DELETE | `/api/album/<id>` | admin | 画像＋メタデータの完全削除 |
+| POST | `/api/album/<id>/share` | admin | 共有 URL 生成（24 時間有効） |
 | GET | `/api/album/shared/<token>` | 不要 | 共有画像（24 時間限定） |
+
+### admin.html Album タブ
+
+- サムネイルグリッド表示（レスポンシブ: PC 約4列、モバイル 2列）
+- アップロードパネル（ファイル選択 or URL入力＋コメント＋タグ）
+- クリックでモーダル拡大表示＋メタデータ編集（comment・tags）・削除・共有URL生成
 
 ### MCP image content type
 

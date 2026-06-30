@@ -901,7 +901,17 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 |--------|------|------|-------------|
 | GET | `/api/album/` | admin | List image metadata (`?tag=...` to filter) |
 | GET | `/api/album/<id>` | admin | Serve image file (browser-displayable) |
+| POST | `/api/album/upload` | admin | Upload image (multipart/form-data or URL) |
+| PATCH | `/api/album/<id>` | admin | Update metadata (comment, tags) |
+| DELETE | `/api/album/<id>` | admin | Delete image + metadata (permanent) |
+| POST | `/api/album/<id>/share` | admin | Generate share URL (24h) |
 | GET | `/api/album/shared/<token>` | none | Shared image (24h limit) |
+
+### admin.html Album tab
+
+- Responsive thumbnail grid (desktop ~4 columns, mobile 2 columns)
+- Upload panel (file selector or URL input + comment + tags)
+- Click to open modal: full image, metadata editing (comment, tags), delete, share URL generation
 
 ### MCP image content type
 

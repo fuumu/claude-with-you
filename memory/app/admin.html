@@ -154,6 +154,56 @@
     .dot-normal { background: #7c6af7; }
     .dot-low    { background: #5a6a7a; }
 
+    /* ── Album ── */
+    .album-toolbar { display: flex; gap: .75rem; margin-bottom: 1rem; align-items: center; flex-wrap: wrap; }
+    .album-toolbar .btn-upload {
+      padding: .4rem 1rem; background: #7c6af7; border: none; border-radius: 6px;
+      color: #fff; cursor: pointer; font-size: .82rem;
+    }
+    .album-toolbar .btn-upload:hover { background: #6a5ae0; }
+    .album-upload-panel {
+      background: #16213e; border: 1px solid #2a3a5a; border-radius: 8px;
+      padding: 1rem 1.2rem; margin-bottom: 1rem; display: none;
+    }
+    .album-upload-panel.open { display: block; }
+    .album-upload-panel label { font-size: .8rem; color: #7a8a9a; display: block; margin-bottom: .3rem; }
+    .album-upload-panel input[type=text],
+    .album-upload-panel input[type=file] {
+      width: 100%; padding: .4rem .6rem; background: #0f0f1a; border: 1px solid #2a3a5a;
+      border-radius: 5px; color: #c8d8e8; font-size: .82rem; margin-bottom: .7rem;
+    }
+    .album-upload-panel .upload-row { display: flex; gap: .75rem; align-items: flex-end; }
+    .album-upload-panel .upload-row > div { flex: 1; }
+    .album-upload-panel .btn-submit {
+      padding: .45rem 1.2rem; background: #2ecc71; border: none; border-radius: 6px;
+      color: #fff; cursor: pointer; font-size: .82rem; margin-top: .3rem;
+    }
+    .album-upload-panel .btn-submit:hover { background: #27ae60; }
+    .album-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem;
+    }
+    .album-thumb {
+      background: #16213e; border: 1px solid #2a3a5a; border-radius: 8px;
+      overflow: hidden; cursor: pointer; transition: border-color .2s, transform .1s;
+    }
+    .album-thumb:hover { border-color: #7c6af7; transform: translateY(-2px); }
+    .album-thumb img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .album-thumb-info {
+      padding: .4rem .55rem; font-size: .72rem; color: #7a8a9a;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .album-detail-img { max-width: 100%; max-height: 50vh; border-radius: 6px; margin-bottom: 1rem; }
+    .album-edit-row { display: flex; gap: .5rem; margin-bottom: .5rem; align-items: center; }
+    .album-edit-row label { font-size: .8rem; color: #7a8a9a; min-width: 70px; }
+    .album-edit-row input {
+      flex: 1; padding: .35rem .5rem; background: #0f0f1a; border: 1px solid #2a3a5a;
+      border-radius: 5px; color: #c8d8e8; font-size: .82rem;
+    }
+    @media (max-width: 600px) {
+      .album-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+      .album-upload-panel .upload-row { flex-direction: column; }
+    }
+
     /* ── Artifacts ── */
     .artifact-list { display: flex; flex-direction: column; gap: .5rem; }
     .artifact-item {
@@ -482,6 +532,7 @@
   <button class="tab-btn grp-ai active" onclick="switchTab('memory', this)">Memory</button>
   <button class="tab-btn grp-ai" onclick="switchTab('coremem', this)">CoreMem</button>
   <button class="tab-btn grp-ai" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
+  <button class="tab-btn grp-ai" onclick="switchTab('album', this)">Album</button>
 
   <span class="tab-group-label grp-chat" data-i18n="grp.chat">💬 クロードチャット関連</span>
   <button class="tab-btn grp-chat" onclick="switchTab('logs', this)">Logs</button>
@@ -504,6 +555,32 @@
     <button class="filter-btn active" onclick="setFilter('全て', this)" data-i18n="filter.all">全て</button>
   </div>
   <div class="card-grid" id="memory-grid"></div>
+</div>
+
+<!-- Album tab -->
+<div class="tab-panel" id="tab-album">
+  <div class="album-toolbar">
+    <button class="btn-upload" onclick="toggleAlbumUpload()" data-i18n="album.upload">📷 アップロード</button>
+    <span style="font-size:.8rem;color:#5a6a7a" id="album-count"></span>
+  </div>
+  <div class="album-upload-panel" id="album-upload-panel">
+    <div class="upload-row">
+      <div>
+        <label data-i18n="album.file">画像ファイル</label>
+        <input type="file" id="album-file" accept="image/*">
+      </div>
+      <div>
+        <label data-i18n="album.url">または URL</label>
+        <input type="text" id="album-url" placeholder="https://...">
+      </div>
+    </div>
+    <label data-i18n="album.comment">コメント</label>
+    <input type="text" id="album-comment" placeholder="">
+    <label data-i18n="album.tags">タグ（カンマ区切り）</label>
+    <input type="text" id="album-tags" placeholder="風景, 2026">
+    <button class="btn-submit" onclick="albumUpload()" data-i18n="album.submit">保存</button>
+  </div>
+  <div class="album-grid" id="album-grid"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -783,6 +860,7 @@ function switchTab(name, btn) {
   if (name === 'files')     loadFiles();
   if (name === 'inbox')     loadInbox();
   if (name === 'friends')   loadFriends();
+  if (name === 'album')     loadAlbum();
   if (name === 'logs') {
     const frame = document.getElementById('logs-frame');
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
@@ -805,6 +883,7 @@ const TAB_HELP = {
     Import:  'Claude.aiエクスポートZIPの取り込み＋要約バッチ進捗',
     Friends: 'お友達システムの登録・承認・コード管理',
     Oplog:   '記憶操作の操作ログ（システム）',
+    Album:   'アルバム（澪の画像記憶）。サムネイル一覧・アップロード・共有',
   },
   en: {
     _title: 'Settings & Help', _ver: 'Version', _help: 'Tab guide',
@@ -817,6 +896,7 @@ const TAB_HELP = {
     Import:  'Import Claude.ai export ZIP + summary batch progress',
     Friends: 'Friend system: registration, approval, codes',
     Oplog:   'Memory operation log (system)',
+    Album:   'Album (Mio\'s image memories). Thumbnails, upload, share',
   }
 };
 
@@ -874,6 +954,13 @@ const I18N = {
   'inbox.all':         { ja: 'すべて', en: 'All' },
   'files.search.ph':   { ja: '🔍 ファイル名・会話名で検索...', en: '🔍 Search by file or conversation name...' },
   'common.clear':      { ja: 'クリア', en: 'Clear' },
+  // Album
+  'album.upload':      { ja: '📷 アップロード', en: '📷 Upload' },
+  'album.file':        { ja: '画像ファイル', en: 'Image file' },
+  'album.url':         { ja: 'または URL', en: 'or URL' },
+  'album.comment':     { ja: 'コメント', en: 'Comment' },
+  'album.tags':        { ja: 'タグ（カンマ区切り）', en: 'Tags (comma-separated)' },
+  'album.submit':      { ja: '保存', en: 'Save' },
 };
 
 function t(key) { const e = I18N[key]; return e ? (e[_adminLang] || e.ja) : key; }
@@ -1957,6 +2044,152 @@ function openOplog(idx) {
   setModalId(row.entry_id || '');
   setModalLinks('');
   openModal();
+}
+
+// ── Album ─────────────────────────────────────────────────────────────
+let albumData = [];
+
+async function loadAlbum() {
+  try {
+    const res = await apiFetch('/api/album/');
+    const d = await res.json();
+    albumData = d.items || [];
+    renderAlbumGrid();
+    document.getElementById('album-count').textContent =
+      albumData.length + (_adminLang === 'en' ? ' images' : ' 枚');
+  } catch (e) { console.error('loadAlbum', e); }
+}
+
+function renderAlbumGrid() {
+  const grid = document.getElementById('album-grid');
+  if (!albumData.length) {
+    grid.innerHTML = '<p style="color:#5a6a7a;font-size:.85rem">' +
+      (_adminLang === 'en' ? 'No images yet' : 'まだ画像がありません') + '</p>';
+    return;
+  }
+  grid.innerHTML = albumData.map((m, i) => `
+    <div class="album-thumb" onclick="openAlbumDetail(${i})">
+      <img src="${API}/api/album/${esc(m.id)}?token=${getToken()}" loading="lazy"
+           onerror="this.style.display='none'">
+      <div class="album-thumb-info">${esc(m.comment || m.id)}</div>
+    </div>
+  `).join('');
+}
+
+function toggleAlbumUpload() {
+  document.getElementById('album-upload-panel').classList.toggle('open');
+}
+
+async function albumUpload() {
+  const fileInput = document.getElementById('album-file');
+  const url     = document.getElementById('album-url').value.trim();
+  const comment = document.getElementById('album-comment').value.trim();
+  const tags    = document.getElementById('album-tags').value.trim();
+
+  if (!fileInput.files.length && !url) {
+    showToast(_adminLang === 'en' ? 'Select a file or enter a URL' : 'ファイルまたはURLを指定してください');
+    return;
+  }
+
+  const fd = new FormData();
+  if (fileInput.files.length) fd.append('file', fileInput.files[0]);
+  if (url)     fd.append('url', url);
+  if (comment) fd.append('comment', comment);
+  if (tags)    fd.append('tags', tags);
+
+  try {
+    const res = await apiFetch('/api/album/upload', { method: 'POST', body: fd });
+    const d = await res.json();
+    if (d.error) { showToast('Error: ' + d.error); return; }
+    showToast(_adminLang === 'en' ? 'Saved: ' + d.id : '保存しました: ' + d.id);
+    fileInput.value = '';
+    document.getElementById('album-url').value = '';
+    document.getElementById('album-comment').value = '';
+    document.getElementById('album-tags').value = '';
+    document.getElementById('album-upload-panel').classList.remove('open');
+    loadAlbum();
+  } catch (e) { showToast('Upload failed'); console.error(e); }
+}
+
+function openAlbumDetail(idx) {
+  const m = albumData[idx];
+  if (!m) return;
+  const ts = (m.created_at || '').slice(0, 16).replace('T', ' ');
+  document.getElementById('modal-title').textContent = m.comment || m.id;
+  document.getElementById('modal-meta').textContent =
+    `${ts}　${m.width}×${m.height}　${(m.size_bytes/1024).toFixed(0)} KB　${(m.tags||[]).join(', ')}`;
+  const body = document.getElementById('modal-body');
+  body.className = 'modal-body';
+  body.innerHTML = `
+    <img src="${API}/api/album/${esc(m.id)}?token=${getToken()}" class="album-detail-img">
+    <div class="album-edit-row">
+      <label>Comment</label>
+      <input type="text" id="album-edit-comment" value="${esc(m.comment || '')}">
+    </div>
+    <div class="album-edit-row">
+      <label>Tags</label>
+      <input type="text" id="album-edit-tags" value="${esc((m.tags||[]).join(', '))}">
+    </div>
+    <div style="display:flex;gap:.5rem;margin-top:.8rem">
+      <button class="btn-link" onclick="albumSaveMeta('${esc(m.id)}', ${idx})"
+        data-i18n="album.saveMeta">${_adminLang === 'en' ? 'Save' : '保存'}</button>
+      <button class="btn-link" onclick="albumShareUrl('${esc(m.id)}')"
+        data-i18n="album.share">🔗 ${_adminLang === 'en' ? 'Share' : '共有'}</button>
+      <button class="btn-delete" onclick="albumDelete('${esc(m.id)}')"
+        data-i18n="album.delete">${_adminLang === 'en' ? 'Delete' : '削除'}</button>
+    </div>
+    ${m.source_url ? `<div style="font-size:.72rem;color:#5a6a7a;margin-top:.6rem;word-break:break-all">Source: ${esc(m.source_url)}</div>` : ''}
+  `;
+  setModalId(m.id);
+  setModalLinks('');
+  openModal();
+}
+
+async function albumSaveMeta(id, idx) {
+  const comment = document.getElementById('album-edit-comment').value;
+  const tagsRaw = document.getElementById('album-edit-tags').value;
+  const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+  try {
+    const res = await apiFetch('/api/album/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment, tags })
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      albumData[idx] = updated;
+      showToast(_adminLang === 'en' ? 'Saved' : '保存しました');
+      document.getElementById('modal-title').textContent = comment || id;
+    } else { showToast('Save failed'); }
+  } catch (e) { showToast('Save failed'); console.error(e); }
+}
+
+async function albumShareUrl(id) {
+  try {
+    const res = await apiFetch('/api/album/' + id + '/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const d = await res.json();
+    if (d.error) { showToast('Error: ' + d.error); return; }
+    navigator.clipboard.writeText(d.url)
+      .then(() => showToast((_adminLang === 'en' ? 'Share URL copied (24h): ' : '共有URLコピー（24時間有効）: ') + d.url))
+      .catch(() => showToast(d.url));
+  } catch (e) { showToast('Share failed'); console.error(e); }
+}
+
+async function albumDelete(id) {
+  const msg = _adminLang === 'en' ? 'Delete this image?' : 'この画像を削除しますか？';
+  if (!confirm(msg)) return;
+  try {
+    const res = await apiFetch('/api/album/' + id, { method: 'DELETE' });
+    if (res.ok) {
+      showToast(_adminLang === 'en' ? 'Deleted' : '削除しました');
+      closeModal();
+      loadAlbum();
+    } else { showToast('Delete failed'); }
+  } catch (e) { showToast('Delete failed'); console.error(e); }
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────

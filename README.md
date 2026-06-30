@@ -323,6 +323,10 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/friends/invitation` | Get invitation text (no auth) |
 | GET | `/api/album/` | List album images (`?tag=...` to filter) |
 | GET | `/api/album/<id>` | Serve album image (browser-displayable) |
+| POST | `/api/album/upload` | Upload image (multipart/form-data or URL) |
+| PATCH | `/api/album/<id>` | Update album metadata (comment, tags) |
+| DELETE | `/api/album/<id>` | Delete album image (permanent) |
+| POST | `/api/album/<id>/share` | Generate album share URL (24h) |
 | GET | `/api/album/shared/<token>` | Shared album image (no auth, 24h) |
 | POST | `/import` | Import ZIP file |
 | GET | `/health` | Health check |
@@ -556,7 +560,7 @@ claude-with-you/
 - Search quality + mobile (v3.48) — `memory_search` multi-word AND search (space-separated); fixed a bug where `memory_write`-originated entries were excluded from keyword-layer generation (now keyword-only generation from the body); mobile responsive layout for logs/admin (off-canvas sidebar, bottom sheet)
 - logs.html manual layout toggle (v3.49) — a "⛶ Layout" button in the conversation view toggles the mobile layout on/off regardless of screen width (persisted in localStorage), fixing the breakpoint-edge issue of auto-detection (covers iPad portrait)
 - `memory_read_index` random retrieval (v3.50) — `random=N` returns N random entries (deleted excluded, clamped 1–5; `filter=summarized` drops raw entries); REST `?random=N` supported too. For serendipitous re-encounters with old memories
-- Album (image memory) system (v3.51) — 4 new MCP tools (`album_save`/`album_read`/`album_list`/`album_share`). Downloads from direct URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves to `/data/album/`. MCP image content type support. REST `GET /api/album/`, `/api/album/{id}`, shared URL
+- Album (image memory) system (v3.51) — 4 new MCP tools (`album_save`/`album_read`/`album_list`/`album_share`). Downloads from direct URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves to `/data/album/`. MCP image content type support. 7 REST endpoints (list, image, upload, metadata update, delete, share URL, shared image). admin.html Album tab (thumbnail grid, upload, edit, delete, share)
 
 ---
 

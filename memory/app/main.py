@@ -11,7 +11,11 @@ mio-memory v3.51  —  Streamable HTTP MCP transport
     - album_list: 全画像メタデータ一覧（tags フィルタ対応）
     - album_share: 24時間限定の認証不要画像共有URL発行（既存share_tokens共用）
     - REST: GET /api/album/（一覧）、GET /api/album/{id}（画像返却）、
+      POST /api/album/upload（ブラウザアップロード）、PATCH /api/album/{id}（メタデータ更新）、
+      DELETE /api/album/{id}（画像削除）、POST /api/album/{id}/share（共有URL生成）、
       GET /api/album/shared/{token}（共有画像返却）
+    - admin.html: Album タブ追加（サムネイルグリッド・アップロード・メタデータ編集・
+      削除・共有URL生成）。レスポンシブ対応（PC:4列/モバイル:2列）
     - MCP tools/call レスポンスで image content type をサポート（_mcp_content 方式）
     - Dockerfile に Pillow 追加
   v3.50 (2026-06-25) - memory_read_index に random 引数追加（記憶の偶発的な再会）
@@ -2973,6 +2977,80 @@ def api_album_image(album_id):
     ext = meta.get('ext', 'jpg')
     return send_from_directory(ALBUM_DIR, f'{album_id}.{ext}',
                                mimetype=_MIME_MAP.get(ext, 'image/jpeg'))
+
+@app.route('/api/album/upload', methods=['POST'])
+@require_auth
+def api_album_upload():
+    """ブラウザからの画像アップロード（multipart/form-data）またはURL指定"""
+    comment = request.form.get('comment', '')
+    tags_raw = request.form.get('tags', '')
+    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+    url = request.form.get('url', '').strip()
+
+    if url:
+        result = _album_save(url=url, comment=comment, tags=tags)
+    elif 'file' in request.files:
+        f = request.files['file']
+        if not f.filename:
+            return jsonify({"error": "no file selected"}), 400
+        os.makedirs(ALBUM_DIR, exist_ok=True)
+        tmp_path = os.path.join(ALBUM_DIR, f'_upload_tmp_{secrets.token_hex(8)}')
+        try:
+            f.save(tmp_path)
+            result = _album_save(file_path=tmp_path, comment=comment, tags=tags)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+    else:
+        return jsonify({"error": "file or url is required"}), 400
+
+    if 'error' in result:
+        return jsonify(result), 400
+    return jsonify(result), 201
+
+@app.route('/api/album/<album_id>', methods=['PATCH'])
+@require_auth
+def api_album_update(album_id):
+    """メタデータ（comment・tags）の更新"""
+    meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
+    if not os.path.exists(meta_path):
+        abort(404)
+    with open(meta_path) as f:
+        meta = json.load(f)
+    data = request.get_json(silent=True) or {}
+    if 'comment' in data:
+        meta['comment'] = data['comment']
+    if 'tags' in data:
+        meta['tags'] = data['tags'] or []
+    with open(meta_path, 'w') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+    return jsonify(meta)
+
+@app.route('/api/album/<album_id>', methods=['DELETE'])
+@require_auth
+def api_album_delete(album_id):
+    """画像とメタデータを完全削除"""
+    meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
+    if not os.path.exists(meta_path):
+        abort(404)
+    with open(meta_path) as f:
+        meta = json.load(f)
+    ext = meta.get('ext', 'jpg')
+    img_path = os.path.join(ALBUM_DIR, f'{album_id}.{ext}')
+    if os.path.exists(img_path):
+        os.remove(img_path)
+    os.remove(meta_path)
+    _log_info(f'album_delete: {album_id}')
+    return jsonify({'status': 'deleted', 'id': album_id})
+
+@app.route('/api/album/<album_id>/share', methods=['POST'])
+@require_auth
+def api_album_share(album_id):
+    """24時間有効な共有URL生成"""
+    result = _album_share(album_id)
+    if 'error' in result:
+        return jsonify(result), 404
+    return jsonify(result)
 
 @app.route('/api/album/shared/<token>', methods=['GET'])
 def api_album_shared(token):
