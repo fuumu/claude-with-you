@@ -1,8 +1,14 @@
 """
-mio-memory v3.51  —  Streamable HTTP MCP transport
+mio-memory v3.52  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.52 (2026-06-30) - アルバム機能改善
+    - album_save: HTMLページ（Gemini共有リンク等）からの画像抽出に対応
+      Content-Typeがtext/htmlの場合、og:image → <img src> を解析し画像URLを取得→保存
+      複数画像がある場合は全て取り込み items[] で返却
+    - admin.html: Albumタブにドラッグ&ドロップアップロード対応
+      複数ファイル同時ドロップ対応、ドラッグオーバー時のビジュアルフィードバック
   v3.51 (2026-06-30) - アルバム機能（画像記憶システム）新規実装
     - MCPツール4本追加（album_save / album_read / album_list / album_share）
     - album_save: URL直リンクまたはNASローカルパスから画像を取得→長辺1024pxリサイズ
@@ -376,7 +382,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.51'
+VERSION = '3.52'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2829,7 +2835,38 @@ def oauth_token():
 _MIME_MAP = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
              'gif': 'image/gif', 'webp': 'image/webp'}
 
-def _album_save(url=None, file_path=None, comment='', tags=None):
+def _extract_images_from_html(html_bytes, base_url):
+    """HTMLページからog:image と <img src> を抽出して画像URLリストを返す"""
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin
+
+    text = html_bytes.decode('utf-8', errors='replace')
+    og_images = []
+    img_srcs = []
+
+    class _Parser(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            d = dict(attrs)
+            if tag == 'meta':
+                prop = d.get('property', '') or d.get('name', '')
+                if prop in ('og:image', 'twitter:image') and d.get('content'):
+                    og_images.append(urljoin(base_url, d['content']))
+            elif tag == 'img':
+                src = d.get('src', '')
+                if src and not src.startswith('data:'):
+                    img_srcs.append(urljoin(base_url, src))
+
+    try:
+        _Parser().feed(text)
+    except Exception:
+        pass
+
+    if og_images:
+        return og_images
+    return img_srcs
+
+
+def _album_save(url=None, file_path=None, comment='', tags=None, _from_html=False):
     """画像を取得→リサイズ→保存。メタデータJSONも同時生成"""
     import io
     import urllib.request
@@ -2847,9 +2884,26 @@ def _album_save(url=None, file_path=None, comment='', tags=None):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': f'mio-memory/{VERSION}'})
             with urllib.request.urlopen(req, timeout=30) as resp:
+                content_type = resp.headers.get('Content-Type', '')
                 data = resp.read()
         except Exception as e:
             return {"error": f"download failed: {e}"}
+
+        if not _from_html and 'text/html' in content_type:
+            img_urls = _extract_images_from_html(data, url)
+            if not img_urls:
+                return {"error": "HTML page contained no extractable images"}
+            results = []
+            for img_url in img_urls:
+                r = _album_save(url=img_url, comment=comment, tags=tags, _from_html=True)
+                if 'error' not in r:
+                    results.append(r)
+            if not results:
+                return {"error": "no valid images found in HTML page"}
+            if len(results) == 1:
+                return results[0]
+            return {"items": results, "total": len(results)}
+
         original_filename = url.rsplit('/', 1)[-1].split('?')[0] or 'image'
     else:
         if not os.path.exists(file_path):
@@ -3264,9 +3318,9 @@ _MCP_TOOLS = [
     },
     {
         "name": "album_save",
-        "description": "画像をアルバムに保存する。URLから取得またはNASローカルファイルを指定。長辺1024pxにリサイズして保存",
+        "description": "画像をアルバムに保存する。URLから取得またはNASローカルファイルを指定。長辺1024pxにリサイズして保存。HTMLページ（Gemini共有リンク等）の場合はog:image/<img>タグから画像を自動抽出",
         "inputSchema": {"type": "object", "properties": {
-            "url":       {"type": "string", "description": "画像の直リンクURL（https）。ダウンロード→リサイズ→保存"},
+            "url":       {"type": "string", "description": "画像URL（直リンク or HTMLページ）。HTMLの場合はページ内の画像を自動抽出して保存"},
             "file_path": {"type": "string", "description": "NASローカルの画像パス（/data/... 等）。url と排他"},
             "comment":   {"type": "string", "description": "画像のコメント・説明（省略可）"},
             "tags":      {"type": "array", "items": {"type": "string"}, "description": "タグ（省略可）"}

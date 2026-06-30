@@ -179,6 +179,16 @@
       color: #fff; cursor: pointer; font-size: .82rem; margin-top: .3rem;
     }
     .album-upload-panel .btn-submit:hover { background: #27ae60; }
+    .album-drop-indicator { font-size: .8rem; color: #7c6af7; margin-left: .5rem; }
+    #tab-album.drag-over {
+      outline: 2px dashed #7c6af7; outline-offset: -4px;
+      background: rgba(124, 106, 247, 0.06); border-radius: 8px;
+    }
+    .album-drop-msg {
+      text-align: center; padding: 2.5rem 1rem; color: #5a6a7a; font-size: .9rem;
+      border: 2px dashed #2a3a5a; border-radius: 8px; margin-bottom: 1rem; display: none;
+    }
+    #tab-album.drag-over .album-drop-msg { display: block; border-color: #7c6af7; color: #7c6af7; }
     .album-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem;
     }
@@ -562,6 +572,7 @@
   <div class="album-toolbar">
     <button class="btn-upload" onclick="toggleAlbumUpload()" data-i18n="album.upload">📷 アップロード</button>
     <span style="font-size:.8rem;color:#5a6a7a" id="album-count"></span>
+    <span class="album-drop-indicator" id="album-drop-indicator" style="display:none"></span>
   </div>
   <div class="album-upload-panel" id="album-upload-panel">
     <div class="upload-row">
@@ -580,6 +591,7 @@
     <input type="text" id="album-tags" placeholder="風景, 2026">
     <button class="btn-submit" onclick="albumUpload()" data-i18n="album.submit">保存</button>
   </div>
+  <div class="album-drop-msg" id="album-drop-msg" data-i18n="album.drop">📷 ここにドロップして画像を追加</div>
   <div class="album-grid" id="album-grid"></div>
 </div>
 
@@ -961,6 +973,7 @@ const I18N = {
   'album.comment':     { ja: 'コメント', en: 'Comment' },
   'album.tags':        { ja: 'タグ（カンマ区切り）', en: 'Tags (comma-separated)' },
   'album.submit':      { ja: '保存', en: 'Save' },
+  'album.drop':        { ja: '📷 ここにドロップして画像を追加', en: '📷 Drop images here to add' },
 };
 
 function t(key) { const e = I18N[key]; return e ? (e[_adminLang] || e.ja) : key; }
@@ -2080,35 +2093,100 @@ function toggleAlbumUpload() {
   document.getElementById('album-upload-panel').classList.toggle('open');
 }
 
+let _albumDroppedFiles = null;
+
+function _initAlbumDragDrop() {
+  const panel = document.getElementById('tab-album');
+  if (!panel) return;
+  let dragCounter = 0;
+  panel.addEventListener('dragenter', e => {
+    e.preventDefault();
+    dragCounter++;
+    panel.classList.add('drag-over');
+  });
+  panel.addEventListener('dragover', e => { e.preventDefault(); });
+  panel.addEventListener('dragleave', e => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; panel.classList.remove('drag-over'); }
+  });
+  panel.addEventListener('drop', e => {
+    e.preventDefault();
+    dragCounter = 0;
+    panel.classList.remove('drag-over');
+    const files = e.dataTransfer.files;
+    if (!files.length) return;
+    const imgs = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (!imgs.length) {
+      showToast(_adminLang === 'en' ? 'No image files found' : '画像ファイルがありません');
+      return;
+    }
+    _albumDroppedFiles = imgs;
+    const indicator = document.getElementById('album-drop-indicator');
+    const names = imgs.map(f => f.name).join(', ');
+    indicator.textContent = (imgs.length === 1 ? '📎 ' : '📎 ' + imgs.length + '件: ') + names;
+    indicator.style.display = 'inline';
+    document.getElementById('album-upload-panel').classList.add('open');
+  });
+  document.getElementById('album-file').addEventListener('change', () => {
+    _albumDroppedFiles = null;
+    document.getElementById('album-drop-indicator').style.display = 'none';
+  });
+}
+_initAlbumDragDrop();
+
 async function albumUpload() {
   const fileInput = document.getElementById('album-file');
   const url     = document.getElementById('album-url').value.trim();
   const comment = document.getElementById('album-comment').value.trim();
   const tags    = document.getElementById('album-tags').value.trim();
 
-  if (!fileInput.files.length && !url) {
+  const hasDropped = _albumDroppedFiles && _albumDroppedFiles.length > 0;
+  if (!hasDropped && !fileInput.files.length && !url) {
     showToast(_adminLang === 'en' ? 'Select a file or enter a URL' : 'ファイルまたはURLを指定してください');
     return;
   }
 
-  const fd = new FormData();
-  if (fileInput.files.length) fd.append('file', fileInput.files[0]);
-  if (url)     fd.append('url', url);
-  if (comment) fd.append('comment', comment);
-  if (tags)    fd.append('tags', tags);
+  const filesToUpload = hasDropped ? _albumDroppedFiles : (fileInput.files.length ? [fileInput.files[0]] : []);
 
-  try {
-    const res = await apiFetch('/api/album/upload', { method: 'POST', body: fd });
-    const d = await res.json();
-    if (d.error) { showToast('Error: ' + d.error); return; }
-    showToast(_adminLang === 'en' ? 'Saved: ' + d.id : '保存しました: ' + d.id);
-    fileInput.value = '';
-    document.getElementById('album-url').value = '';
-    document.getElementById('album-comment').value = '';
-    document.getElementById('album-tags').value = '';
-    document.getElementById('album-upload-panel').classList.remove('open');
-    loadAlbum();
-  } catch (e) { showToast('Upload failed'); console.error(e); }
+  if (filesToUpload.length > 0) {
+    let saved = 0;
+    for (const file of filesToUpload) {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (comment) fd.append('comment', comment);
+      if (tags)    fd.append('tags', tags);
+      try {
+        const res = await apiFetch('/api/album/upload', { method: 'POST', body: fd });
+        const d = await res.json();
+        if (d.error) { showToast('Error: ' + d.error); continue; }
+        saved++;
+      } catch (e) { console.error(e); }
+    }
+    if (saved > 0) showToast((_adminLang === 'en' ? 'Saved ' : '保存しました: ') + saved +
+      (_adminLang === 'en' ? ' image(s)' : '件'));
+  } else {
+    const fd = new FormData();
+    fd.append('url', url);
+    if (comment) fd.append('comment', comment);
+    if (tags)    fd.append('tags', tags);
+    try {
+      const res = await apiFetch('/api/album/upload', { method: 'POST', body: fd });
+      const d = await res.json();
+      if (d.error) { showToast('Error: ' + d.error); return; }
+      const ids = d.items ? d.items.map(i => i.id).join(', ') : d.id;
+      showToast((_adminLang === 'en' ? 'Saved: ' : '保存しました: ') + ids);
+    } catch (e) { showToast('Upload failed'); console.error(e); return; }
+  }
+
+  _albumDroppedFiles = null;
+  fileInput.value = '';
+  document.getElementById('album-url').value = '';
+  document.getElementById('album-comment').value = '';
+  document.getElementById('album-tags').value = '';
+  document.getElementById('album-drop-indicator').style.display = 'none';
+  document.getElementById('album-upload-panel').classList.remove('open');
+  loadAlbum();
 }
 
 function openAlbumDetail(idx) {

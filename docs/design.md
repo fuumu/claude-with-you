@@ -140,7 +140,7 @@ Content-Type: multipart/form-data
 Conversation ID (the `uuid` field of each entry in `conversations.json`)
 
 ### admin.html integration
-A drag & drop UI is added to admin.html (separate task).
+admin.html Import tab has drag & drop UI (Album tab also added drag & drop in v3.52).
 
 ---
 
@@ -890,7 +890,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 
 | Tool | Description |
 |------|-------------|
-| `album_save` | Download from direct URL or read from NAS local path → resize → save |
+| `album_save` | Download from URL (direct link or HTML page — auto-extracts og:image/img tags, v3.52) or read from NAS local path → resize → save |
 | `album_read` | Return base64-encoded image as MCP image content + metadata |
 | `album_list` | List all image metadata (tag filter supported, no image data) |
 | `album_share` | Generate a 24h auth-free share URL |
@@ -911,6 +911,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 
 - Responsive thumbnail grid (desktop ~4 columns, mobile 2 columns)
 - Upload panel (file selector or URL input + comment + tags)
+- Drag-and-drop support (v3.52): entire tab acts as drop zone, multi-file drop, visual highlight feedback
 - Click to open modal: full image, metadata editing (comment, tags), delete, share URL generation
 
 ### MCP image content type
