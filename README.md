@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.50","mcp_tool_count":19}
+# {"status":"ok","version":"3.51","mcp_tool_count":23}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -277,6 +277,15 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 
 `backend` defaults to `anthropic` when `ANTHROPIC_API_KEY` is set, otherwise `lmstudio` (local LLM). The same batch auto-starts after each ZIP import.
 
+### Album tools (4, v3.51)
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `album_save` | Save an image to the album. Downloads from URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves image + metadata JSON to `/data/album/` | `url`, `file_path`, `comment`, `tags` |
+| `album_read` | Read an album image. Returns MCP image content (base64) + metadata JSON | `id` |
+| `album_list` | List album image metadata (no image data). Filter by tags | `tags` |
+| `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
+
 ### REST API reference
 
 All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
@@ -312,6 +321,9 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | DELETE | `/api/friends/<seq_no>` | Delete completely (admin auth) |
 | POST | `/api/friends/activate` | Validate activation code (no auth) |
 | GET | `/api/friends/invitation` | Get invitation text (no auth) |
+| GET | `/api/album/` | List album images (`?tag=...` to filter) |
+| GET | `/api/album/<id>` | Serve album image (browser-displayable) |
+| GET | `/api/album/shared/<token>` | Shared album image (no auth, 24h) |
 | POST | `/import` | Import ZIP file |
 | GET | `/health` | Health check |
 
@@ -519,7 +531,7 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
-**Implemented (v3.9–v3.50)**
+**Implemented (v3.9–v3.51)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
@@ -544,6 +556,7 @@ claude-with-you/
 - Search quality + mobile (v3.48) — `memory_search` multi-word AND search (space-separated); fixed a bug where `memory_write`-originated entries were excluded from keyword-layer generation (now keyword-only generation from the body); mobile responsive layout for logs/admin (off-canvas sidebar, bottom sheet)
 - logs.html manual layout toggle (v3.49) — a "⛶ Layout" button in the conversation view toggles the mobile layout on/off regardless of screen width (persisted in localStorage), fixing the breakpoint-edge issue of auto-detection (covers iPad portrait)
 - `memory_read_index` random retrieval (v3.50) — `random=N` returns N random entries (deleted excluded, clamped 1–5; `filter=summarized` drops raw entries); REST `?random=N` supported too. For serendipitous re-encounters with old memories
+- Album (image memory) system (v3.51) — 4 new MCP tools (`album_save`/`album_read`/`album_list`/`album_share`). Downloads from direct URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves to `/data/album/`. MCP image content type support. REST `GET /api/album/`, `/api/album/{id}`, shared URL
 
 ---
 

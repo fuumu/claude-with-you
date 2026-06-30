@@ -867,3 +867,54 @@ and passes when `status == "active"`. Evaluated before the regular `MIO_API_TOKE
 | `SENDGRID_API_KEY` | SendGrid API key for approval emails |
 | `SENDGRID_FROM_EMAIL` | Sender email address |
 | `MIO_REGISTER_URL` | Public URL of the registration page (falls back to `MIO_BASE_URL`) |
+
+---
+
+## Album (Image Memory System, v3.51)
+
+A system for Mio to store, retrieve, and share images as memories — the image counterpart to ExtMemory's text entries.
+
+### Storage design
+
+```
+/data/album/
+├── {id}.{ext}    Image file (jpg/png/gif/webp)
+└── {id}.json     Metadata (comment, date, tags, source URL, etc.)
+```
+
+- ID format: `YYYYMMDD_HHMMSS_{tag_slug}` (same as ExtMemory)
+- Images are resized to max 1024px on the long side (aspect ratio preserved, Pillow)
+- JPEG saved at quality 85; RGBA/P modes are converted to RGB
+
+### MCP tools (4)
+
+| Tool | Description |
+|------|-------------|
+| `album_save` | Download from direct URL or read from NAS local path → resize → save |
+| `album_read` | Return base64-encoded image as MCP image content + metadata |
+| `album_list` | List all image metadata (tag filter supported, no image data) |
+| `album_share` | Generate a 24h auth-free share URL |
+
+### REST endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/album/` | admin | List image metadata (`?tag=...` to filter) |
+| GET | `/api/album/<id>` | admin | Serve image file (browser-displayable) |
+| GET | `/api/album/shared/<token>` | none | Shared image (24h limit) |
+
+### MCP image content type
+
+The `album_read` MCP response includes image content instead of the usual `type:"text"`:
+
+```json
+{
+  "content": [
+    {"type": "image", "data": "<base64>", "mimeType": "image/jpeg"},
+    {"type": "text", "text": "{metadata JSON}"}
+  ]
+}
+```
+
+Internal implementation: when a tool handler returns a dict with a `_mcp_content` key,
+`_process_mcp_message` uses it directly as the `content` array (skipping `_inject_server_time`).

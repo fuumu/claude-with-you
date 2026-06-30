@@ -37,7 +37,8 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/inbox/` — inbox messages (inbox_check / inbox_read / inbox_post)
 - `/data/friends/` — friend system: `registry.json` (token→friend mapping) + per-friend subdirs (`001/memory.md`, `002/memory.md`, ...)
 - `/data/friend_core.md` — Mio's identity definition injected into friend session instructions (plain file, optional; falls back to built-in default)
-- `/data/share_tokens.json` — share tokens for memory entries and conversations
+- `/data/album/` — album images (`{id}.{ext}` image + `{id}.json` metadata per entry)
+- `/data/share_tokens.json` — share tokens for memory entries, conversations, and album images
 - `/data/imported_uuids.json` — deduplication log for ZIP imports
 - `/data/.import_status.json` — last ZIP import record
 
@@ -53,11 +54,11 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.46 — 19 regular-session tools):**
+**MCP tools exposed (v3.51 — 23 regular-session tools):**
 
 All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 
-Regular sessions (19 tools):
+Regular sessions (23 tools):
 - `memory_read_index` / `memory_read` / `memory_write` / `memory_upsert` / `memory_search` — ExtMemory (KV store) CRUD; `memory_search` is hierarchical (v3.17; symbolic added to stage 1 in v3.41): stage 1 index-only (title+tags+keywords, then layer-3 symbolic), stage 2 layer-2 summary, stage 3 full body; returns `summary` + `symbolic` (layer 3) instead of `body` (pass `full_body=true` for legacy behavior), each hit carries `match_layer` (keyword/symbolic/summary/full); same logic exposed via REST `GET /api/memory/hsearch` (v3.19, used by the admin.html Search tab)
 - `memory_share` — generates 24h share URL for a memory entry
 - `CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` — UserCoreMemory (NAS file store, versioned; delete removes all versions); `CoreMem_save` supports `mode="append"` to append to existing content with an automatic `\n---\n<!-- APPEND {datetime} -->\n` separator (v3.31/v3.32); `CoreMem_read` supports split+merge (v3.21): if `{stem}_manifest.md` (with an `order:` list) exists it takes precedence and returns the listed files concatenated with `<!-- BEGIN/END: file -->` separators plus a `manifest` map (file → `##` headings); writes must target individual split files without separators; REST `GET /api/coremem/<name>` merges too (`?raw=true` to bypass)
@@ -66,6 +67,7 @@ Regular sessions (19 tools):
 - `log_annotate` — append-only audit annotation on a conversation (`uuid`, `note`, `author` required; `target` = message number or "No.X", omitted = whole conversation); raw logs are never modified, annotations live in `/data/annotations/{uuid}.json`, no edit/delete (rebuttals are new annotations) (v3.22)
 - `inbox_check` / `inbox_read` / `inbox_post` — lightweight inter-session messaging (`/data/inbox/`); `inbox_post(persistent=true)` creates standing messages that never get marked as read; `inbox_post` accepts optional `from_model`/`to_model` to tag sender/recipient model name (v3.27, null on legacy messages); `inbox_check` returns `persistent[]{id, title, body, created_at, from_model, to_model}` with full bodies (v3.20, no `inbox_read` calls needed for standing messages) plus `non_persistent_unread_count`/`non_persistent_unread_ids`; `inbox_check(include_read=true)` additionally returns all messages with `messages[]{id, read, persistent, title, from, to, from_model, to_model}` and `unread_count`
 - `batch_run_summary_layers` — start the summary-layer batch (2層要約/3層シンボリック圧縮/4層キーワード) for raw entries and keywords backfill; `status_only=true` returns progress + `raw_pending`/`keywords_pending` counts without starting
+- `album_save` / `album_read` / `album_list` / `album_share` — Album (image memory, `/data/album/`); `album_save(url=...)` downloads and resizes to max 1024px long side (Pillow), `album_save(file_path=...)` reads from NAS local path; metadata JSON (`{id}.json`) stored alongside image (`{id}.{ext}`); `album_read` returns MCP image content (base64) + metadata; `album_list(tags=[...])` filters by tag; `album_share` generates 24h auth-free URL; REST `GET /api/album/` (list), `GET /api/album/{id}` (image), `GET /api/album/shared/{token}` (shared image)
 
 Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `friend_memory_read` — read this friend's memory file (`/data/friends/{seq_no:03d}/memory.md`)

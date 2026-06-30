@@ -863,3 +863,54 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 | `SENDGRID_API_KEY` | 承認メール送信用 SendGrid API キー |
 | `SENDGRID_FROM_EMAIL` | 送信元メールアドレス |
 | `MIO_REGISTER_URL` | 登録ページの公開 URL（省略時は `MIO_BASE_URL` を使用） |
+
+---
+
+## アルバム機能（画像記憶システム・v3.51）
+
+澪が画像を記憶として保持・呼び出し・共有できる仕組み。ExtMemory のテキスト記憶の画像版。
+
+### ストレージ設計
+
+```
+/data/album/
+├── {id}.{ext}    画像本体（jpg/png/gif/webp）
+└── {id}.json     メタデータ（コメント・日付・タグ・元URL等）
+```
+
+- ID 形式: `YYYYMMDD_HHMMSS_{タグスラッグ}`（ExtMemory と同様）
+- 保存時に長辺 1024px にリサイズ（アスペクト比維持・Pillow 使用）
+- JPEG は品質 85 で保存。RGBA/P モードは RGB に変換
+
+### MCP ツール（4本）
+
+| ツール | 説明 |
+|--------|------|
+| `album_save` | URL 直リンクまたは NAS ローカルパスから画像取得→リサイズ→保存 |
+| `album_read` | base64 エンコード画像を MCP image コンテンツとして返却＋メタデータ |
+| `album_list` | 全画像メタデータ一覧（タグフィルタ対応・画像本体は含まない） |
+| `album_share` | 24 時間限定の認証不要共有 URL を生成 |
+
+### REST エンドポイント
+
+| メソッド | パス | 認証 | 説明 |
+|---------|------|------|------|
+| GET | `/api/album/` | admin | 画像メタデータ一覧（`?tag=...` でフィルタ） |
+| GET | `/api/album/<id>` | admin | 画像本体を返却（ブラウザで直接表示可） |
+| GET | `/api/album/shared/<token>` | 不要 | 共有画像（24 時間限定） |
+
+### MCP image content type
+
+`album_read` の MCP レスポンスは通常の `type:"text"` ではなく、画像コンテンツを含む:
+
+```json
+{
+  "content": [
+    {"type": "image", "data": "<base64>", "mimeType": "image/jpeg"},
+    {"type": "text", "text": "{メタデータJSON}"}
+  ]
+}
+```
+
+内部実装: ツールハンドラが `_mcp_content` キーを持つ dict を返すと、
+`_process_mcp_message` がそれを直接 `content` として使用する（`_inject_server_time` をスキップ）。

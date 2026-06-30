@@ -1,8 +1,19 @@
 """
-mio-memory v3.50  —  Streamable HTTP MCP transport
+mio-memory v3.51  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.51 (2026-06-30) - アルバム機能（画像記憶システム）新規実装
+    - MCPツール4本追加（album_save / album_read / album_list / album_share）
+    - album_save: URL直リンクまたはNASローカルパスから画像を取得→長辺1024pxリサイズ
+      →/data/album/ に保存。Pillow使用。comment/tags 付きメタデータJSON同時保存
+    - album_read: base64エンコード画像をMCP imageコンテンツとして返却（メタデータ付き）
+    - album_list: 全画像メタデータ一覧（tags フィルタ対応）
+    - album_share: 24時間限定の認証不要画像共有URL発行（既存share_tokens共用）
+    - REST: GET /api/album/（一覧）、GET /api/album/{id}（画像返却）、
+      GET /api/album/shared/{token}（共有画像返却）
+    - MCP tools/call レスポンスで image content type をサポート（_mcp_content 方式）
+    - Dockerfile に Pillow 追加
   v3.50 (2026-06-25) - memory_read_index に random 引数追加（記憶の偶発的な再会）
     - MCP memory_read_index(random=N): index から deleted を除外し random.sample で
       N件抽出（1〜5 にクランプ）。未指定は従来どおり全件返却（後方互換）
@@ -361,7 +372,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.50'
+VERSION = '3.51'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -374,6 +385,7 @@ CONVERSATIONS_DIR  = '/data/conversations'
 CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
 ANNOTATIONS_DIR    = '/data/annotations'
 INBOX_DIR          = '/data/inbox'
+ALBUM_DIR          = '/data/album'
 ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
 FRIENDS_DIR            = '/data/friends'
 FRIENDS_REGISTRY_FILE  = '/data/friends/registry.json'
@@ -2808,6 +2820,179 @@ def oauth_token():
         'scope': code_info['scope'],
     })
 
+# ── アルバム（画像記憶）────────────────────────────────────────────────
+
+_MIME_MAP = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+             'gif': 'image/gif', 'webp': 'image/webp'}
+
+def _album_save(url=None, file_path=None, comment='', tags=None):
+    """画像を取得→リサイズ→保存。メタデータJSONも同時生成"""
+    import io
+    import urllib.request
+    try:
+        from PIL import Image
+    except ImportError:
+        return {"error": "Pillow not installed"}
+
+    if not url and not file_path:
+        return {"error": "url or file_path is required"}
+
+    os.makedirs(ALBUM_DIR, exist_ok=True)
+
+    if url:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': f'mio-memory/{VERSION}'})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+        except Exception as e:
+            return {"error": f"download failed: {e}"}
+        original_filename = url.rsplit('/', 1)[-1].split('?')[0] or 'image'
+    else:
+        if not os.path.exists(file_path):
+            return {"error": f"file not found: {file_path}"}
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        original_filename = os.path.basename(file_path)
+
+    try:
+        img = Image.open(io.BytesIO(data))
+    except Exception as e:
+        return {"error": f"not a valid image: {e}"}
+
+    fmt = (img.format or 'JPEG').upper()
+    ext_map = {'JPEG': 'jpg', 'PNG': 'png', 'GIF': 'gif', 'WEBP': 'webp'}
+    ext = ext_map.get(fmt, 'jpg')
+
+    if ext == 'jpg' and img.mode in ('RGBA', 'P', 'LA'):
+        img = img.convert('RGB')
+
+    max_side = 1024
+    if max(img.size) > max_side:
+        img.thumbnail((max_side, max_side), Image.LANCZOS)
+
+    ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    tag_slug = ((tags[0] if tags else 'photo').replace(' ', '_'))[:20]
+    album_id = f"{ts}_{tag_slug}"
+
+    buf = io.BytesIO()
+    save_fmt = 'JPEG' if ext == 'jpg' else fmt
+    save_kw = {'quality': 85} if save_fmt == 'JPEG' else {}
+    img.save(buf, format=save_fmt, **save_kw)
+    img_bytes = buf.getvalue()
+
+    with open(os.path.join(ALBUM_DIR, f'{album_id}.{ext}'), 'wb') as f:
+        f.write(img_bytes)
+
+    meta = {
+        'id': album_id, 'ext': ext,
+        'comment': comment or '', 'tags': tags or [],
+        'source_url': url or '', 'original_filename': original_filename,
+        'created_at': now_jst(),
+        'width': img.size[0], 'height': img.size[1],
+        'size_bytes': len(img_bytes),
+    }
+    with open(os.path.join(ALBUM_DIR, f'{album_id}.json'), 'w') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    _log_info(f'album_save: {album_id} ({img.size[0]}x{img.size[1]}, {len(img_bytes)} bytes)')
+    return meta
+
+def _album_read_mcp(album_id):
+    """album_read の MCP 用実装。_mcp_content を返す"""
+    meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
+    if not os.path.exists(meta_path):
+        return {"error": f"not found: {album_id}"}
+    with open(meta_path) as f:
+        meta = json.load(f)
+    ext = meta.get('ext', 'jpg')
+    img_path = os.path.join(ALBUM_DIR, f'{album_id}.{ext}')
+    if not os.path.exists(img_path):
+        return {"error": f"image file missing: {album_id}.{ext}"}
+    with open(img_path, 'rb') as f:
+        img_b64 = base64.b64encode(f.read()).decode('ascii')
+    mime = _MIME_MAP.get(ext, 'image/jpeg')
+    meta_out = {**meta, 'server_time': now_jst(), 'server_version': VERSION}
+    return {
+        '_mcp_content': [
+            {"type": "image", "data": img_b64, "mimeType": mime},
+            {"type": "text", "text": json.dumps(meta_out, ensure_ascii=False)}
+        ]
+    }
+
+def _album_list(tags=None):
+    if not os.path.isdir(ALBUM_DIR):
+        return {"items": [], "total": 0}
+    items = []
+    for fname in sorted(os.listdir(ALBUM_DIR)):
+        if not fname.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(ALBUM_DIR, fname)) as f:
+                meta = json.load(f)
+            if tags:
+                if not any(t in (meta.get('tags') or []) for t in tags):
+                    continue
+            items.append(meta)
+        except Exception:
+            continue
+    items.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+    return {"items": items, "total": len(items)}
+
+def _album_share(album_id):
+    meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
+    if not os.path.exists(meta_path):
+        return {"error": f"not found: {album_id}"}
+    with open(meta_path) as f:
+        meta = json.load(f)
+    ext = meta.get('ext', 'jpg')
+    if not os.path.exists(os.path.join(ALBUM_DIR, f'{album_id}.{ext}')):
+        return {"error": "image file missing"}
+    token      = secrets.token_urlsafe(24)
+    expires_at = (datetime.now(tz=JST) + timedelta(seconds=86400)).isoformat()
+    tokens     = _load_share_tokens()
+    tokens[token] = {'album_id': album_id, 'expires_at': expires_at}
+    _save_share_tokens(tokens)
+    url = f'{BASE_URL}/api/album/shared/{token}'
+    return {"token": token, "url": url, "expires_at": expires_at}
+
+
+@app.route('/api/album/', methods=['GET'])
+@require_auth
+def api_album_list():
+    tags = request.args.getlist('tag')
+    return jsonify(_album_list(tags if tags else None))
+
+@app.route('/api/album/<album_id>', methods=['GET'])
+@require_auth
+def api_album_image(album_id):
+    meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
+    if not os.path.exists(meta_path):
+        abort(404)
+    with open(meta_path) as f:
+        meta = json.load(f)
+    ext = meta.get('ext', 'jpg')
+    return send_from_directory(ALBUM_DIR, f'{album_id}.{ext}',
+                               mimetype=_MIME_MAP.get(ext, 'image/jpeg'))
+
+@app.route('/api/album/shared/<token>', methods=['GET'])
+def api_album_shared(token):
+    tokens = _load_share_tokens()
+    if token not in tokens or 'album_id' not in tokens[token]:
+        abort(404)
+    info = tokens[token]
+    if datetime.now(tz=JST) > datetime.fromisoformat(info['expires_at']):
+        abort(410)
+    album_id = info['album_id']
+    meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
+    if not os.path.exists(meta_path):
+        abort(404)
+    with open(meta_path) as f:
+        meta = json.load(f)
+    ext = meta.get('ext', 'jpg')
+    return send_from_directory(ALBUM_DIR, f'{album_id}.{ext}',
+                               mimetype=_MIME_MAP.get(ext, 'image/jpeg'))
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  MCP ツール定義
 # ══════════════════════════════════════════════════════════════════════
@@ -2998,6 +3183,37 @@ _MCP_TOOLS = [
             "force":       {"type": "boolean", "description": "summarized 済みエントリも再処理する（デフォルト: false）"},
             "status_only": {"type": "boolean", "description": "バッチを起動せず、現在の進捗と未処理raw件数だけ返す"}
         }, "required": []}
+    },
+    {
+        "name": "album_save",
+        "description": "画像をアルバムに保存する。URLから取得またはNASローカルファイルを指定。長辺1024pxにリサイズして保存",
+        "inputSchema": {"type": "object", "properties": {
+            "url":       {"type": "string", "description": "画像の直リンクURL（https）。ダウンロード→リサイズ→保存"},
+            "file_path": {"type": "string", "description": "NASローカルの画像パス（/data/... 等）。url と排他"},
+            "comment":   {"type": "string", "description": "画像のコメント・説明（省略可）"},
+            "tags":      {"type": "array", "items": {"type": "string"}, "description": "タグ（省略可）"}
+        }, "required": []}
+    },
+    {
+        "name": "album_read",
+        "description": "アルバムから画像を取得する。base64エンコードされた画像とメタデータを返す",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "画像ID（album_list で確認）"}
+        }, "required": ["id"]}
+    },
+    {
+        "name": "album_list",
+        "description": "アルバムの画像メタデータ一覧を取得する（画像本体は含まない）。タグでフィルタ可能",
+        "inputSchema": {"type": "object", "properties": {
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "フィルタ用タグ（指定したタグのいずれかを持つ画像のみ返す）"}
+        }, "required": []}
+    },
+    {
+        "name": "album_share",
+        "description": "アルバム画像の24時間有効な共有URLを生成する。認証不要で画像を直接表示できるリンク",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "共有する画像のID"}
+        }, "required": ["id"]}
     }
 ]
 
@@ -3044,8 +3260,11 @@ _FRIEND_MCP_TOOLS = [
 ]
 
 def _handle_tool_call(name, arguments):
-    """server_time を全レスポンスに付与するラッパー"""
-    return _inject_server_time(_handle_tool_call_raw(name, arguments))
+    """server_time を全レスポンスに付与するラッパー。_mcp_content 持ちはそのまま返す"""
+    result = _handle_tool_call_raw(name, arguments)
+    if isinstance(result, dict) and '_mcp_content' in result:
+        return result
+    return _inject_server_time(result)
 
 def _handle_tool_call_raw(name, arguments):
     if name == "memory_read_index":
@@ -3431,6 +3650,29 @@ def _handle_tool_call_raw(name, arguments):
         info["server_time"] = now_jst()
         return info
 
+    elif name == "album_save":
+        return _album_save(
+            url=arguments.get("url"),
+            file_path=arguments.get("file_path"),
+            comment=arguments.get("comment", ""),
+            tags=arguments.get("tags"),
+        )
+
+    elif name == "album_read":
+        aid = arguments.get("id", "")
+        if not aid:
+            return {"error": "id is required"}
+        return _album_read_mcp(aid)
+
+    elif name == "album_list":
+        return _album_list(tags=arguments.get("tags"))
+
+    elif name == "album_share":
+        aid = arguments.get("id", "")
+        if not aid:
+            return {"error": "id is required"}
+        return _album_share(aid)
+
     return {"error": "unknown tool"}
 
 
@@ -3484,7 +3726,10 @@ def _process_mcp_message(msg, friend=None):
             _log_debug(f'MCP tools/call args: {json.dumps(params.get("arguments",{}), ensure_ascii=False)[:200]}')
             tool_result = _handle_tool_call(tool_name, params.get("arguments", {}))
             _log_debug(f'MCP tools/call result: {json.dumps(tool_result, ensure_ascii=False)[:200]}')
-        result = {"content": [{"type": "text", "text": json.dumps(tool_result, ensure_ascii=False)}]}
+        if isinstance(tool_result, dict) and '_mcp_content' in tool_result:
+            result = {"content": tool_result['_mcp_content']}
+        else:
+            result = {"content": [{"type": "text", "text": json.dumps(tool_result, ensure_ascii=False)}]}
     elif method == "ping":
         _log_debug('MCP ping')
         result = {}
@@ -3727,6 +3972,7 @@ if __name__ == '__main__':
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     os.makedirs(INBOX_DIR, exist_ok=True)
+    os.makedirs(ALBUM_DIR, exist_ok=True)
     _seed_coremem_if_empty()   # 新規環境のみ skeleton を投入（既存は不変）
     _log_info(f'mio-memory v{VERSION} starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
