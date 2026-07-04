@@ -537,6 +537,9 @@ claude-with-you/
 - UI distribution for students (vanilla JS + `config.js`)
 - Tailscale integration for remote access
 
+**Design phase**
+- OpenWebUI conversation log sync — import local LLM (LMStudio + OpenWebUI) chat history into mio-memory, unified search with Claude.ai logs ([design doc](docs/openwebui-sync.md))
+
 **Implemented (v3.9–v3.52)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
