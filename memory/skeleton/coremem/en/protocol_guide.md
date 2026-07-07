@@ -1,26 +1,27 @@
-# protocol_guide.md — MCP tool operating guide (mio-memory v3.44 / 19 tools)
+# protocol_guide.md — MCP tool operating guide (mio-memory v3.56 / 25 tools)
 
 *A reference a new session can read in one pass to learn how the MCP tools work.*
 *This file is install-agnostic (the tool mechanics are common to every mio-memory). For environment-specific startup rules / naming, see `core_rules.md`.*
 
 ---
 
-## 0. Big picture — 4 stores + 1 batch
+## 0. Big picture — 5 stores + 1 batch
 
-mio-memory operates **four kinds of store** via MCP tools. Pick by the nature of the data.
+mio-memory operates **five kinds of store** via MCP tools. Pick by the nature of the data.
 
 | Store | Name | Backing | Nature |
 |-------|------|---------|--------|
 | **ExtMemory** | External memory (KV store) | `/data/memory/{id}.json` + `index.json` | High-volume, append-style. Notes/knowledge. Hierarchical-search target |
 | **UserCoreMemory** | CoreMem | `/data/artifacts/` (versioned + symlinks) | Few, overwrite-style. Identity / rules / TODO |
-| **LogStore** | Conversation archive | `/data/conversations/` + `/data/annotations/` | Immutable logs + append-only annotations. From ZIP import |
+| **LogStore** | Conversation archive | `/data/conversations/` + `/data/annotations/` | Immutable logs + append-only annotations. From ZIP / Claude Code imports |
 | **inbox** | Lightweight messaging | `/data/inbox/` | Inter-session messages. chat/code/friend channels |
+| **Album** | Image memory | `/data/album/` (image + metadata JSON) | Save/fetch/share images. Portraits and photo memories |
 
 Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 ---
 
-## 1. Tool list (5 groups / 19 total)
+## 1. Tool list (6 groups / 25 total)
 
 | # | Tool | Group | One-line purpose | Cost |
 |---|------|-------|------------------|------|
@@ -44,8 +45,13 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 | 18 | `inbox_read` | inbox | Get one message, mark read | light |
 | 19 | `inbox_post` | inbox | Send a message | light |
 | 20 | `batch_run_summary_layers` | batch | Start summary-layer batch | **heavy** (LLM, async) |
+| 21 | `album_save` | Album | Save an image (URL/NAS path, auto-resize) | med |
+| 22 | `album_read` | Album | Fetch an image (base64 + metadata) | med (image tokens) |
+| 23 | `album_list` | Album | List image metadata (no image data) | light |
+| 24 | `album_share` | Album | 24h share URL for an image | light |
+| 25 | `album_delete` | Album | Permanently delete image + metadata | light |
 
-※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate set of 6 tools. This guide covers the 20 regular-session tools.
+※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate limited set. This guide covers the 25 regular-session tools.
 
 ---
 
@@ -53,15 +59,15 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 ### ExtMemory (KV store, 6)
 
-**`memory_read_index`** — no args. Lightweight metadata for all entries (id/title/tags/created_at/importance/keywords/symbolic). **light**.
+**`memory_read_index`** — all args optional. Lightweight metadata for all entries (id/title/tags/created_at/importance/keywords/symbolic). `random=N` (1–5) samples randomly (serendipitous re-encounters); `filter="summarized"` drops raw entries. `local_only` / `rating=adult` entries are excluded by default (`include_local=true` / `include_adult=true` to show, v3.56). **light**.
 
-**`memory_read`** — `id` (required). Full entry incl. body. **light**.
+**`memory_read`** — `id` (required). Full entry incl. body. Not gated by rating (fetching by known id counts as intent). **light**.
 
-**`memory_write`** — `title` (req) · `body` (req) · `tags` · `importance` (high/normal/low). Id format `YYYYMMDD_HHMMSS_<first-tag>`. **Record the returned `id` in the chat**. Cost = **med** (full index rebuild).
+**`memory_write`** — `title` (req) · `body` (req) · `tags` · `importance` (high/normal/low) · `rating` (safe/mature/adult, opt) · `local_only` (bool, opt). Entries with `rating="adult"` or `local_only=true` are excluded from search/listing by default (v3.56). Id format `YYYYMMDD_HHMMSS_<first-tag>`. **Record the returned `id` in the chat**. Cost = **med** (full index rebuild).
 
 **`memory_upsert`** — `id` (req) · `title` (req) · `body` (req). Overwrite by fixed id (create if absent). Cost = **med**.
 
-**`memory_search`** — `q` (req) · `limit` (def 10, 0=unlimited) · `offset` · `full_body`. **Hierarchical**: stage 1 = index (title+tags+keywords+layer-3 symbolic) → stage 2 = summary → stage 3 = full text. Returns `summary` + `symbolic`, each hit with `match_layer` (keyword/symbolic/summary/full). For full text use `full_body=true` or `memory_read`. **light–med**.
+**`memory_search`** — `q` (req) · `limit` (def 10, 0=unlimited) · `offset` · `full_body` · `include_local` · `include_adult`. **Hierarchical**: stage 1 = index (title+tags+keywords+layer-3 symbolic) → stage 2 = summary → stage 3 = full text. Returns `summary` + `symbolic`, each hit with `match_layer` (keyword/symbolic/summary/full). For full text use `full_body=true` or `memory_read`. `local_only` / `adult` excluded by default (v3.56). **light–med**.
 
 **`memory_share`** — `id` (req). 24h share URL. **light**.
 
@@ -81,7 +87,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 **`conversation_search`** — `q` · `date_from` · `date_to` · `limit` (def 5). Conversation metadata (uuid/title/date/count). **light**.
 
-**`conversation_read`** — `uuid` (req) · `include_thinking` · `thinking_limit` (def 1500) · `include_annotations` · `include_body` · `turn_offset` (opt, negative = from end) · `turn_limit` (opt, 0 = unlimited). With `include_annotations=true`, annotations inline + `[No.X]` numbering. `turn_offset`/`turn_limit` slice by message (head = `turn_limit=4`, tail = `turn_offset=-4`). **med**.
+**`conversation_read`** — `uuid` (req) · `include_thinking` · `thinking_limit` (def 1500) · `include_annotations` · `include_body` · `turn_offset` (opt, negative = from end) · `turn_limit` (opt, 0 = unlimited) · `include_raw` (opt). With `include_annotations=true`, annotations inline + `[No.X]` numbering. `turn_offset`/`turn_limit` slice by message (head = `turn_limit=4`, tail = `turn_offset=-4`). ⚠️ Conversations with `rating=adult` are **replaced by their safe digest** by default (pass `include_raw=true` for the original, v3.56). **med**.
 
 **`conversation_share`** — `uuid` (req). 24h share URL. **light**.
 
@@ -100,6 +106,18 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 ### batch (1)
 
 **`batch_run_summary_layers`** — `backend` ('lmstudio'/'anthropic') · `force` · `status_only`. Generates layer-2 summary, layer-3 symbolic, layer-4 keywords. **heavy, async**. For status only, use `status_only=true` (**light**).
+
+### Album (image memory, 5)
+
+**`album_save`** — `url` (direct link or HTML page — auto-extracts og:image/img tags) or `file_path` (NAS local) · `comment` · `tags`. Auto-resizes to max 1024px long side. **med**.
+
+**`album_read`** — `id` (req). Returns base64 image + metadata (the image renders inline). **med** (image tokens).
+
+**`album_list`** — `tags` (opt). Metadata list, no image data. Browse with this first. **light**.
+
+**`album_share`** — `id` (req). 24h auth-free share URL. **light**.
+
+**`album_delete`** — `id` (req). Permanently deletes image + metadata (irreversible, v3.55). **light**.
 
 ---
 
@@ -167,3 +185,5 @@ rename:  CoreMem_delete(src="a.md", dst="b.md")
 - **`inbox_read` marks read** (no "mark unread" feature yet).
 - **`log_annotate` cannot be undone** (correct mistakes with a new annotation).
 - **`batch_run_summary_layers` is heavy.** For a status check, always use `status_only=true`.
+- **Rating protection (v3.56)**: memories with `local_only` / `rating=adult` and conversations with `rating=adult` are invisible/unreadable by default. "Not found" does not mean "does not exist". Always accessible via explicit flags (`include_local` / `include_adult` / `include_raw`). In cloud AI sessions, pause before using those flags — ask whether the raw content really belongs in this context (the whole point is preventing content-flag recurrence).
+- **`album_read` consumes image tokens.** Browse with `album_list` first.
