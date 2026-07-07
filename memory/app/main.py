@@ -1,8 +1,13 @@
 """
-mio-memory v3.54  —  Streamable HTTP MCP transport
+mio-memory v3.55  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.55 (2026-07-07) - 残課題掃除3点
+    - album_delete MCPツール追加（ツール数 24→25、RESTは実装済みだったもの）
+    - アルバムのタグ入力をカンマ・読点・空白いずれでも区切れるように（サーバ/admin.html両方）
+    - Filesタブ重複表示バグ修正（overwriteインポート時のインデックスappend重複が原因。
+      ロード時デデュープ＋overwrite時は既存エントリ置き換えに変更）
   v3.54 (2026-07-07) - Claude Code セッションログ取り込み（M-LOCAL-6）
     - REST POST /api/import/claude-code 追加（.jsonl 単体 / .zip 一括）
     - Claude Code JSONL → conversations 形式変換（thinking/tool_use/tool_result 保持）
@@ -393,7 +398,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.54'
+VERSION = '3.55'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1965,7 +1970,12 @@ def _load_conv_artifacts_index():
     p = _conv_artifacts_index_path()
     if os.path.exists(p):
         with open(p, encoding='utf-8') as f:
-            return json.load(f)
+            index = json.load(f)
+        # 過去の overwrite インポートで生じた重複エントリを除去（v3.55、後勝ち）
+        seen = {}
+        for e in index:
+            seen[(e.get('conv_uuid'), e.get('filename'))] = e
+        return list(seen.values())
     return []
 
 def extract_artifacts(conversations, overwrite=False):
@@ -2011,8 +2021,13 @@ def extract_artifacts(conversations, overwrite=False):
 
                 if not filename or not file_content:
                     continue
-                if not overwrite and (conv_uuid, filename) in existing:
-                    continue
+                if (conv_uuid, filename) in existing:
+                    if not overwrite:
+                        continue
+                    # overwrite時は既存インデックスエントリを置き換える（append重複バグ修正・v3.55）
+                    index = [e for e in index
+                             if not (e.get('conv_uuid') == conv_uuid and e.get('filename') == filename)]
+                    existing.discard((conv_uuid, filename))
 
                 dest_dir = os.path.join(CONV_ARTIFACTS_DIR, conv_uuid)
                 os.makedirs(dest_dir, exist_ok=True)
@@ -3375,7 +3390,8 @@ def api_album_upload():
     """ブラウザからの画像アップロード（multipart/form-data）またはURL指定"""
     comment = request.form.get('comment', '')
     tags_raw = request.form.get('tags', '')
-    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+    # カンマ・読点・空白（全角含む）のいずれでも区切れる（v3.55）
+    tags = [t for t in re.split(r'[,、\s]+', tags_raw) if t] if tags_raw else []
     url = request.form.get('url', '').strip()
 
     if url:
@@ -3691,6 +3707,13 @@ _MCP_TOOLS = [
         "description": "アルバム画像の24時間有効な共有URLを生成する。認証不要で画像を直接表示できるリンク",
         "inputSchema": {"type": "object", "properties": {
             "id": {"type": "string", "description": "共有する画像のID"}
+        }, "required": ["id"]}
+    },
+    {
+        "name": "album_delete",
+        "description": "アルバムから画像とメタデータを完全削除する（復元不可）",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "削除する画像のID（album_list で確認）"}
         }, "required": ["id"]}
     }
 ]
@@ -4160,6 +4183,23 @@ def _handle_tool_call_raw(name, arguments):
         if not aid:
             return {"error": "id is required"}
         return _album_share(aid)
+
+    elif name == "album_delete":
+        aid = arguments.get("id", "")
+        if not aid:
+            return {"error": "id is required"}
+        meta_path = os.path.join(ALBUM_DIR, f'{aid}.json')
+        if not os.path.exists(meta_path):
+            return {"error": f"album entry not found: {aid}"}
+        with open(meta_path) as mf:
+            meta = json.load(mf)
+        ext = meta.get('ext', 'jpg')
+        img_path = os.path.join(ALBUM_DIR, f'{aid}.{ext}')
+        if os.path.exists(img_path):
+            os.remove(img_path)
+        os.remove(meta_path)
+        _log_info(f'album_delete (MCP): {aid}')
+        return {"status": "deleted", "id": aid}
 
     return {"error": "unknown tool"}
 

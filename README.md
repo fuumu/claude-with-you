@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.54","mcp_tool_count":24}
+# {"status":"ok","version":"3.55","mcp_tool_count":25}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -286,6 +286,7 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 | `album_read` | Read an album image. Returns MCP image content (base64) + metadata JSON | `id` |
 | `album_list` | List album image metadata (no image data). Filter by tags | `tags` |
 | `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
+| `album_delete` | Permanently delete an album image and its metadata (v3.55) | `id` |
 
 ### REST API reference
 
@@ -585,6 +586,7 @@ claude-with-you/
 - Album (image memory) system (v3.51–v3.52) — 4 new MCP tools (`album_save`/`album_read`/`album_list`/`album_share`). Downloads from direct URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves to `/data/album/`. MCP image content type support. 7 REST endpoints (list, image, upload, metadata update, delete, share URL, shared image). admin.html Album tab (thumbnail grid, drag-and-drop upload, edit, delete, share). v3.52: HTML page image extraction (Gemini shared links etc.) — auto-extracts og:image/img tags
 - Conversation log digest generation (v3.53) — `conversation_digest` MCP tool. Local LLM (LMStudio) chunks conversation into 20-turn segments, digests each, then integrates. `safe_mode` for policy-safe expression conversion. Cached results returned instantly. REST `POST /api/conversations/<uuid>/digest`
 - Claude Code session log import (v3.54) — REST `POST /api/import/claude-code`. Converts local `.jsonl` session files (single or zipped) into the conversations format and stores them in the conversation store. Identified by `source: "claude-code"` + tags (会話ログ/claude-code/raw). Preserves thinking / tool_use / tool_result blocks, takes titles from `ai-title` records, excludes `subagents/`, dedupes via imported_uuids
+- Three housekeeping fixes (v3.55) — ① `album_delete` MCP tool added (tool count 24→25) ② album tag input now splits on commas, Japanese commas, and whitespace ③ Files tab duplicate-display bug fixed (overwrite imports were appending duplicate index entries; now deduped on load and replaced on overwrite)
 
 ---
 

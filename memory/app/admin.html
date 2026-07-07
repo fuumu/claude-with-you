@@ -2226,7 +2226,7 @@ function openAlbumDetail(idx) {
 async function albumSaveMeta(id, idx) {
   const comment = document.getElementById('album-edit-comment').value;
   const tagsRaw = document.getElementById('album-edit-tags').value;
-  const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+  const tags = tagsRaw.split(/[,、\s]+/).map(t => t.trim()).filter(Boolean);  // カンマ・読点・空白いずれでも区切れる（v3.55）
   try {
     const res = await apiFetch('/api/album/' + id, {
       method: 'PATCH',

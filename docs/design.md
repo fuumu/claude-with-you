@@ -886,7 +886,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 - Images are resized to max 1024px on the long side (aspect ratio preserved, Pillow)
 - JPEG saved at quality 85; RGBA/P modes are converted to RGB
 
-### MCP tools (4)
+### MCP tools (5)
 
 | Tool | Description |
 |------|-------------|
@@ -894,6 +894,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 | `album_read` | Return base64-encoded image as MCP image content + metadata |
 | `album_list` | List all image metadata (tag filter supported, no image data) |
 | `album_share` | Generate a 24h auth-free share URL |
+| `album_delete` | Permanently delete an image and its metadata (irreversible, v3.55) |
 
 ### REST endpoints
 
