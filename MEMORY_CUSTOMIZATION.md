@@ -226,4 +226,25 @@ inbox_post(persistent=true, to="code", title="Startup reminder", body="...")
 
 ---
 
+## 7. Rating Protection — Per-Environment Visibility Control (v3.56)
+
+When multiple environments (Claude.ai, local LLMs, etc.) share the same memory, what may be shown can differ per environment. The v3.56 rating protection controls this on a **consent basis**: hidden by default, always visible with an explicit flag, never deleted.
+
+**Memory entries:**
+```
+memory_write(title=..., body=..., rating="adult")      # excluded from search/listing by default
+memory_write(title=..., body=..., local_only=true)     # local-environment only
+memory_search(q=..., include_adult=true)               # visible when explicitly requested
+```
+
+**Conversation logs:**
+```
+PATCH /api/conversations/<uuid>/rating  {"rating": "adult"}
+→ conversation_read returns the safe digest by default (include_raw=true for the original)
+```
+
+**Use case:** keep memories that grew freely on the local LLM side from unintentionally flowing into cloud AI sessions (preventing content-policy flags). `memory_read` by direct ID is never gated — "going to read it knowingly" is always possible.
+
+---
+
 *These are examples. Customize freely for your own use case.*

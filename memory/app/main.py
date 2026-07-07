@@ -1,8 +1,17 @@
 """
-mio-memory v3.55  —  Streamable HTTP MCP transport
+mio-memory v3.56  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.56 (2026-07-07) - レーティング保護（M-LOCAL-3/7・再フラグ防止）
+    - 記憶エントリ: memory_write に rating（safe/mature/adult）と local_only 引数追加。
+      memory_search / memory_read_index（random含む）/ hsearch は local_only と adult を
+      デフォルト除外（include_local / include_adult の明示で表示 = 「意図して見れば見れる」）
+    - 会話ログ: rating フィールド追加（PATCH /api/conversations/<uuid>/rating で設定）。
+      conversation_read は rating=adult の会話をデフォルトで safe ダイジェストに差し替え
+      （include_raw=true で原文）。再インポート時も rating を引き継ぐ
+    - index.json / _index.json に rating / local_only を保持し検索結果にも表示
+    - 未実装（後続）: 夜間バッチでのローカルLLM自動分類・admin.html レーティングUI
   v3.55 (2026-07-07) - 残課題掃除3点
     - album_delete MCPツール追加（ツール数 24→25、RESTは実装済みだったもの）
     - アルバムのタグ入力をカンマ・読点・空白いずれでも区切れるように（サーバ/admin.html両方）
@@ -398,7 +407,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.55'
+VERSION = '3.56'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -599,6 +608,11 @@ def rebuild_index():
         symbolic = _extract_layer3(str(e.get('body') or ''))
         if symbolic:
             item['symbolic'] = symbolic
+        # レーティング・ローカル専用フラグ（M-LOCAL-3・v3.56。未設定は省略= safe 扱い）
+        if e.get('rating') and e.get('rating') != 'safe':
+            item['rating'] = e['rating']
+        if e.get('local_only'):
+            item['local_only'] = True
         index.append(item)
     with open(INDEX_FILE, 'w') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
@@ -985,11 +999,14 @@ def _load_index_list():
     return []
 
 
-def _random_index_sample(index, random_n, filter_summarized=False):
+def _random_index_sample(index, random_n, filter_summarized=False,
+                         include_local=False, include_adult=False):
     """deleted を除外（filter_summarized=True なら raw タグも除外）し、
     件数を 1〜5 にクランプして random.sample で抽出する。プール不足時はプール全件。
-    MCP memory_read_index(random=N) と REST GET /api/memory/index?random=N の共通実装"""
-    pool = [e for e in index if not e.get('deleted')]
+    MCP memory_read_index(random=N) と REST GET /api/memory/index?random=N の共通実装。
+    local_only / rating=adult はデフォルト除外（M-LOCAL-3・v3.56。記憶の旅での偶発閲覧防止）"""
+    pool = [e for e in index if not e.get('deleted')
+            and not _rating_excluded(e, include_local, include_adult)]
     if filter_summarized:
         # raw（未要約・タイトルのみ）は空振りしやすいので除外。要約済み・手書きエントリは残す
         pool = [e for e in pool if 'raw' not in (e.get('tags') or [])]
@@ -1107,7 +1124,10 @@ def api_memory_hsearch():
         return jsonify({"results": [], "total": 0, "has_more": False})
     limit  = int(request.args.get('limit', 30))
     offset = int(request.args.get('offset', 0))
-    return jsonify(_hierarchical_search(q, limit=limit, offset=offset, full_body=False))
+    return jsonify(_hierarchical_search(
+        q, limit=limit, offset=offset, full_body=False,
+        include_local=request.args.get('include_local') == 'true',
+        include_adult=request.args.get('include_adult') == 'true'))
 
 @app.route('/api/memory/tags')
 @require_auth
@@ -2054,6 +2074,39 @@ def extract_artifacts(conversations, overwrite=False):
 
 # ── 会話ログ REST API ─────────────────────────────────────────────────
 
+@app.route('/api/conversations/<conv_uuid>/rating', methods=['PATCH'])
+@require_auth
+def api_conversation_rating(conv_uuid):
+    """会話ログのレーティング設定（M-LOCAL-7・v3.56）。
+    body: {"rating": "safe" | "mature" | "adult"}。safe 指定で解除（フィールド削除）"""
+    fpath = os.path.join(CONVERSATIONS_DIR, f'{conv_uuid}.json')
+    if not os.path.exists(fpath):
+        abort(404)
+    data = request.get_json(silent=True) or {}
+    rating = data.get('rating', '')
+    if rating not in ('safe', 'mature', 'adult'):
+        return jsonify({'error': 'rating must be safe / mature / adult'}), 400
+    with open(fpath, encoding='utf-8') as f:
+        conv = json.load(f)
+    if rating == 'safe':
+        conv.pop('rating', None)
+    else:
+        conv['rating'] = rating
+    with open(fpath, 'w', encoding='utf-8') as f:
+        json.dump(conv, f, ensure_ascii=False, indent=2)
+    # _index.json のメタにも反映
+    index = _load_conv_index()
+    for m in index:
+        if m.get('uuid') == conv_uuid:
+            if rating == 'safe':
+                m.pop('rating', None)
+            else:
+                m['rating'] = rating
+    _save_conv_index(index)
+    _log_info(f'conversation rating: {conv_uuid} -> {rating}')
+    return jsonify({'uuid': conv_uuid, 'rating': rating if rating != 'safe' else None})
+
+
 @app.route('/api/conv-artifacts')
 @require_auth
 def api_conv_artifacts_list():
@@ -2101,6 +2154,15 @@ def _save_conversations(conversations):
         if not uid:
             continue
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
+        # 再インポート時、既存ファイルに rating が設定済みなら引き継ぐ（M-LOCAL-7・v3.56）
+        if 'rating' not in conv and os.path.exists(fpath):
+            try:
+                with open(fpath, encoding='utf-8') as ef:
+                    old_rating = json.load(ef).get('rating')
+                if old_rating:
+                    conv['rating'] = old_rating
+            except Exception:
+                pass
         with open(fpath, 'w', encoding='utf-8') as f:
             json.dump(conv, f, ensure_ascii=False, indent=2)
         msg_count = len(conv.get('chat_messages') or [])
@@ -2111,6 +2173,8 @@ def _save_conversations(conversations):
             'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
             'message_count': msg_count,
         }
+        if conv.get('rating'):
+            meta['rating'] = conv['rating']
         if uid in existing_uuids:
             index = [m if m['uuid'] != uid else meta for m in index]
         else:
@@ -2549,7 +2613,18 @@ def _all_terms_in(terms: list, text: str) -> bool:
     return bool(terms) and all(t in text for t in terms)
 
 
-def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False) -> dict:
+def _rating_excluded(e, include_local: bool, include_adult: bool) -> bool:
+    """M-LOCAL-3/7（v3.56）: local_only / rating=adult エントリのデフォルト除外判定。
+    「意図して見れば見れる」——include_local / include_adult の明示でのみ表示"""
+    if e.get('local_only') and not include_local:
+        return True
+    if e.get('rating') == 'adult' and not include_adult:
+        return True
+    return False
+
+
+def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False,
+                         include_local: bool = False, include_adult: bool = False) -> dict:
     """階層検索（1次:インデックス title+tags+keywords+3層symbolic → 2次:2層要約 → 3次:全文）。
     MCP memory_search と REST /api/memory/hsearch の共通実装。
     クエリはスペース区切りで分割し各語をAND判定する（単語1つなら従来の部分一致と同じ）"""
@@ -2558,7 +2633,8 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
     if os.path.exists(INDEX_FILE):
         with open(INDEX_FILE) as f:
             index = json.load(f)
-    index = [e for e in index if not e.get('deleted')]
+    index = [e for e in index if not e.get('deleted')
+             and not _rating_excluded(e, include_local, include_adult)]
 
     # 1次: インデックスのみで検索（title + tags + keywords、次点で3層symbolic）— bodyを読まない
     matched = {}  # id -> match_layer（挿入順 = 優先順）
@@ -2580,6 +2656,8 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
         for entry in load_all_entries():
             eid = entry.get('id')
             if entry.get('deleted') or eid in matched:
+                continue
+            if _rating_excluded(entry, include_local, include_adult):
                 continue
             body = str(entry.get('body') or '')
             if _all_terms_in(terms, _extract_summary(body).lower()):
@@ -3485,10 +3563,12 @@ def api_album_shared(token):
 _MCP_TOOLS = [
     {
         "name": "memory_read_index",
-        "description": "澪の外部記憶インデックスを取得する。random=N でランダムにN件だけ取得できる（記憶の偶発的な再会用）",
+        "description": "澪の外部記憶インデックスを取得する。random=N でランダムにN件だけ取得できる（記憶の偶発的な再会用）。local_only / rating=adult のエントリはデフォルト除外",
         "inputSchema": {"type": "object", "properties": {
             "random": {"type": "integer", "description": "指定すると deleted を除外したうえで N件ランダム抽出（1〜5にクランプ）。未指定なら全件返却（後方互換）"},
-            "filter": {"type": "string", "enum": ["summarized"], "description": "summarized 指定で raw（未要約・タイトルのみ）エントリを除外する。random と併用して空振りを減らす用途"}
+            "filter": {"type": "string", "enum": ["summarized"], "description": "summarized 指定で raw（未要約・タイトルのみ）エントリを除外する。random と併用して空振りを減らす用途"},
+            "include_local": {"type": "boolean", "description": "trueで local_only エントリも含める（デフォルトfalse・v3.56）"},
+            "include_adult": {"type": "boolean", "description": "trueで rating=adult エントリも含める（デフォルトfalse・v3.56）"}
         }, "required": []}
     },
     {
@@ -3498,14 +3578,16 @@ _MCP_TOOLS = [
     },
     {
         "name": "memory_write",
-        "description": "新しい記憶エントリを書き込む",
+        "description": "新しい記憶エントリを書き込む。rating / local_only で閲覧保護を設定できる（v3.56）",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "title":      {"type": "string"},
                 "body":       {"type": "string"},
                 "tags":       {"type": "array", "items": {"type": "string"}},
-                "importance": {"type": "string", "enum": ["high", "normal", "low"]}
+                "importance": {"type": "string", "enum": ["high", "normal", "low"]},
+                "rating":     {"type": "string", "enum": ["safe", "mature", "adult"], "description": "コンテンツレーティング。adult は検索・一覧からデフォルト除外される（省略=safe扱い）"},
+                "local_only": {"type": "boolean", "description": "trueでローカル環境専用の記憶になり、検索・一覧からデフォルト除外される（include_local=true でのみ表示）"}
             },
             "required": ["title", "body"]
         }
@@ -3527,12 +3609,14 @@ _MCP_TOOLS = [
     },
     {
         "name": "memory_search",
-        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定",
+        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定。local_only / rating=adult のエントリはデフォルト除外",
         "inputSchema": {"type": "object", "properties": {
             "q":         {"type": "string", "description": "検索キーワード"},
             "limit":     {"type": "integer", "description": "最大取得件数（デフォルト10、0=無制限）"},
             "offset":    {"type": "integer", "description": "スキップ件数（デフォルト0）"},
-            "full_body": {"type": "boolean", "description": "trueで従来どおりbody全文も返す（デフォルトfalse=要約のみ）"}
+            "full_body": {"type": "boolean", "description": "trueで従来どおりbody全文も返す（デフォルトfalse=要約のみ）"},
+            "include_local": {"type": "boolean", "description": "trueで local_only エントリも検索対象に含める（デフォルトfalse・v3.56）"},
+            "include_adult": {"type": "boolean", "description": "trueで rating=adult エントリも検索対象に含める（デフォルトfalse・v3.56）"}
         }, "required": ["q"]}
     },
     {
@@ -3618,7 +3702,8 @@ _MCP_TOOLS = [
             "include_annotations": {"type": "boolean", "description": "trueの場合、log_annotateで積んだ注記を該当位置にインライン表示し、各メッセージに[No.X]通番を付ける。デフォルト: false"},
             "include_body": {"type": "boolean", "description": "falseの場合、本文を省略し注記のみ返す（include_annotations=trueと併用）。デフォルト: true"},
             "turn_offset": {"type": "integer", "description": "先頭から飛ばすメッセージ数。負値で末尾起点（例: -6 = 最後の6件）。デフォルト: 0"},
-            "turn_limit": {"type": "integer", "description": "返す最大メッセージ数。0=無制限（全件）。デフォルト: 0"}
+            "turn_limit": {"type": "integer", "description": "返す最大メッセージ数。0=無制限（全件）。デフォルト: 0"},
+            "include_raw": {"type": "boolean", "description": "rating=adult の会話はデフォルトで safe ダイジェストに差し替えられる。trueを明示すると原文を返す（v3.56）"}
         }, "required": ["uuid"]}
     },
     {
@@ -3770,10 +3855,13 @@ def _handle_tool_call(name, arguments):
 def _handle_tool_call_raw(name, arguments):
     if name == "memory_read_index":
         index = _load_index_list()
+        inc_local = bool(arguments.get("include_local", False))
+        inc_adult = bool(arguments.get("include_adult", False))
         rnd = arguments.get("random")
         if rnd is not None:
-            return _random_index_sample(index, rnd, arguments.get("filter") == "summarized")
-        return index
+            return _random_index_sample(index, rnd, arguments.get("filter") == "summarized",
+                                        include_local=inc_local, include_adult=inc_adult)
+        return [e for e in index if not _rating_excluded(e, inc_local, inc_adult)]
 
     elif name == "memory_read":
         path = f"{DATA_DIR}/{arguments.get('id','')}.json"
@@ -3794,6 +3882,12 @@ def _handle_tool_call_raw(name, arguments):
             "importance": arguments.get("importance", "normal"),
             "author": "mio", "deleted": False
         }
+        # レーティング・ローカル専用フラグ（M-LOCAL-3・v3.56）
+        rating = arguments.get("rating")
+        if rating in ("safe", "mature", "adult"):
+            entry["rating"] = rating
+        if arguments.get("local_only"):
+            entry["local_only"] = True
         with open(f"{DATA_DIR}/{entry_id}.json", "w") as f:
             json.dump(entry, f, ensure_ascii=False, indent=2)
         append_oplog("create", entry_id, None, entry)
@@ -3836,6 +3930,8 @@ def _handle_tool_call_raw(name, arguments):
                 limit=int(raw_l) if raw_l is not None else 10,
                 offset=int(raw_o) if raw_o is not None else 0,
                 full_body=bool(arguments.get("full_body", False)),
+                include_local=bool(arguments.get("include_local", False)),
+                include_adult=bool(arguments.get("include_adult", False)),
             )
         except Exception as exc:
             import traceback
@@ -3991,6 +4087,21 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": f"conversation not found: {uid}"}
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
+        # M-LOCAL-7（v3.56）: rating=adult の会話はデフォルトで safe ダイジェストに差し替える。
+        # 原文は include_raw=true の明示でのみ返す（「意図して見れば見れる」）
+        if conv.get('rating') == 'adult' and not bool(arguments.get('include_raw', False)):
+            safe_path = os.path.join(CONVERSATIONS_DIR, f'{uid}_digest_safe.json')
+            notice = ('この会話は rating=adult のため、原文の代わりに safe ダイジェストを返しています。'
+                      '原文が必要な場合は include_raw=true を明示してください。')
+            if os.path.exists(safe_path):
+                with open(safe_path, encoding='utf-8') as sf:
+                    dg = json.load(sf)
+                return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
+                        "gated": True, "notice": notice, "digest": dg.get('digest', '')}
+            return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
+                    "gated": True,
+                    "notice": notice + ' safe ダイジェスト未生成のため本文は返せません。'
+                                       'conversation_digest(uuid, safe_mode=true) で生成できます。'}
         messages = conv.get('chat_messages', [])
         total_msgs = len(messages)
         # メッセージ単位スライス（turn_offset 負値=末尾起点 / turn_limit 0=無制限）。両方0で従来と完全同一

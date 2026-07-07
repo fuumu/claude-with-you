@@ -229,6 +229,27 @@ inbox_post(persistent=true, to="code", title="起動時の注意", body="...")
 
 ---
 
+## 7. レーティング保護——環境ごとの閲覧制御（v3.56）
+
+複数の環境（Claude.ai・ローカルLLM等）で同じ記憶を共有する場合、環境によって「見せてよい内容」が異なることがあります。v3.56 のレーティング保護は、これを**同意ベース**（デフォルトで隠す・明示フラグで常に見える・削除はしない）で制御します。
+
+**記憶エントリ：**
+```
+memory_write(title=..., body=..., rating="adult")      # 検索・一覧からデフォルト除外
+memory_write(title=..., body=..., local_only=true)     # ローカル環境専用
+memory_search(q=..., include_adult=true)               # 明示すれば見える
+```
+
+**会話ログ：**
+```
+PATCH /api/conversations/<uuid>/rating  {"rating": "adult"}
+→ conversation_read はデフォルトで safe ダイジェストを返す（include_raw=true で原文）
+```
+
+**用途例：** ローカルLLM側で自由に育った記憶を、クラウドAI側のセッションに意図せず流入させない（コンテンツポリシーのフラグ防止）。ID直接指定の memory_read はゲートされないため、「知っていて読みに行く」ことは常に可能です。
+
+---
+
 ## 実運用例への参照
 
 このリポジトリの開発では「澪」という AI アシスタントが実際にこのシステムを使っています。  
