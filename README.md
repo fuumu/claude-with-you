@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.53","mcp_tool_count":24}
+# {"status":"ok","version":"3.54","mcp_tool_count":24}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -331,6 +331,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | POST | `/api/album/<id>/share` | Generate album share URL (24h) |
 | GET | `/api/album/shared/<token>` | Shared album image (no auth, 24h) |
 | POST | `/import` | Import ZIP file |
+| POST | `/api/import/claude-code` | Import Claude Code session logs (.jsonl / .zip, v3.54) |
 | GET | `/health` | Health check |
 
 ---
@@ -409,6 +410,22 @@ curl -X POST https://your-domain/import \
 | `projects/*.json` | Project metadata as memory entries |
 
 **Auto-summarization:** If `ANTHROPIC_API_KEY` is set, a batch job starts automatically after import. It adds 2-layer (summary) and 3-layer (symbolic compression) annotations to raw entries.
+
+**Claude Code session log import (v3.54):**
+
+Claude Code session logs are not included in the claude.ai ZIP export. Upload the local `.jsonl` files from `~/.claude/projects/<project>/` to `POST /api/import/claude-code` — they are converted into the conversations format and stored in the same conversation store (identified by `source: "claude-code"`; thinking / tool_use / tool_result blocks preserved; `subagents/` excluded).
+
+```bash
+# single .jsonl
+curl -X POST https://your-domain/api/import/claude-code \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@session.jsonl"
+
+# a .zip containing .jsonl files (zipping the whole folder is fine)
+curl -X POST https://your-domain/api/import/claude-code \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@claude_code_logs.zip"
+```
 
 ### Versioned UserCoreMemory files
 
@@ -567,6 +584,7 @@ claude-with-you/
 - `memory_read_index` random retrieval (v3.50) — `random=N` returns N random entries (deleted excluded, clamped 1–5; `filter=summarized` drops raw entries); REST `?random=N` supported too. For serendipitous re-encounters with old memories
 - Album (image memory) system (v3.51–v3.52) — 4 new MCP tools (`album_save`/`album_read`/`album_list`/`album_share`). Downloads from direct URL or reads from NAS local path, resizes to max 1024px long side (Pillow), saves to `/data/album/`. MCP image content type support. 7 REST endpoints (list, image, upload, metadata update, delete, share URL, shared image). admin.html Album tab (thumbnail grid, drag-and-drop upload, edit, delete, share). v3.52: HTML page image extraction (Gemini shared links etc.) — auto-extracts og:image/img tags
 - Conversation log digest generation (v3.53) — `conversation_digest` MCP tool. Local LLM (LMStudio) chunks conversation into 20-turn segments, digests each, then integrates. `safe_mode` for policy-safe expression conversion. Cached results returned instantly. REST `POST /api/conversations/<uuid>/digest`
+- Claude Code session log import (v3.54) — REST `POST /api/import/claude-code`. Converts local `.jsonl` session files (single or zipped) into the conversations format and stores them in the conversation store. Identified by `source: "claude-code"` + tags (会話ログ/claude-code/raw). Preserves thinking / tool_use / tool_result blocks, takes titles from `ai-title` records, excludes `subagents/`, dedupes via imported_uuids
 
 ---
 

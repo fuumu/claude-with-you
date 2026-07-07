@@ -1,8 +1,13 @@
 """
-mio-memory v3.53  —  Streamable HTTP MCP transport
+mio-memory v3.54  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.54 (2026-07-07) - Claude Code セッションログ取り込み（M-LOCAL-6）
+    - REST POST /api/import/claude-code 追加（.jsonl 単体 / .zip 一括）
+    - Claude Code JSONL → conversations 形式変換（thinking/tool_use/tool_result 保持）
+    - source: "claude-code" フィールドと ExtMemory タグ（会話ログ/claude-code/raw）で識別
+    - 重複チェックは imported_uuids + overwrite フラグ（ZIPインポートと同一方式）
   v3.53 (2026-06-30) - conversation_digest（会話ログダイジェスト生成）
     - MCPツール conversation_digest 追加（ツール数 23→24）
     - REST POST /api/conversations/<uuid>/digest 追加
@@ -388,7 +393,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.53'
+VERSION = '3.54'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -2278,6 +2283,208 @@ def import_zip():
             _log_info(f'auto summary batch not started: {info.get("error")}')
 
     return jsonify(result)
+
+# ── Claude Code ログインポート（M-LOCAL-6） ───────────────────────────
+
+def _convert_claude_code_session(fp, session_id):
+    """Claude Code セッション JSONL を conversations 形式の dict に変換する。
+    メッセージが1件もなければ None を返す。
+    - type: user / assistant のレコードのみ対象（isMeta / isSidechain は除外）
+    - content ブロックは text / thinking / tool_use / tool_result を保持
+      （claude.ai エクスポートと同じブロック形式に正規化するので、
+       conversation_read の include_thinking 等がそのまま機能する）
+    """
+    title = ''
+    fallback_title = ''
+    messages = []
+    first_ts = ''
+    last_ts = ''
+    model = ''
+    for line in fp:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        rtype = rec.get('type', '')
+        if rtype == 'ai-title':
+            title = rec.get('aiTitle', '') or title
+            continue
+        if rtype == 'summary' and not fallback_title:
+            fallback_title = rec.get('summary', '')
+            continue
+        if rtype not in ('user', 'assistant'):
+            continue
+        if rec.get('isMeta') or rec.get('isSidechain'):
+            continue
+        msg = rec.get('message') or {}
+        raw = msg.get('content')
+        if raw is None:
+            continue
+        ts = rec.get('timestamp', '')
+        if ts:
+            if not first_ts:
+                first_ts = ts
+            last_ts = ts
+        if not model and msg.get('model'):
+            model = msg['model']
+        blocks = []
+        texts = []
+        if isinstance(raw, str):
+            if raw:
+                blocks.append({'type': 'text', 'text': raw})
+                texts.append(raw)
+        elif isinstance(raw, list):
+            for b in raw:
+                if not isinstance(b, dict):
+                    continue
+                btype = b.get('type', '')
+                if btype == 'text':
+                    blocks.append({'type': 'text', 'text': b.get('text', '')})
+                    texts.append(b.get('text', ''))
+                elif btype == 'thinking':
+                    blocks.append({'type': 'thinking', 'thinking': b.get('thinking', '')})
+                elif btype == 'tool_use':
+                    blocks.append({'type': 'tool_use',
+                                   'name': b.get('name', ''),
+                                   'input': b.get('input', {})})
+                elif btype == 'tool_result':
+                    content = b.get('content')
+                    if isinstance(content, list):
+                        content = '\n'.join(c.get('text', '') for c in content
+                                            if isinstance(c, dict) and c.get('type') == 'text')
+                    blocks.append({'type': 'tool_result',
+                                   'content': content if isinstance(content, str) else ''})
+        if not blocks:
+            continue
+        messages.append({
+            'uuid': rec.get('uuid', ''),
+            'sender': 'human' if rtype == 'user' else 'assistant',
+            'text': '\n'.join(t for t in texts if t),
+            'content': blocks,
+            'created_at': ts,
+            'updated_at': ts,
+        })
+    if not messages:
+        return None
+    if not title:
+        title = fallback_title
+    if not title:
+        for m in messages:
+            if m['sender'] == 'human' and m['text']:
+                title = m['text'].strip().replace('\n', ' ')[:40]
+                break
+    return {
+        'uuid': session_id,
+        'name': title or session_id[:8],
+        'source': 'claude-code',
+        'model': model,
+        'created_at': first_ts,
+        'updated_at': last_ts or first_ts,
+        'chat_messages': messages,
+    }
+
+
+@app.route('/api/import/claude-code', methods=['POST'])
+@require_auth
+def import_claude_code():
+    """Claude Code セッションログを会話ストアに取り込む。
+    file: .jsonl 単体、または .jsonl を含む .zip（subagents/ 配下は除外）
+    overwrite=true で imported_uuids の重複チェックを無視して上書き
+    """
+    if 'file' not in request.files:
+        abort(400)
+    f = request.files['file']
+    fname = f.filename or ''
+    overwrite = request.form.get('overwrite', 'false').lower() == 'true'
+
+    imported = 0
+    skipped = 0
+    errors = 0
+    convs = []
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sessions = []  # (session_id, path)
+        if fname.lower().endswith('.zip'):
+            zip_path = os.path.join(tmpdir, 'upload.zip')
+            f.save(zip_path)
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(tmpdir)
+            for root, _dirs, files in os.walk(tmpdir):
+                if 'subagents' in os.path.normpath(root).split(os.sep):
+                    continue
+                for fn in files:
+                    if fn.endswith('.jsonl'):
+                        sessions.append((fn[:-len('.jsonl')], os.path.join(root, fn)))
+        elif fname.lower().endswith('.jsonl'):
+            p = os.path.join(tmpdir, 'session.jsonl')
+            f.save(p)
+            sessions.append((os.path.splitext(os.path.basename(fname))[0], p))
+        else:
+            return jsonify({'error': 'jsonl or zip file required'}), 400
+
+        imported_uuids = _load_imported_uuids()
+        for sid, path in sessions:
+            if not overwrite and sid in imported_uuids:
+                skipped += 1
+                continue
+            try:
+                with open(path, encoding='utf-8') as fp:
+                    conv = _convert_claude_code_session(fp, sid)
+            except Exception as e:
+                _log_error(f'claude-code convert error ({sid}): {e}')
+                errors += 1
+                continue
+            if not conv:
+                skipped += 1
+                continue
+            convs.append(conv)
+
+        for i, conv in enumerate(convs):
+            uid = conv['uuid']
+            ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+            entry_id = f'{ts}_{i:04d}_{uid[:8]}'
+            entry = {
+                'id': entry_id,
+                'created_at': conv.get('created_at') or now_jst(),
+                'updated_at': now_jst(),
+                'title': f'[会話/Code] {conv["name"]}',
+                'body': '',
+                'tags': ['会話ログ', 'claude-code', 'raw'],
+                'source_thread': uid,
+                'importance': 'low',
+                'author': 'claude-code',
+                'deleted': False
+            }
+            with open(f'{DATA_DIR}/{entry_id}.json', 'w') as ef:
+                json.dump(entry, ef, ensure_ascii=False, indent=2)
+            append_oplog('import', entry_id, None, entry)
+            imported_uuids.add(uid)
+            imported += 1
+
+        conv_saved = 0
+        try:
+            conv_saved = _save_conversations(convs)
+        except Exception as e:
+            _log_error(f'claude-code conv save error: {e}')
+
+        if imported > 0:
+            rebuild_index()
+        _save_imported_uuids(imported_uuids)
+
+    _log_info(f'claude-code import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved}')
+
+    # インポート成功後、要約バッチを自動起動（ZIPインポートと同じ挙動）
+    if imported > 0:
+        ok, info = _start_summary_batch()
+        if ok:
+            _log_info(f'auto summary batch started: backend={info["backend"]}')
+
+    return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
+                    'conversations_saved': conv_saved})
+
 
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
 

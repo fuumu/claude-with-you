@@ -968,3 +968,38 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 ### MCP ツール
 
 `conversation_digest(uuid, force, safe_mode)` — LogStore 系6本目（ツール数 23→24）。同期処理。
+
+## 15. Claude Code セッションログ取り込み（v3.54・M-LOCAL-6）
+
+### 概要
+
+Claude Code のセッションログ（`~/.claude/projects/<プロジェクト名>/*.jsonl`）は claude.ai の ZIP エクスポートに含まれない。これを conversations 形式に変換して `/data/conversations/` に取り込み、`conversation_search` / `conversation_read` / `conversation_digest` で claude.ai のログと同様に扱えるようにする。
+
+### 変換仕様（`_convert_claude_code_session`）
+
+| JSONL レコード | 変換 |
+|---------------|------|
+| `type: "ai-title"` | `aiTitle` → 会話タイトル（第一候補） |
+| `type: "summary"` | `summary` → タイトル第二候補（ai-title がない場合） |
+| `type: "user" / "assistant"` | `chat_messages[]` へ（`isMeta` / `isSidechain` は除外） |
+| その他（mode / attachment / file-history-snapshot 等） | 無視 |
+
+- content ブロックは claude.ai エクスポートと同じ形式に正規化：`text` / `thinking` / `tool_use`（name + input）/ `tool_result`（テキスト結合）。既存の `conversation_read(include_thinking=true)` 等がそのまま機能する
+- タイトルが取れない場合は最初の human テキスト先頭40字
+- `created_at` / `updated_at` は最初/最後のレコードの timestamp
+- トップレベルに `source: "claude-code"` と `model`（最初の assistant レコードの model）を付与
+
+### エンドポイント
+
+| メソッド | パス | 認証 | 説明 |
+|---------|------|------|------|
+| POST | `/api/import/claude-code` | admin | `.jsonl` 単体または `.zip` 一括取り込み（`overwrite=true` で再処理） |
+
+- `.zip` の場合は再帰的に `.jsonl` を収集（`subagents/` ディレクトリ配下は除外）
+- セッションID（ファイル名）をキーに `imported_uuids.json` で重複チェック（ZIP インポートと共通）
+- 会話ごとに ExtMemory エントリを作成：タイトル `[会話/Code] {title}`、タグ `["会話ログ", "claude-code", "raw"]`、`author: "claude-code"`
+- 取り込み成功後は要約バッチを自動起動（ZIP インポートと同じ挙動）
+
+### 背景
+
+M-LOCAL-6（コード側の澪の作業記録の保全）。OpenWebUI 同期設計（docs/openwebui-sync.ja.md）と同じ「外部ログの統合」ファミリーで、`source` フィールドによる出所識別の方式を共有する。

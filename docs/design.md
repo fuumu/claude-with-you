@@ -972,3 +972,38 @@ With `safe_mode=true`, physical/sexual direct expressions are converted to polic
 ### MCP tool
 
 `conversation_digest(uuid, force, safe_mode)` — 6th LogStore tool (tool count 23→24). Synchronous processing.
+
+## 15. Claude Code session log import (v3.54, M-LOCAL-6)
+
+### Overview
+
+Claude Code session logs (`~/.claude/projects/<project>/*.jsonl`) are not included in the claude.ai ZIP export. This feature converts them into the conversations format and stores them in `/data/conversations/`, so they can be handled by `conversation_search` / `conversation_read` / `conversation_digest` just like claude.ai logs.
+
+### Conversion spec (`_convert_claude_code_session`)
+
+| JSONL record | Conversion |
+|--------------|-----------|
+| `type: "ai-title"` | `aiTitle` → conversation title (first choice) |
+| `type: "summary"` | `summary` → title fallback (when no ai-title) |
+| `type: "user" / "assistant"` | into `chat_messages[]` (`isMeta` / `isSidechain` excluded) |
+| others (mode / attachment / file-history-snapshot etc.) | ignored |
+
+- Content blocks are normalized to the same shape as the claude.ai export: `text` / `thinking` / `tool_use` (name + input) / `tool_result` (text joined). Existing `conversation_read(include_thinking=true)` etc. work as-is
+- If no title is found, the first 40 chars of the first human text are used
+- `created_at` / `updated_at` come from the first/last record timestamps
+- Top level carries `source: "claude-code"` and `model` (model of the first assistant record)
+
+### Endpoint
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/import/claude-code` | admin | Import a single `.jsonl` or a `.zip` batch (`overwrite=true` to reprocess) |
+
+- For `.zip`, `.jsonl` files are collected recursively (anything under `subagents/` is excluded)
+- Deduplication uses the session ID (file name) against `imported_uuids.json` (shared with ZIP import)
+- An ExtMemory entry is created per conversation: title `[会話/Code] {title}`, tags `["会話ログ", "claude-code", "raw"]`, `author: "claude-code"`
+- After a successful import, the summary batch auto-starts (same behavior as ZIP import)
+
+### Background
+
+M-LOCAL-6 (preservation of the code-side Mio's work records). Belongs to the same "external log integration" family as the OpenWebUI sync design (docs/openwebui-sync.md) and shares its `source`-field provenance scheme.
