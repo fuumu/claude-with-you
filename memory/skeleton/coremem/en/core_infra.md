@@ -11,8 +11,8 @@
 
 | Item | Value |
 |------|-------|
-| mio-memory version | v3.56 |
-| MCP tool count | 25 (regular session) |
+| mio-memory version | v3.57 |
+| MCP tool count | 27 (regular session) |
 | Host / server | <e.g. NAS-name / 192.168.x.x> |
 | Data path | <e.g. /volume1/docker/mio/memory/data/> |
 | Public URL | <e.g. https://memory.example.com> |
@@ -22,14 +22,14 @@
 
 ---
 
-## MCP tool list (25, regular session)
+## MCP tool list (27, regular session)
 
 For each tool's purpose / arguments / cost, see **`protocol_guide.md`**.
 
 - **ExtMemory (6)**: memory_write / memory_read / memory_read_index / memory_search / memory_upsert / memory_share
 - **UserCoreMemory (4)**: CoreMem_save / CoreMem_read / CoreMem_list / CoreMem_delete
 - **LogStore (6)**: conversation_index / conversation_search / conversation_read / conversation_share / conversation_digest / log_annotate
-- **inbox (3)**: inbox_check / inbox_read / inbox_post
+- **inbox (5)**: inbox_check / inbox_read / inbox_post / inbox_update / inbox_delete
 - **batch (1)**: batch_run_summary_layers
 - **Album (5)**: album_save / album_read / album_list / album_share / album_delete
 

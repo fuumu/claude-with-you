@@ -595,9 +595,11 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Memory share | 1 | memory_share |
 | Artifacts | 4 | CoreMem_save, CoreMem_read, CoreMem_list, CoreMem_delete |
 | Conversations | 5 | conversation_index, conversation_search, conversation_share, conversation_read, log_annotate |
-| Inbox | 3 | inbox_check, inbox_read, inbox_post |
+| Inbox | 5 | inbox_check, inbox_read, inbox_post, inbox_update, inbox_delete |
 | Batch | 1 | batch_run_summary_layers |
-| **Regular session total** | **19** | |
+| Album | 5 | album_save, album_read, album_list, album_share, album_delete |
+| Digest | 1 | conversation_digest |
+| **Regular session total** | **27** | |
 | **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
 ※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 19 tools are unavailable there.
@@ -1037,3 +1039,41 @@ Prevent adult-grade content (memory entries and conversation logs) from unintent
 - Automatic classification via local LLM in the nightly batch (the "Qwen pre-reader and night watch" concept)
 - Rating display/set UI in the admin.html Logs tab
 - Application to inbox messages
+
+## 17. Inbox improvements (v3.57)
+
+### Purpose
+
+Local LLMs (26B-class) have their context overwhelmed when `inbox_check` returns all messages. Additionally, when multiple models share the same inbox, "fetch only messages for me" becomes a real need. Also, there was no way to consolidate or delete standing messages that had grown over time.
+
+### inbox_check filters (v3.57)
+
+- `limit: int` — max non-persistent messages returned (persistent always included separately)
+- `days: int` — last N days only; persistent messages are exempt from the date filter
+- `from_model: string` — OR-match against sender model name array; hits if any stored value matches
+- `to_model: string` — OR-match against recipient model name array; same logic
+- Messages with null model fields don't match when model filters are specified (appear only on unfiltered queries)
+- Persistent messages always pass through all filters
+
+### inbox_post from_model/to_model array support (v3.57)
+
+- `from_model` / `to_model` accept both strings and arrays
+- Example: `["claude-opus-4-6", "しずく"]` — matchable by either model name or pet name
+- Internal storage is always an array (legacy string values normalized by `_norm_inbox_models`)
+- Search matches against any element (OR)
+
+### inbox_update / inbox_delete (v3.57, new tools)
+
+- `inbox_update(id, persistent?, title?, body?)` — partial update; use to un-persist or fix title/body
+- `inbox_delete(id)` — physical delete (irreversible); for cleaning up old standing messages
+- REST: `PATCH /api/inbox/<msg_id>` (partial update), `DELETE /api/inbox/<msg_id>` (delete)
+
+### CoreMem_list `__del__` exclusion (v3.57)
+
+- `_artifacts_list()` now skips symlinks prefixed with `__del__`
+- Prevents list pollution from files that can't be physically deleted due to versioning constraints
+
+### Bug fixes (v3.57)
+
+- **Summary duplication**: Added `source_thread`-based dedup check to imports, in addition to the existing `imported_uuids` check. Prevents duplicate ExtMemory entries even when `imported_uuids.json` is lost
+- **admin.html Memory tab initial load**: REST `/api/memory/index` was including deleted entries; now filters them out

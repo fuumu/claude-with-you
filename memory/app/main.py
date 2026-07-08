@@ -1,8 +1,16 @@
 """
-mio-memory v3.56  —  Streamable HTTP MCP transport
+mio-memory v3.57  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.57 (2026-07-08) - INBOX改善＋CoreMem_listフィルタ＋バグ修正2件
+    - inbox_check: limit / days / from_model / to_model フィルタ追加
+    - inbox_post: from_model / to_model を配列許容（文字列も後方互換で受付→内部配列化）
+    - inbox_update 新規MCPツール（id必須、persistent/title/body 部分更新）
+    - inbox_delete 新規MCPツール（id必須、物理削除・復元不可）
+    - CoreMem_list: __del__ プレフィックスのファイルを結果から除外
+    - バグ修正: ZIPインポート時の source_thread ベース重複チェック追加（サマリー増殖防止）
+    - バグ修正: REST /api/memory/index で deleted エントリを除外（admin.html初期表示修正）
   v3.56 (2026-07-07) - レーティング保護（M-LOCAL-3/7・再フラグ防止）
     - 記憶エントリ: memory_write に rating（safe/mature/adult）と local_only 引数追加。
       memory_search / memory_read_index（random含む）/ hsearch は local_only と adult を
@@ -407,7 +415,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.56'
+VERSION = '3.57'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -763,6 +771,9 @@ def _artifacts_list() -> list:
         # 壊れたシンボリックリンクをスキップ
         if not os.path.exists(full_path):
             continue
+        # __del__ プレフィックスのファイルは一覧から除外（v3.57）
+        if entry.startswith('__del__'):
+            continue
         target = os.readlink(full_path)
         version_str = os.path.splitext(os.path.basename(target))[0]
         try:
@@ -791,6 +802,20 @@ def _load_imported_uuids() -> set:
 def _save_imported_uuids(uuids: set):
     with open(IMPORT_LOG, 'w') as f:
         json.dump(list(uuids), f, ensure_ascii=False)
+
+def _existing_source_threads():
+    """既存 ExtMemory エントリの source_thread 集合（インポート時の重複チェック用, v3.57）"""
+    threads = set()
+    if os.path.exists(INDEX_FILE):
+        try:
+            with open(INDEX_FILE) as f:
+                for e in json.load(f):
+                    st = e.get('source_thread')
+                    if st and not e.get('deleted'):
+                        threads.add(st)
+        except Exception:
+            pass
+    return threads
 
 def _write_import_status(filename: str):
     with open(IMPORT_STATUS_FILE, 'w', encoding='utf-8') as f:
@@ -1027,7 +1052,7 @@ def get_index():
     rnd = request.args.get('random')
     if rnd is not None and rnd != '':
         return jsonify(_random_index_sample(index, rnd, request.args.get('filter') == 'summarized'))
-    return jsonify(index)
+    return jsonify([e for e in index if not e.get('deleted')])
 
 @app.route('/api/memories/symbolic')
 @require_auth
@@ -1390,12 +1415,39 @@ def _load_inbox_messages(to=None, unread_only=False):
         msgs.append(msg)
     return msgs
 
+def _norm_model_field(val):
+    """from_model / to_model の正規化: 文字列→配列、null→None。後方互換用"""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return [val] if val else None
+    if isinstance(val, list):
+        return val if val else None
+    return None
+
 def _norm_inbox_models(msg):
-    """from_model / to_model / reply_to_id キーを補完する（旧メッセージは null 既定）"""
-    msg.setdefault('from_model', None)
-    msg.setdefault('to_model', None)
+    """from_model / to_model / reply_to_id キーを補完する（旧メッセージは null 既定）。
+    旧形式の文字列 from_model/to_model は配列に正規化（v3.57）"""
+    fm = msg.get('from_model')
+    if isinstance(fm, str):
+        msg['from_model'] = [fm] if fm else None
+    elif fm is None:
+        msg['from_model'] = None
+    tm = msg.get('to_model')
+    if isinstance(tm, str):
+        msg['to_model'] = [tm] if tm else None
+    elif tm is None:
+        msg['to_model'] = None
     msg.setdefault('reply_to_id', None)
     return msg
+
+def _inbox_model_match(stored, query):
+    """stored（配列 or None）が query 文字列と OR 一致するか"""
+    if stored is None:
+        return False
+    if isinstance(stored, str):
+        stored = [stored]
+    return query in stored
 
 def _post_inbox_message(to, title, body, from_='code', persistent=False,
                         from_model=None, to_model=None, reply_to_id=None):
@@ -1404,7 +1456,8 @@ def _post_inbox_message(to, title, body, from_='code', persistent=False,
     now   = now_jst()
     msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
     msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
-           "from_model": from_model or None, "to_model": to_model or None,
+           "from_model": _norm_model_field(from_model),
+           "to_model": _norm_model_field(to_model),
            "reply_to_id": reply_to_id or None,
            "created_at": now, "read": False, "persistent": persistent}
     with open(os.path.join(dir_, f'{msg_id}.json'), 'w', encoding='utf-8') as f:
@@ -1533,6 +1586,31 @@ def api_inbox_set_persistent(msg_id):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
     return jsonify(msg)
+
+@app.route('/api/inbox/<msg_id>', methods=['PATCH'])
+@require_auth
+def api_inbox_update(msg_id):
+    path = _find_inbox_file(msg_id)
+    if not path:
+        abort(404)
+    data = request.get_json() or {}
+    with open(path, encoding='utf-8') as f:
+        msg = json.load(f)
+    for key in ('persistent', 'title', 'body'):
+        if key in data:
+            msg[key] = data[key]
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(msg, f, ensure_ascii=False, indent=2)
+    return jsonify(_norm_inbox_models(msg))
+
+@app.route('/api/inbox/<msg_id>', methods=['DELETE'])
+@require_auth
+def api_inbox_delete(msg_id):
+    path = _find_inbox_file(msg_id)
+    if not path:
+        abort(404)
+    os.remove(path)
+    return jsonify({"deleted": msg_id})
 
 # ── お友達システム ────────────────────────────────────────────────────
 
@@ -2199,6 +2277,7 @@ def import_zip():
     imported = 0
     skipped = 0
     imported_uuids = _load_imported_uuids()
+    existing_threads = _existing_source_threads()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         zip_path = os.path.join(tmpdir, 'upload.zip')
@@ -2225,7 +2304,7 @@ def import_zip():
 
         for i, conv in enumerate(conversations):
             uid = conv.get('uuid') or conv.get('id', '')
-            if not uid or (not overwrite and uid in imported_uuids):
+            if not uid or (not overwrite and (uid in imported_uuids or uid in existing_threads)):
                 skipped += 1
                 continue
 
@@ -2303,7 +2382,7 @@ def import_zip():
                     continue
 
                 proj_uuid = proj.get('uuid', '')
-                if not overwrite and proj_uuid in imported_uuids:
+                if not overwrite and (proj_uuid in imported_uuids or proj_uuid in existing_threads):
                     skipped += 1
                     continue
 
@@ -2505,8 +2584,9 @@ def import_claude_code():
             return jsonify({'error': 'jsonl or zip file required'}), 400
 
         imported_uuids = _load_imported_uuids()
+        existing_threads = _existing_source_threads()
         for sid, path in sessions:
-            if not overwrite and sid in imported_uuids:
+            if not overwrite and (sid in imported_uuids or sid in existing_threads):
                 skipped += 1
                 continue
             try:
@@ -3727,10 +3807,14 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_check",
-        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージは persistent[] に本文ごと全件含まれるため inbox_read 不要。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す。各メッセージに from_model/to_model（なければ null）が付く",
+        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージは persistent[] に本文ごと全件含まれるため inbox_read 不要。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す。各メッセージに from_model/to_model（なければ null）が付く。v3.57: limit/days/from_model/to_model フィルタ追加",
         "inputSchema": {"type": "object", "properties": {
             "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"},
-            "include_read": {"type": "boolean", "description": "trueの場合、既読メッセージも含める。レスポンスにmessages[]（id+read+title）が追加される。デフォルト: false"}
+            "include_read": {"type": "boolean", "description": "trueの場合、既読メッセージも含める。レスポンスにmessages[]（id+read+title）が追加される。デフォルト: false"},
+            "limit": {"type": "integer", "description": "返却件数の上限（省略時は全件）"},
+            "days": {"type": "integer", "description": "直近N日分のみ返す。常駐メッセージは日数に関係なく常に返す"},
+            "from_model": {"type": "string", "description": "送信元モデル名で絞り込み（OR一致）。null保存のメッセージはヒットしない"},
+            "to_model": {"type": "string", "description": "宛先モデル名で絞り込み（OR一致）。null保存のメッセージはヒットしない"}
         }, "required": []}
     },
     {
@@ -3742,17 +3826,34 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_post",
-        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）。from_model/to_model で送信元・宛先のモデル名を明示できる（任意）",
+        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）。from_model/to_model で送信元・宛先のモデル名を明示できる（任意・文字列 or 配列）",
         "inputSchema": {"type": "object", "properties": {
             "to":         {"type": "string", "description": "宛先（'chat' / 'code' / 'friend:{token}' — 特定の友人向け）"},
             "title":      {"type": "string", "description": "件名"},
             "body":       {"type": "string", "description": "本文"},
             "from":       {"type": "string", "description": "送信元チャネル（'chat' / 'code'。省略時は 'code'）。チャットセッションから送る場合は 'chat' を指定"},
             "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"},
-            "from_model":  {"type": "string", "description": "送信元モデル名（任意・手動指定。例: \"claude-sonnet-4-6\"）。受け取り側が誰から来たか分かる"},
-            "to_model":    {"type": "string", "description": "宛先モデル名（任意・手動指定）。特定のモデルに宛てたい場合に使う"},
+            "from_model":  {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}], "description": "送信元モデル名（文字列 or 配列。例: \"claude-opus-4-6\" or [\"claude-opus-4-6\", \"しずく\"]）"},
+            "to_model":    {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}], "description": "宛先モデル名（文字列 or 配列）。特定のモデルに宛てたい場合に使う"},
             "reply_to_id": {"type": "string", "description": "返信先のメッセージID（発注に対する完了報告を紐づける用途）。省略可"}
         }, "required": ["to", "title", "body"]}
+    },
+    {
+        "name": "inbox_update",
+        "description": "インボックスの既存メッセージを部分更新する（常駐フラグ変更・件名・本文）。指定フィールドのみ更新",
+        "inputSchema": {"type": "object", "properties": {
+            "id":         {"type": "string", "description": "更新対象のメッセージID"},
+            "persistent": {"type": "boolean", "description": "常駐フラグ変更（true→false で常駐解除）"},
+            "title":      {"type": "string", "description": "件名の変更"},
+            "body":       {"type": "string", "description": "本文の変更"}
+        }, "required": ["id"]}
+    },
+    {
+        "name": "inbox_delete",
+        "description": "インボックスのメッセージを物理削除する（復元不可）",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "削除対象のメッセージID"}
+        }, "required": ["id"]}
     },
     {
         "name": "batch_run_summary_layers",
@@ -4213,9 +4314,45 @@ def _handle_tool_call_raw(name, arguments):
         to           = arguments.get("to")
         include_read = bool(arguments.get("include_read", False))
         msgs = _load_inbox_messages(to=to, unread_only=not include_read)
-        result = {"count": len(msgs), "ids": [m['id'] for m in msgs]}  # 互換用に残す
-        # v3.20: 非常駐の未読のみのカウント＋常駐メッセージは本文ごと全件返す
-        #        （inbox_read の追加コールを不要にしてセッション起動を軽くする）
+        # v3.57: from_model / to_model / days フィルタ
+        filter_from = arguments.get("from_model")
+        filter_to   = arguments.get("to_model")
+        filter_days = arguments.get("days")
+        if filter_days is not None:
+            try:
+                cutoff = (datetime.now(JST) - timedelta(days=int(filter_days))).isoformat()
+            except (TypeError, ValueError):
+                cutoff = None
+        else:
+            cutoff = None
+        if filter_from or filter_to or cutoff:
+            filtered = []
+            for m in msgs:
+                _norm_inbox_models(m)
+                is_persistent = m.get('persistent')
+                if cutoff and not is_persistent:
+                    if (m.get('created_at') or '') < cutoff:
+                        continue
+                if filter_from and not _inbox_model_match(m.get('from_model'), filter_from):
+                    if not is_persistent:
+                        continue
+                if filter_to and not _inbox_model_match(m.get('to_model'), filter_to):
+                    if not is_persistent:
+                        continue
+                filtered.append(m)
+            msgs = filtered
+        # v3.57: limit
+        inbox_limit = arguments.get("limit")
+        persistent_msgs = [m for m in msgs if m.get('persistent')]
+        non_persistent  = [m for m in msgs if not m.get('persistent')]
+        if inbox_limit is not None:
+            try:
+                inbox_limit = int(inbox_limit)
+                non_persistent = non_persistent[:inbox_limit]
+            except (TypeError, ValueError):
+                pass
+        msgs = persistent_msgs + non_persistent
+        result = {"count": len(msgs), "ids": [m['id'] for m in msgs]}
         non_persistent_unread = [m for m in msgs if not m.get('persistent') and not m.get('read')]
         result["non_persistent_unread_count"] = len(non_persistent_unread)
         result["non_persistent_unread_ids"]   = [m['id'] for m in non_persistent_unread]
@@ -4260,6 +4397,32 @@ def _handle_tool_call_raw(name, arguments):
         return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent,
                 "from_model": msg.get('from_model'), "to_model": msg.get('to_model'),
                 "reply_to_id": msg.get('reply_to_id')}
+
+    elif name == "inbox_update":
+        msg_id = arguments.get("id", "")
+        if not msg_id:
+            return {"error": "id is required"}
+        path = _find_inbox_file(msg_id)
+        if not path:
+            return {"error": f"message not found: {msg_id}"}
+        with open(path, encoding='utf-8') as f:
+            msg = json.load(f)
+        for key in ('persistent', 'title', 'body'):
+            if key in arguments:
+                msg[key] = arguments[key]
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(msg, f, ensure_ascii=False, indent=2)
+        return _norm_inbox_models(msg)
+
+    elif name == "inbox_delete":
+        msg_id = arguments.get("id", "")
+        if not msg_id:
+            return {"error": "id is required"}
+        path = _find_inbox_file(msg_id)
+        if not path:
+            return {"error": f"message not found: {msg_id}"}
+        os.remove(path)
+        return {"deleted": msg_id}
 
     elif name == "batch_run_summary_layers":
         if arguments.get("status_only"):

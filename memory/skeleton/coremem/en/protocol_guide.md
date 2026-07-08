@@ -1,4 +1,4 @@
-# protocol_guide.md — MCP tool operating guide (mio-memory v3.56 / 25 tools)
+# protocol_guide.md — MCP tool operating guide (mio-memory v3.57 / 27 tools)
 
 *A reference a new session can read in one pass to learn how the MCP tools work.*
 *This file is install-agnostic (the tool mechanics are common to every mio-memory). For environment-specific startup rules / naming, see `core_rules.md`.*
@@ -21,7 +21,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 ---
 
-## 1. Tool list (6 groups / 25 total)
+## 1. Tool list (6 groups / 27 total)
 
 | # | Tool | Group | One-line purpose | Cost |
 |---|------|-------|------------------|------|
@@ -33,7 +33,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 | 6 | `memory_share` | ExtMemory | 24h share URL for an entry | light |
 | 7 | `CoreMem_save` | UserCoreMemory | Save file (overwrite/append) | light |
 | 8 | `CoreMem_read` | UserCoreMemory | Read file (manifest merge) | light–med |
-| 9 | `CoreMem_list` | UserCoreMemory | List files | light |
+| 9 | `CoreMem_list` | UserCoreMemory | List files (__del__ excluded) | light |
 | 10 | `CoreMem_delete` | UserCoreMemory | Delete or rename (src/dst) | light |
 | 11 | `conversation_index` | LogStore | Conversation title list (desc date) | light |
 | 12 | `conversation_search` | LogStore | Search conversations by keyword/date | light |
@@ -41,17 +41,19 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 | 14 | `conversation_share` | LogStore | 24h share URL for a conversation | light |
 | 15 | `conversation_digest` | LogStore | Generate digest via local LLM (cached) | **heavy** (LLM, sync) |
 | 16 | `log_annotate` | LogStore | Append an annotation to a conversation | light |
-| 17 | `inbox_check` | inbox | Unread count + standing bodies (light) | light |
+| 17 | `inbox_check` | inbox | Unread count + standing bodies (filterable) | light |
 | 18 | `inbox_read` | inbox | Get one message, mark read | light |
 | 19 | `inbox_post` | inbox | Send a message | light |
-| 20 | `batch_run_summary_layers` | batch | Start summary-layer batch | **heavy** (LLM, async) |
-| 21 | `album_save` | Album | Save an image (URL/NAS path, auto-resize) | med |
-| 22 | `album_read` | Album | Fetch an image (base64 + metadata) | med (image tokens) |
-| 23 | `album_list` | Album | List image metadata (no image data) | light |
-| 24 | `album_share` | Album | 24h share URL for an image | light |
-| 25 | `album_delete` | Album | Permanently delete image + metadata | light |
+| 20 | `inbox_update` | inbox | Partial-update a message | light |
+| 21 | `inbox_delete` | inbox | Physically delete a message | light |
+| 22 | `batch_run_summary_layers` | batch | Start summary-layer batch | **heavy** (LLM, async) |
+| 23 | `album_save` | Album | Save an image (URL/NAS path, auto-resize) | med |
+| 24 | `album_read` | Album | Fetch an image (base64 + metadata) | med (image tokens) |
+| 25 | `album_list` | Album | List image metadata (no image data) | light |
+| 26 | `album_share` | Album | 24h share URL for an image | light |
+| 27 | `album_delete` | Album | Permanently delete image + metadata | light |
 
-※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate limited set. This guide covers the 25 regular-session tools.
+※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate limited set. This guide covers the 27 regular-session tools.
 
 ---
 
@@ -95,13 +97,17 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 **`log_annotate`** — `uuid` (req) · `note` (req) · `author` (req) · `target` (opt = message number, omit = whole conversation). **Raw log immutable, append-only**. **light**.
 
-### inbox (3)
+### inbox (5)
 
-**`inbox_check`** — `to` ('chat'/'code') · `include_read`. Unread count + ids + **standing bodies** (`persistent[]`). **light**.
+**`inbox_check`** — `to` ('chat'/'code') · `include_read` · `limit` (max count) · `days` (last N days, persistent always included) · `from_model` (sender filter, OR match) · `to_model` (recipient filter, OR match). Unread count + ids + **standing bodies** (`persistent[]`). Messages with null model fields don't match model filters. **light**.
 
 **`inbox_read`** — `id` (req). Get one and **mark read**. **light**.
 
-**`inbox_post`** — `to` (req) · `title` (req) · `body` (req) · `from` · `from_model` · `to_model` · `reply_to_id` · `persistent`. **light**.
+**`inbox_post`** — `to` (req) · `title` (req) · `body` (req) · `from` · `from_model` (string or array) · `to_model` (string or array) · `reply_to_id` · `persistent`. **light**.
+
+**`inbox_update`** — `id` (req) · `persistent` (opt) · `title` (opt) · `body` (opt). Updates only specified fields. Use to toggle persistent flag or fix title/body. **light**.
+
+**`inbox_delete`** — `id` (req). Physical delete, irreversible. **light**.
 
 ### batch (1)
 

@@ -11,8 +11,8 @@
 
 | 項目 | 値 |
 |------|-----|
-| mio-memory バージョン | v3.56 |
-| MCPツール数 | 25（通常セッション） |
+| mio-memory バージョン | v3.57 |
+| MCPツール数 | 27（通常セッション） |
 | ホスト / サーバ | <例: NAS名 / 192.168.x.x> |
 | データ格納先 | <例: /volume1/docker/mio/memory/data/> |
 | 公開URL | <例: https://memory.example.com> |
@@ -22,14 +22,14 @@
 
 ---
 
-## MCPツール一覧（25本・通常セッション）
+## MCPツール一覧（27本・通常セッション）
 
 ツールごとの用途・引数・コスト感は **`protocol_guide.md`** を参照。
 
 - **ExtMemory（6）**: memory_write / memory_read / memory_read_index / memory_search / memory_upsert / memory_share
 - **UserCoreMemory（4）**: CoreMem_save / CoreMem_read / CoreMem_list / CoreMem_delete
 - **LogStore（6）**: conversation_index / conversation_search / conversation_read / conversation_share / conversation_digest / log_annotate
-- **inbox（3）**: inbox_check / inbox_read / inbox_post
+- **inbox（5）**: inbox_check / inbox_read / inbox_post / inbox_update / inbox_delete
 - **batch（1）**: batch_run_summary_layers
 - **Album（5）**: album_save / album_read / album_list / album_share / album_delete
 
