@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.57","mcp_tool_count":27}
+# {"status":"ok","version":"3.58","mcp_tool_count":27}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -590,6 +590,7 @@ claude-with-you/
 - Three housekeeping fixes (v3.55) — ① `album_delete` MCP tool added (tool count 24→25) ② album tag input now splits on commas, Japanese commas, and whitespace ③ Files tab duplicate-display bug fixed (overwrite imports were appending duplicate index entries; now deduped on load and replaced on overwrite)
 - Rating protection (v3.56, M-LOCAL-3/7) — memory entries accept `rating` (safe/mature/adult) and `local_only`; search / index / random retrieval exclude `local_only` and `adult` entries by default (opt in with `include_local` / `include_adult` — consent-based "visible when intended" design). Conversations also get a `rating` (set via REST PATCH, survives re-imports); `conversation_read` replaces `rating=adult` conversations with their safe digest by default (`include_raw=true` for the original). Purpose: preventing recurrence of account content flags
 - Inbox improvements + bug fixes (v3.57) — `inbox_check` gains `limit`/`days`/`from_model`/`to_model` filters (reduce load on local LLMs, fetch only messages for a specific model). `inbox_post` now accepts `from_model`/`to_model` as string or array (e.g. `["claude-opus-4-6", "しずく"]`). New MCP tools: `inbox_update` (partial update) and `inbox_delete` (physical delete, irreversible) — tool count 25→27. `CoreMem_list` excludes `__del__`-prefixed files. ZIP import adds source_thread-based dedup (prevents summary entry duplication). REST `/api/memory/index` now excludes deleted entries (fixes admin.html initial load)
+- MCP request logging + instructions enhancement (v3.58) — Structured access logging on the `/mcp` endpoint: User-Agent / source IP / MCP method name / inferred client type (desktop-app / browser / ipad / mobile / claude-code / anthropic-cloud / script) output with `MCP-ACCESS:` prefix. Aids triage of PC MCP connector issues (M-PC1). MCP `initialize` response `instructions` expanded with concrete usage descriptions to improve discoverability via Claude.ai's tool_search
 
 ---
 

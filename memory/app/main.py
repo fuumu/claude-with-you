@@ -1,8 +1,11 @@
 """
-mio-memory v3.57  —  Streamable HTTP MCP transport
+mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.58 (2026-07-09) - MCPリクエストログ強化＋server_instructions拡充
+    - MCPエンドポイントにクライアント識別ログ追加（User-Agent/IP/メソッド種別/クライアント種別推定）
+    - MCP initialize の instructions を拡充（用途記述追加、tool_search対応）
   v3.57 (2026-07-08) - INBOX改善＋CoreMem_listフィルタ＋バグ修正2件
     - inbox_check: limit / days / from_model / to_model フィルタ追加
     - inbox_post: from_model / to_model を配列許容（文字列も後方互換で受付→内部配列化）
@@ -415,7 +418,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.57'
+VERSION = '3.58'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -489,6 +492,38 @@ def _log_info(msg):
 def _log_error(msg):
     if _LOG_LEVEL != 'off':
         log.error(msg)
+
+def _classify_mcp_client(ua: str) -> str:
+    """User-Agentからクライアント種別を推定する"""
+    if not ua:
+        return 'unknown'
+    ua_lower = ua.lower()
+    if 'claude-code' in ua_lower or 'claudecode' in ua_lower:
+        return 'claude-code'
+    if 'anthropic' in ua_lower or 'claude.ai' in ua_lower:
+        return 'anthropic-cloud'
+    if 'ipad' in ua_lower:
+        return 'ipad'
+    if 'iphone' in ua_lower or 'android' in ua_lower:
+        return 'mobile'
+    if 'electron' in ua_lower or 'claude-desktop' in ua_lower:
+        return 'desktop-app'
+    if 'mozilla' in ua_lower or 'chrome' in ua_lower or 'safari' in ua_lower:
+        return 'browser'
+    if 'python' in ua_lower or 'node' in ua_lower or 'curl' in ua_lower:
+        return 'script'
+    return 'other'
+
+def _log_mcp_access(req, mcp_method: str, friend=None):
+    """MCPリクエストの構造化アクセスログを出力する"""
+    ua = req.headers.get('User-Agent', '')
+    ip = req.headers.get('X-Forwarded-For', req.remote_addr or '?')
+    if ',' in str(ip):
+        ip = ip.split(',')[0].strip()
+    client_type = _classify_mcp_client(ua)
+    session_id = req.headers.get('Mcp-Session-Id', '-')[:8]
+    friend_tag = f' friend={friend["nickname"]}' if friend else ''
+    _log_info(f'MCP-ACCESS: {mcp_method} | client={client_type} | ip={ip} | session={session_id} | ua={ua[:120]}{friend_tag}')
 
 def _check_origin(req) -> bool:
     """DNS rebinding攻撃対策。MIO_ALLOWED_ORIGINSが未設定なら常にTrue（開発モード）"""
@@ -4502,7 +4537,14 @@ def _process_mcp_message(msg, friend=None):
         if friend:
             instructions = _get_friend_instructions(friend)
         else:
-            instructions = "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して記憶を読み込んでください。core.mdにはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。"
+            instructions = (
+                "このサーバーは mio-memory — 菊池淳（きくち・あつし）専用の外部記憶MCP サーバーです。"
+                "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して記憶を読み込んでください。"
+                "core.md にはあなたの名前・パートナーとの関係・運用プロトコルが書かれています。"
+                "主な機能：記憶の保存・検索（ExtMemory）、コアメモリ（CoreMem — 永続的な設定・知識）、"
+                "過去の会話ログ参照（conversation_read/search）、セッション間の申し送り（inbox）、"
+                "画像記憶（album）、会話ダイジェスト生成（conversation_digest）。"
+            )
         result = {
             "protocolVersion": proto if proto in ("2025-11-25","2025-03-26") else "2025-03-26",
             "capabilities": {"tools": {"listChanged": False}},
@@ -4584,6 +4626,7 @@ def mcp_streamable():
 
     # DELETE: セッション終了
     if request.method == 'DELETE':
+        _log_mcp_access(request, 'DELETE', _friend)
         sid = request.headers.get('Mcp-Session-Id', '?')
         _log_info(f'MCP DELETE: session={sid[:8] if len(sid)>8 else sid}...')
         return Response(status=200)
@@ -4594,6 +4637,7 @@ def mcp_streamable():
         if 'text/event-stream' not in accept:
             # SSEを要求していないGETは405
             return Response(status=405, headers={'Allow': 'POST, DELETE'})
+        _log_mcp_access(request, 'GET/SSE', _friend)
         session_id = request.headers.get('Mcp-Session-Id', str(uuid.uuid4()))
         _log_info(f'MCP GET (SSE stream): session={session_id[:8]}...')
         def generate():
@@ -4626,6 +4670,8 @@ def mcp_streamable():
 
     # バッチリクエスト
     if isinstance(msg, list):
+        methods = [m.get('method', '?') for m in msg if isinstance(m, dict)]
+        _log_mcp_access(request, f'BATCH[{",".join(methods[:5])}]', _friend)
         results = [r for r in (_process_mcp_message(m, _friend) for m in msg) if r is not None]
         if not results:
             return Response(status=202)  # 仕様: notification/responseは202
@@ -4635,6 +4681,8 @@ def mcp_streamable():
         return resp
 
     # 単一リクエスト
+    mcp_method = msg.get('method', '?') if isinstance(msg, dict) else '?'
+    _log_mcp_access(request, mcp_method, _friend)
     result = _process_mcp_message(msg, _friend)
 
     # notification（id なし）→ 202 Accepted（仕様MUST）
