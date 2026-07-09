@@ -1,4 +1,4 @@
-# protocol_guide.md — MCP tool operating guide (mio-memory v3.57 / 27 tools)
+# protocol_guide.md — MCP tool operating guide (mio-memory v3.59 / 31 tools)
 
 *A reference a new session can read in one pass to learn how the MCP tools work.*
 *This file is install-agnostic (the tool mechanics are common to every mio-memory). For environment-specific startup rules / naming, see `core_rules.md`.*
@@ -16,12 +16,13 @@ mio-memory operates **five kinds of store** via MCP tools. Pick by the nature of
 | **LogStore** | Conversation archive | `/data/conversations/` + `/data/annotations/` | Immutable logs + append-only annotations. From ZIP / Claude Code imports |
 | **inbox** | Lightweight messaging | `/data/inbox/` | Inter-session messages. chat/code/friend channels |
 | **Album** | Image memory | `/data/album/` (image + metadata JSON) | Save/fetch/share images. Portraits and photo memories |
+| **Uploads** | General-purpose files | `/data/uploads/` (file + metadata JSON) | Store any file type: PDF, text, etc. |
 
 Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 ---
 
-## 1. Tool list (6 groups / 27 total)
+## 1. Tool list (7 groups / 31 total)
 
 | # | Tool | Group | One-line purpose | Cost |
 |---|------|-------|------------------|------|
@@ -52,8 +53,12 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 | 25 | `album_list` | Album | List image metadata (no image data) | light |
 | 26 | `album_share` | Album | 24h share URL for an image | light |
 | 27 | `album_delete` | Album | Permanently delete image + metadata | light |
+| 28 | `file_upload` | Uploads | Save a file (URL/NAS path) | med |
+| 29 | `file_read` | Uploads | Get metadata (+ content for text files) | light |
+| 30 | `file_list` | Uploads | List uploaded files (tag filter) | light |
+| 31 | `file_delete` | Uploads | Permanently delete file + metadata | light |
 
-※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate limited set. This guide covers the 27 regular-session tools.
+※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate limited set. This guide covers the 31 regular-session tools.
 
 ---
 
@@ -124,6 +129,16 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 **`album_share`** — `id` (req). 24h auth-free share URL. **light**.
 
 **`album_delete`** — `id` (req). Permanently deletes image + metadata (irreversible, v3.55). **light**.
+
+### Uploads (general-purpose files — 4 tools, v3.59)
+
+**`file_upload`** — `url` or `file_path` (NAS local), `filename` (opt), `comment`, `tags`. Saves any file type (PDF, text, etc.) to `/data/uploads/`. **med**.
+
+**`file_read`** — `id` (req). Returns metadata. For text files (text/*, JSON, XML), the `content` field contains the body (truncated at 50K chars). **light**.
+
+**`file_list`** — `tags` (array, opt). Lists uploaded files. Tag filter supported. **light**.
+
+**`file_delete`** — `id` (req). Permanently deletes file + metadata (irreversible). **light**.
 
 ---
 

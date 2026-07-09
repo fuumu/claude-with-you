@@ -1092,3 +1092,41 @@ PC環境のMCPコネクタ不通問題（M-PC1）切り分けのため、`/mcp` 
 通常セッション（非友人）の `instructions` を拡充。従来は「core.mdを読め」のみだったが、サーバーの正体・用途・主要機能を具体的に記述。Claude.ai の `tool_search` 遅延ロード時に、ツール用途がヒットしやすくなることを意図。
 
 友人セッションの instructions は変更なし（従来通り `_get_friend_instructions()` で動的生成）。
+
+## 19. ファイルアップローダ F5（v3.59）
+
+### 設計方針
+
+画像専用のアルバム（`/data/album/`）とは別に、汎用ファイル保管領域 `/data/uploads/` を新設。PDF・テキスト・バイナリ等の任意ファイルに対応。
+
+### データ構造
+
+```
+/data/uploads/
+  {id}.{ext}   — ファイル本体
+  {id}.json    — メタデータ（filename, mimetype, size, ext, comment, tags, uploaded_at）
+```
+
+ID形式: `YYYYMMDD_HHMMSS_<filename先頭30文字>`
+
+### MCPツール（4本、ツール数 27→31）
+
+| ツール | 説明 |
+|--------|------|
+| `file_upload` | URLまたはNASローカルパスからファイルを取得・保存 |
+| `file_read` | メタデータ返却。text/* 等のテキスト系はcontentフィールドに本文含む（50K文字で打ち切り） |
+| `file_list` | 一覧取得。タグフィルタ対応 |
+| `file_delete` | 物理削除（復元不可） |
+
+### RESTエンドポイント
+
+| メソッド | パス | 説明 |
+|----------|------|------|
+| GET | `/api/uploads/` | 一覧取得 |
+| GET | `/api/uploads/{id}` | ファイルダウンロード |
+| POST | `/api/uploads/` | マルチパートアップロード |
+| DELETE | `/api/uploads/{id}` | 削除 |
+
+### admin.html
+
+Uploadsタブを追加。カード形式の一覧表示、アップロードパネル（複数ファイル対応）、詳細モーダル（ダウンロード・削除）。

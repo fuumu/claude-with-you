@@ -543,6 +543,7 @@
   <button class="tab-btn grp-ai" onclick="switchTab('coremem', this)">CoreMem</button>
   <button class="tab-btn grp-ai" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#e74c3c;color:#fff;border-radius:9px;padding:1px 6px;font-size:.72rem;margin-left:3px"></span></button>
   <button class="tab-btn grp-ai" onclick="switchTab('album', this)">Album</button>
+  <button class="tab-btn grp-ai" onclick="switchTab('uploads', this)">Uploads</button>
 
   <span class="tab-group-label grp-chat" data-i18n="grp.chat">💬 クロードチャット関連</span>
   <button class="tab-btn grp-chat" onclick="switchTab('logs', this)">Logs</button>
@@ -593,6 +594,28 @@
   </div>
   <div class="album-drop-msg" id="album-drop-msg" data-i18n="album.drop">📷 ここにドロップして画像を追加</div>
   <div class="album-grid" id="album-grid"></div>
+</div>
+
+<!-- Uploads tab (F5) -->
+<div class="tab-panel" id="tab-uploads">
+  <div class="album-toolbar">
+    <button class="btn-upload" onclick="toggleUploadsPanel()">📁 アップロード</button>
+    <span style="font-size:.8rem;color:#5a6a7a" id="uploads-count"></span>
+  </div>
+  <div class="album-upload-panel" id="uploads-upload-panel">
+    <div class="upload-row">
+      <div>
+        <label>ファイル</label>
+        <input type="file" id="uploads-file" multiple>
+      </div>
+    </div>
+    <label>コメント</label>
+    <input type="text" id="uploads-comment" placeholder="">
+    <label>タグ（カンマ区切り）</label>
+    <input type="text" id="uploads-tags" placeholder="資料, PDF">
+    <button class="btn-submit" onclick="uploadsUpload()">保存</button>
+  </div>
+  <div class="card-grid" id="uploads-grid"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -873,6 +896,7 @@ function switchTab(name, btn) {
   if (name === 'inbox')     loadInbox();
   if (name === 'friends')   loadFriends();
   if (name === 'album')     loadAlbum();
+  if (name === 'uploads')   loadUploads();
   if (name === 'logs') {
     const frame = document.getElementById('logs-frame');
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
@@ -896,6 +920,7 @@ const TAB_HELP = {
     Friends: 'お友達システムの登録・承認・コード管理',
     Oplog:   '記憶操作の操作ログ（システム）',
     Album:   'アルバム（澪の画像記憶）。サムネイル一覧・アップロード・共有',
+    Uploads: 'アップロードファイル（PDF・テキスト等の汎用ファイル保管）',
   },
   en: {
     _title: 'Settings & Help', _ver: 'Version', _help: 'Tab guide',
@@ -908,6 +933,7 @@ const TAB_HELP = {
     Import:  'Import Claude.ai export ZIP + summary batch progress',
     Friends: 'Friend system: registration, approval, codes',
     Oplog:   'Memory operation log (system)',
+    Uploads: 'Uploaded files (general-purpose file storage: PDF, text, etc.)',
     Album:   'Album (Mio\'s image memories). Thumbnails, upload, share',
   }
 };
@@ -2266,6 +2292,104 @@ async function albumDelete(id) {
       showToast(_adminLang === 'en' ? 'Deleted' : '削除しました');
       closeModal();
       loadAlbum();
+    } else { showToast('Delete failed'); }
+  } catch (e) { showToast('Delete failed'); console.error(e); }
+}
+
+// ── Uploads (F5) ──────────────────────────────────────────────────────
+let _uploadsData = [];
+
+async function loadUploads() {
+  try {
+    const res = await apiFetch('/api/uploads/');
+    _uploadsData = await res.json();
+    renderUploadsGrid();
+    document.getElementById('uploads-count').textContent = `${_uploadsData.length} files`;
+  } catch (e) { console.error('loadUploads', e); }
+}
+
+function renderUploadsGrid() {
+  const grid = document.getElementById('uploads-grid');
+  if (!_uploadsData.length) {
+    grid.innerHTML = '<div style="color:#888;padding:2rem;text-align:center">No uploaded files</div>';
+    return;
+  }
+  grid.innerHTML = _uploadsData.map((f, i) => {
+    const sizeStr = f.size < 1024 ? f.size + ' B'
+      : f.size < 1048576 ? (f.size / 1024).toFixed(1) + ' KB'
+      : (f.size / 1048576).toFixed(1) + ' MB';
+    const tags = (f.tags || []).map(t => `<span style="background:#e8f0fe;color:#1a73e8;padding:1px 6px;border-radius:8px;font-size:.7rem;margin-right:3px">${t}</span>`).join('');
+    return `<div class="card" onclick="openUploadDetail(${i})" style="cursor:pointer">
+      <div class="card-title">📄 ${f.filename || f.id}</div>
+      <div class="card-meta">${sizeStr} · ${f.mimetype || ''}</div>
+      <div class="card-meta">${f.uploaded_at || ''}</div>
+      ${f.comment ? `<div class="card-body" style="font-size:.78rem">${f.comment}</div>` : ''}
+      <div style="margin-top:.3rem">${tags}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleUploadsPanel() {
+  const p = document.getElementById('uploads-upload-panel');
+  p.style.display = p.style.display === 'none' || !p.style.display ? 'block' : 'none';
+}
+
+async function uploadsUpload() {
+  const files = document.getElementById('uploads-file').files;
+  if (!files.length) { showToast('ファイルを選択してください'); return; }
+  const comment = document.getElementById('uploads-comment').value;
+  const tags = document.getElementById('uploads-tags').value;
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('comment', comment);
+    fd.append('tags', tags);
+    try {
+      const res = await apiFetch('/api/uploads/', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('Upload failed');
+    } catch (e) { showToast('Upload failed: ' + file.name); console.error(e); return; }
+  }
+  showToast(`${files.length} file(s) uploaded`);
+  document.getElementById('uploads-file').value = '';
+  document.getElementById('uploads-comment').value = '';
+  document.getElementById('uploads-tags').value = '';
+  document.getElementById('uploads-upload-panel').style.display = 'none';
+  loadUploads();
+}
+
+function openUploadDetail(idx) {
+  const f = _uploadsData[idx];
+  if (!f) return;
+  const sizeStr = f.size < 1024 ? f.size + ' B'
+    : f.size < 1048576 ? (f.size / 1024).toFixed(1) + ' KB'
+    : (f.size / 1048576).toFixed(1) + ' MB';
+  const tags = (f.tags || []).map(t => `<span style="background:#e8f0fe;color:#1a73e8;padding:2px 8px;border-radius:8px;font-size:.75rem">${t}</span>`).join(' ');
+  const downloadUrl = API + '/api/uploads/' + f.id;
+  const body = `
+    <div style="margin-bottom:.5rem"><strong>${f.filename}</strong></div>
+    <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.3rem">${f.mimetype} · ${sizeStr}</div>
+    <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.5rem">${f.uploaded_at}</div>
+    ${f.comment ? `<div style="margin-bottom:.5rem">${f.comment}</div>` : ''}
+    <div style="margin-bottom:.8rem">${tags}</div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <a href="${downloadUrl}" class="btn btn-secondary" style="text-decoration:none;font-size:.8rem" download>⬇ Download</a>
+      <button class="btn" style="background:#e74c3c;color:#fff;font-size:.8rem" onclick="uploadsDelete('${f.id}')">🗑 Delete</button>
+    </div>`;
+  setModalId(f.id);
+  document.getElementById('modal-title').textContent = f.filename || f.id;
+  document.getElementById('modal-body').innerHTML = body;
+  document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+async function uploadsDelete(id) {
+  const msg = _adminLang === 'en' ? 'Delete this file?' : 'このファイルを削除しますか？';
+  if (!confirm(msg)) return;
+  try {
+    const res = await apiFetch('/api/uploads/' + id, { method: 'DELETE' });
+    if (res.ok) {
+      showToast(_adminLang === 'en' ? 'Deleted' : '削除しました');
+      closeModal();
+      loadUploads();
     } else { showToast('Delete failed'); }
   } catch (e) { showToast('Delete failed'); console.error(e); }
 }

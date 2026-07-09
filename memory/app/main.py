@@ -3,7 +3,10 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
-  v3.58 (2026-07-09) - MCPリクエストログ強化＋server_instructions拡充
+  v3.59 (2026-07-09) - F5 ファイルアップローダ＋MCPリクエストログ＋instructions拡充
+    - file_upload / file_read / file_list / file_delete MCPツール新設（ツール数 27→31）
+    - /data/uploads/ に汎用ファイル保管（画像以外のPDF・テキスト等に対応）
+    - REST: POST/GET/DELETE /api/uploads/ エンドポイント追加
     - MCPエンドポイントにクライアント識別ログ追加（User-Agent/IP/メソッド種別/クライアント種別推定）
     - MCP initialize の instructions を拡充（用途記述追加、tool_search対応）
   v3.57 (2026-07-08) - INBOX改善＋CoreMem_listフィルタ＋バグ修正2件
@@ -418,7 +421,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.58'
+VERSION = '3.59'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -432,6 +435,7 @@ CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
 ANNOTATIONS_DIR    = '/data/annotations'
 INBOX_DIR          = '/data/inbox'
 ALBUM_DIR          = '/data/album'
+UPLOADS_DIR        = '/data/uploads'
 ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
 FRIENDS_DIR            = '/data/friends'
 FRIENDS_REGISTRY_FILE  = '/data/friends/registry.json'
@@ -3672,6 +3676,219 @@ def api_album_shared(token):
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Uploads (汎用ファイルアップローダ — F5)
+# ══════════════════════════════════════════════════════════════════════
+
+def _upload_save(url=None, file_path=None, filename=None, comment='', tags=None):
+    """URLまたはNASローカルパスからファイルを保存する"""
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    upload_id = now_jst().replace('-','').replace(':','').replace('T','_')[:15]
+    data = None
+    detected_mime = 'application/octet-stream'
+
+    if url:
+        import urllib.request
+        req = urllib.request.Request(url, headers={'User-Agent': 'mio-memory/upload'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            detected_mime = resp.headers.get('Content-Type', 'application/octet-stream').split(';')[0].strip()
+            data = resp.read()
+        if not filename:
+            from urllib.parse import urlparse
+            path = urlparse(url).path
+            filename = os.path.basename(path) or f'download_{upload_id}'
+    elif file_path:
+        if not os.path.exists(file_path):
+            return {"error": f"File not found: {file_path}"}
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        if not filename:
+            filename = os.path.basename(file_path)
+        import mimetypes
+        guessed = mimetypes.guess_type(filename)[0]
+        if guessed:
+            detected_mime = guessed
+    else:
+        return {"error": "url or file_path is required"}
+
+    if data is None:
+        return {"error": "Failed to read file data"}
+
+    ext = ''
+    if '.' in filename:
+        ext = filename.rsplit('.', 1)[-1].lower()
+    safe_filename = filename.replace('/', '_').replace('\\', '_')
+    upload_id = f'{upload_id}_{safe_filename.rsplit(".", 1)[0][:30]}'
+
+    file_dest = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    with open(file_dest, 'wb') as f:
+        f.write(data)
+
+    meta = {
+        'id': upload_id,
+        'filename': safe_filename,
+        'mimetype': detected_mime,
+        'size': len(data),
+        'ext': ext,
+        'comment': comment,
+        'tags': [t.strip() for t in (tags or []) if t.strip()],
+        'uploaded_at': now_jst(),
+    }
+    with open(os.path.join(UPLOADS_DIR, f'{upload_id}.json'), 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    _log_info(f'upload_save: {upload_id} ({safe_filename}, {len(data)} bytes)')
+    return {"id": upload_id, "filename": safe_filename, "mimetype": detected_mime, "size": len(data)}
+
+
+def _upload_read(upload_id):
+    """アップロードファイルのメタデータを返す。テキスト系はcontentも含む"""
+    meta_path = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
+    if not os.path.exists(meta_path):
+        return {"error": f"Upload not found: {upload_id}"}
+    with open(meta_path, encoding='utf-8') as f:
+        meta = json.load(f)
+    ext = meta.get('ext', '')
+    file_path = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    if not os.path.exists(file_path):
+        return {"error": f"File data missing: {upload_id}"}
+    mime = meta.get('mimetype', '')
+    if mime.startswith('text/') or mime in ('application/json', 'application/xml', 'application/javascript'):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            if len(content) > 50000:
+                meta['content'] = content[:50000] + '\n... (truncated, total {} chars)'.format(len(content))
+            else:
+                meta['content'] = content
+        except (UnicodeDecodeError, ValueError):
+            pass
+    return meta
+
+
+def _upload_list(tags=None):
+    """アップロードファイル一覧"""
+    if not os.path.isdir(UPLOADS_DIR):
+        return []
+    results = []
+    for fname in sorted(os.listdir(UPLOADS_DIR)):
+        if not fname.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(UPLOADS_DIR, fname), encoding='utf-8') as f:
+                meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if tags:
+            entry_tags = [t.lower() for t in meta.get('tags', [])]
+            if not any(t.lower() in entry_tags for t in tags):
+                continue
+        results.append({
+            'id': meta.get('id', fname.replace('.json', '')),
+            'filename': meta.get('filename', ''),
+            'mimetype': meta.get('mimetype', ''),
+            'size': meta.get('size', 0),
+            'comment': meta.get('comment', ''),
+            'tags': meta.get('tags', []),
+            'uploaded_at': meta.get('uploaded_at', ''),
+        })
+    return results
+
+
+def _upload_delete(upload_id):
+    """アップロードファイルを物理削除"""
+    meta_path = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
+    if not os.path.exists(meta_path):
+        return {"error": f"Upload not found: {upload_id}"}
+    with open(meta_path, encoding='utf-8') as f:
+        meta = json.load(f)
+    ext = meta.get('ext', '')
+    file_path = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    os.remove(meta_path)
+    _log_info(f'upload_delete: {upload_id}')
+    return {"deleted": upload_id}
+
+
+# --- Uploads REST endpoints ---
+
+@app.route('/api/uploads/', methods=['GET'])
+@app.route('/api/uploads', methods=['GET'])
+def api_uploads_list():
+    if not _verify_token(_extract_bearer(request)):
+        abort(401)
+    tags = request.args.getlist('tag') or None
+    return jsonify(_upload_list(tags))
+
+@app.route('/api/uploads/<upload_id>', methods=['GET'])
+def api_uploads_get(upload_id):
+    if not _verify_token(_extract_bearer(request)):
+        abort(401)
+    meta_path = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
+    if not os.path.exists(meta_path):
+        abort(404)
+    with open(meta_path, encoding='utf-8') as f:
+        meta = json.load(f)
+    ext = meta.get('ext', '')
+    file_name = f'{upload_id}.{ext}' if ext else upload_id
+    return send_from_directory(UPLOADS_DIR, file_name, as_attachment=True,
+                               download_name=meta.get('filename', file_name))
+
+@app.route('/api/uploads/', methods=['POST'])
+@app.route('/api/uploads', methods=['POST'])
+def api_uploads_upload():
+    if not _verify_token(_extract_bearer(request)):
+        abort(401)
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    upload_id = now_jst().replace('-','').replace(':','').replace('T','_')[:15]
+    safe_filename = f.filename.replace('/', '_').replace('\\', '_')
+    ext = ''
+    if '.' in safe_filename:
+        ext = safe_filename.rsplit('.', 1)[-1].lower()
+    upload_id = f'{upload_id}_{safe_filename.rsplit(".", 1)[0][:30]}'
+
+    file_dest = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    f.save(file_dest)
+    size = os.path.getsize(file_dest)
+
+    comment = request.form.get('comment', '')
+    tags_raw = request.form.get('tags', '')
+    import re as _re_tags
+    tags = [t.strip() for t in _re_tags.split(r'[,、\s]+', tags_raw) if t.strip()]
+
+    meta = {
+        'id': upload_id,
+        'filename': safe_filename,
+        'mimetype': f.content_type or 'application/octet-stream',
+        'size': size,
+        'ext': ext,
+        'comment': comment,
+        'tags': tags,
+        'uploaded_at': now_jst(),
+    }
+    with open(os.path.join(UPLOADS_DIR, f'{upload_id}.json'), 'w', encoding='utf-8') as f2:
+        json.dump(meta, f2, ensure_ascii=False, indent=2)
+
+    _log_info(f'upload (REST): {upload_id} ({safe_filename}, {size} bytes)')
+    return jsonify(meta), 201
+
+@app.route('/api/uploads/<upload_id>', methods=['DELETE'])
+def api_uploads_delete(upload_id):
+    if not _verify_token(_extract_bearer(request)):
+        abort(401)
+    result = _upload_delete(upload_id)
+    if 'error' in result:
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  MCP ツール定義
 # ══════════════════════════════════════════════════════════════════════
 
@@ -3935,6 +4152,38 @@ _MCP_TOOLS = [
         "description": "アルバムから画像とメタデータを完全削除する（復元不可）",
         "inputSchema": {"type": "object", "properties": {
             "id": {"type": "string", "description": "削除する画像のID（album_list で確認）"}
+        }, "required": ["id"]}
+    },
+    {
+        "name": "file_upload",
+        "description": "ファイルをアップロード保管する（PDF・テキスト・画像以外の任意ファイル対応）。URLまたはNASローカルパスから取得",
+        "inputSchema": {"type": "object", "properties": {
+            "url":       {"type": "string", "description": "取得元URL"},
+            "file_path": {"type": "string", "description": "NASローカルパス（urlと排他）"},
+            "filename":  {"type": "string", "description": "保存時のファイル名（省略時はURLパスまたはfile_pathから推定）"},
+            "comment":   {"type": "string", "description": "コメント・メモ"},
+            "tags":      {"type": "array", "items": {"type": "string"}, "description": "タグ（分類用）"}
+        }}
+    },
+    {
+        "name": "file_read",
+        "description": "アップロード済みファイルのメタデータを取得する。テキスト系ファイルはcontentフィールドに本文も含む",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "ファイルID（file_list で確認）"}
+        }, "required": ["id"]}
+    },
+    {
+        "name": "file_list",
+        "description": "アップロード済みファイルの一覧を取得する。タグで絞り込み可能",
+        "inputSchema": {"type": "object", "properties": {
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "タグフィルタ（いずれかに一致するエントリを返す）"}
+        }}
+    },
+    {
+        "name": "file_delete",
+        "description": "アップロード済みファイルを完全削除する（復元不可）",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "削除するファイルのID"}
         }, "required": ["id"]}
     }
 ]
@@ -4509,6 +4758,37 @@ def _handle_tool_call_raw(name, arguments):
         os.remove(meta_path)
         _log_info(f'album_delete (MCP): {aid}')
         return {"status": "deleted", "id": aid}
+
+    elif name == "file_upload":
+        result = _upload_save(
+            url=arguments.get("url"),
+            file_path=arguments.get("file_path"),
+            filename=arguments.get("filename"),
+            comment=arguments.get("comment", ""),
+            tags=arguments.get("tags"),
+        )
+        result["server_time"] = now_jst()
+        return result
+
+    elif name == "file_read":
+        fid = arguments.get("id", "")
+        if not fid:
+            return {"error": "id is required"}
+        result = _upload_read(fid)
+        result["server_time"] = now_jst()
+        return result
+
+    elif name == "file_list":
+        items = _upload_list(tags=arguments.get("tags"))
+        return {"items": items, "count": len(items), "server_time": now_jst()}
+
+    elif name == "file_delete":
+        fid = arguments.get("id", "")
+        if not fid:
+            return {"error": "id is required"}
+        result = _upload_delete(fid)
+        result["server_time"] = now_jst()
+        return result
 
     return {"error": "unknown tool"}
 
