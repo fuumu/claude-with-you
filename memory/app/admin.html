@@ -878,6 +878,7 @@ async function apiFetch(path, options = {}) {
     headers: { 'Authorization': 'Bearer ' + getToken(), ...(options.headers || {}) }
   });
   if (res.status === 401) { resetToken(); throw new Error('401'); }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res;
 }
 
@@ -1057,10 +1058,14 @@ async function loadMemory() {
       res = await apiFetch('/api/memory/index');
     }
     allEntries = await res.json();
+    if (!Array.isArray(allEntries)) { allEntries = []; throw new Error('not array'); }
     renderFilterBar();
     renderCards();
   } catch(e) {
-    if (e.message !== '401') grid.innerHTML = '<div class="empty">取得失敗</div>';
+    if (e.message !== '401') {
+      console.error('loadMemory failed:', e);
+      grid.innerHTML = `<div class="empty">取得失敗 (${esc(e.message)})</div>`;
+    }
   }
 }
 
