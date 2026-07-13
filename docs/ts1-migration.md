@@ -1,6 +1,6 @@
 # TS-1: TypeScript Migration Plan (Strangler Pattern)
 
-*Written: 2026-07-13 / Ring 0 implemented*
+*Written: 2026-07-13 / Rings 0–1 implemented*
 
 ## Approach
 
@@ -14,24 +14,37 @@ reverse proxy in front and move endpoints to TS one at a time** (strangler patte
   is identical whether 0 or 53 endpoints have been migrated)
 - Aborting mid-way costs nothing (remove the proxy and Python-only operation resumes)
 
-## Current state (Ring 0, completed 2026-07-13)
+## Current state (Rings 0–1, completed 2026-07-13)
 
 ```
-client → [ts/ TypeScript proxy] → [memory/app/main.py (Flask)]
-           └ only /health answered natively (with served_by: "ts")
+client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
+           ├ /health                       … TS native
+           ├ GET /api/memory/index         … TS native
+           ├ GET /api/memory/tags          … TS native
+           ├ GET /api/memory/hsearch       … TS native (incl. unified search)
+           ├ GET /api/memory/<id>          … TS native
+           └ everything else               … transparently proxied to Python
 ```
 
-- `ts/src/index.ts` — zero-dependency (node:http) transparent proxy; SSE/chunked OK
+- `ts/src/` — index.ts (router + proxy) / auth.ts (Bearer, ?token=, oauth_store.json) /
+  data.ts (read layer over /data/ JSON) / search.ts (hierarchical search,
+  `_hierarchical_search`-compatible)
+- Zero dependencies (node:http only); SSE/chunked OK
 - `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 53 tests pass**
+  (direct mode passes too)
 - Build: `cd ts && npm install && npx tsc` → `node dist/index.js`
-- Env vars: `MIO_PORT` (proxy) / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT`
+- Env vars: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` / `MIO_API_TOKEN`
+
+**Ring-1 finding**: main.py has many `open()` calls without an explicit encoding —
+utf-8 on Linux (production) but cp932 on local Windows. Tests now pin `PYTHONUTF8=1`
+to match production. The TS implementation is utf-8 fixed (production-compatible).
 
 ## Ring plan (each ring = one commit; all tests green = done)
 
 | Ring | Target | Decision points |
 |---|---|---|
-| 0 | Proxy skeleton + /health | ✅ done |
-| 1 | Auth middleware + read-only REST (index/read/tags/hsearch) | File-I/O layer design (share the same JSON files as Python) |
+| 0 | Proxy skeleton + /health | ✅ done (2026-07-13) |
+| 1 | Auth middleware + read-only REST (index/read/tags/hsearch) | ✅ done (2026-07-13) — auth.ts / data.ts / search.ts, unified search included; native-vs-proxy routing verified live via the Werkzeug Server header |
 | 2 | Write REST (write/upsert/patch/delete/reindex) | oplog / index-rebuild compat; exclusive-writer policy (**never both write**) |
 | 3 | inbox / coremem / conversations REST | symlink version-management compat |
 | 4 | MCP transport (initialize / tools list / call dispatch) | Tools should internally call the REST-equivalent functions |

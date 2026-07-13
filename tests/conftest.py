@@ -142,6 +142,9 @@ def server():
         'LM_STUDIO_HOST': '127.0.0.1',
         'LM_STUDIO_PORT': '1',
         'PYTHONIOENCODING': 'utf-8',
+        # main.py は encoding 指定なしの open() が多い。本番（Linux/docker）は utf-8 だが
+        # Windows ローカルは cp932 になるため、本番と同じ utf-8 に固定する
+        'PYTHONUTF8': '1',
     })
     proc = subprocess.Popen(
         [sys.executable, MAIN_PY], env=env,
@@ -157,6 +160,9 @@ def server():
                 'MIO_PORT': str(front_port),
                 'MIO_UPSTREAM_HOST': '127.0.0.1',
                 'MIO_UPSTREAM_PORT': str(py_port),
+                # リング1〜: TS ネイティブ実装がデータ層・認証を直接扱う
+                'MIO_DATA_ROOT': tmpdir,
+                'MIO_API_TOKEN': TEST_TOKEN,
             })
             ts_proc = subprocess.Popen(
                 ['node', dist], env=ts_env,

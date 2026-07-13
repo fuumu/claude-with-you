@@ -1,6 +1,6 @@
 # TS-1: TypeScript 移行計画（ストラングラー方式）
 
-*作成: 2026-07-13 / リング0 実装済み*
+*作成: 2026-07-13 / リング0・リング1 実装済み*
 
 ## 方針
 
@@ -13,24 +13,35 @@ main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScrip
   0本でも53本でも外部挙動は同じ）
 - 途中で中止しても損失なし（プロキシを外せば Python 単体運用に即戻る）
 
-## 現状（リング0・2026-07-13 完了）
+## 現状（リング0＋リング1・2026-07-13 完了）
 
 ```
-クライアント → [ts/ TypeScript プロキシ] → [memory/app/main.py (Flask)]
-                 └ /health のみネイティブ応答（served_by: "ts" 付き）
+クライアント → [ts/ TypeScript サーバー] → [memory/app/main.py (Flask)]
+                 ├ /health                          … TS ネイティブ
+                 ├ GET /api/memory/index            … TS ネイティブ
+                 ├ GET /api/memory/tags             … TS ネイティブ
+                 ├ GET /api/memory/hsearch          … TS ネイティブ（統合検索含む）
+                 ├ GET /api/memory/<id>             … TS ネイティブ
+                 └ その他すべて                      … Python へ透過転送
 ```
 
-- `ts/src/index.ts` — 依存ゼロ（node:http）の透過プロキシ。SSE・チャンク対応
-- `MIO_TS1=1 pytest tests/` で二段構成起動 → **53件全パス確認済み**
+- `ts/src/` — index.ts（ルーター＋プロキシ）/ auth.ts（Bearer・?token=・oauth_store.json）/
+  data.ts（/data/ JSON 読み取り層）/ search.ts（階層検索・_hierarchical_search 互換）
+- 依存ゼロ（node:http のみ）。SSE・チャンク対応
+- `MIO_TS1=1 pytest tests/` で二段構成起動 → **53件全パス確認済み**（直接モードも全パス）
 - ビルド: `cd ts && npm install && npx tsc` → `node dist/index.js`
-- 環境変数: `MIO_PORT`（プロキシ）/ `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT`
+- 環境変数: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` / `MIO_API_TOKEN`
+
+**リング1で得た知見**: main.py は `encoding` 指定なしの `open()` が多く、Linux（本番）では
+utf-8、Windows ローカルでは cp932 になる。テストは `PYTHONUTF8=1` で本番と同条件に固定した。
+TS 実装は utf-8 固定（本番互換）。
 
 ## リング計画（各リング＝1コミット・テスト全パスが完了条件）
 
 | リング | 対象 | 判断ポイント |
 |---|---|---|
-| 0 | プロキシ骨格＋/health | ✅ 完了 |
-| 1 | 認証ミドルウェア＋読み取り系REST（index/read/tags/hsearch） | ファイルI/O層の設計（Python と同じ JSON ファイルを共有） |
+| 0 | プロキシ骨格＋/health | ✅ 完了（2026-07-13） |
+| 1 | 認証ミドルウェア＋読み取り系REST（index/read/tags/hsearch） | ✅ 完了（2026-07-13）— auth.ts / data.ts / search.ts。統合検索含む。Werkzeugヘッダ有無でネイティブ/プロキシ振り分けを実機検証済み |
 | 2 | 書き込み系REST（write/upsert/patch/delete/reindex） | oplog・index再構築の互換。**Python と同時書き込みしない**排他方針 |
 | 3 | inbox / coremem / conversations REST | symlink 版管理の互換 |
 | 4 | MCP トランスポート（initialize/tools一覧/call ディスパッチ） | ツール実装は内部で REST 相当関数を呼ぶ構造に |

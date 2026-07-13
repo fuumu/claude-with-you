@@ -14,6 +14,9 @@
  *   MIO_UPSTREAM_PORT Python 側ポート（デフォルト 5002）
  */
 import http from 'node:http';
+import { extractBearer, verifyToken } from './auth.js';
+import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
+import { hierarchicalSearch, randomIndexSample } from './search.js';
 
 const PORT = parseInt(process.env.MIO_PORT ?? '5003', 10);
 const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
@@ -64,11 +67,89 @@ async function handleHealth(res: http.ServerResponse): Promise<void> {
   }
 }
 
+function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+/** リング1: 読み取り系 REST のネイティブ実装。処理したら true を返す */
+function handleNative(req: http.IncomingMessage, res: http.ServerResponse, url: URL): boolean {
+  if (req.method !== 'GET') return false;
+  const p = url.pathname;
+  const isMemoryRoute =
+    p === '/api/memory/index' || p === '/api/memory/tags' || p === '/api/memory/hsearch';
+  // /api/memory/<entry_id>（1セグメント・予約語以外）
+  const entryMatch = /^\/api\/memory\/([^/]+)$/.exec(p);
+  const reserved = new Set(['index', 'tags', 'hsearch', 'search', 'reindex']);
+  const isEntryRoute = !!entryMatch && !reserved.has(entryMatch[1]);
+  if (!isMemoryRoute && !isEntryRoute) return false;
+
+  if (!verifyToken(extractBearer(req, url))) {
+    sendJson(res, 401, { error: 'unauthorized' });
+    return true;
+  }
+
+  if (p === '/api/memory/index') {
+    const index = loadIndexList();
+    const rnd = url.searchParams.get('random');
+    if (rnd !== null && rnd !== '') {
+      sendJson(res, 200, randomIndexSample(index, rnd, url.searchParams.get('filter') === 'summarized'));
+    } else {
+      sendJson(res, 200, index.filter((e) => !e.deleted));
+    }
+    return true;
+  }
+
+  if (p === '/api/memory/tags') {
+    const counts: Record<string, number> = {};
+    for (const entry of loadAllEntries()) {
+      if (entry.deleted) continue;
+      for (const tag of entry.tags ?? []) {
+        counts[tag] = (counts[tag] ?? 0) + 1;
+      }
+    }
+    sendJson(res, 200, counts);
+    return true;
+  }
+
+  if (p === '/api/memory/hsearch') {
+    const q = (url.searchParams.get('q') ?? '').trim();
+    if (!q) {
+      sendJson(res, 200, { results: [], total: 0, has_more: false });
+      return true;
+    }
+    sendJson(res, 200, hierarchicalSearch(q, {
+      limit: parseInt(url.searchParams.get('limit') ?? '30', 10),
+      offset: parseInt(url.searchParams.get('offset') ?? '0', 10),
+      fullBody: false,
+      includeLocal: url.searchParams.get('include_local') === 'true',
+      includeAdult: url.searchParams.get('include_adult') === 'true',
+      includeConversations: url.searchParams.get('include_conversations') === 'true',
+    }));
+    return true;
+  }
+
+  // /api/memory/<entry_id>
+  const entry = loadEntry(decodeURIComponent(entryMatch![1]));
+  if (entry === null) {
+    sendJson(res, 404, { error: 'not found' });
+  } else {
+    sendJson(res, 200, entry);
+  }
+  return true;
+}
+
 const server = http.createServer((req, res) => {
   const url = req.url ?? '/';
 
   if (url === '/health' || url.startsWith('/health?')) {
     void handleHealth(res);
+    return;
+  }
+
+  // リング1: 読み取り系 REST を TS がネイティブ応答
+  const parsed = new URL(url, `http://127.0.0.1:${PORT}`);
+  if (handleNative(req, res, parsed)) {
     return;
   }
 
