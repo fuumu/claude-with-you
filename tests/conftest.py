@@ -102,18 +102,38 @@ def _wait_health(base_url, proc, timeout=30):
     raise RuntimeError(f'server did not become healthy: {last_err}')
 
 
+def _ensure_ts_built():
+    """TS-1 リング0 プロキシ（ts/）をビルドして dist/index.js のパスを返す"""
+    ts_dir = os.path.join(REPO_ROOT, 'ts')
+    dist = os.path.join(ts_dir, 'dist', 'index.js')
+    src = os.path.join(ts_dir, 'src', 'index.ts')
+    if not os.path.isdir(os.path.join(ts_dir, 'node_modules')):
+        subprocess.run('npm install --no-audit --no-fund', shell=True, cwd=ts_dir, check=True)
+    if not os.path.exists(dist) or os.path.getmtime(dist) < os.path.getmtime(src):
+        subprocess.run('npx tsc', shell=True, cwd=ts_dir, check=True)
+    return dist
+
+
 @pytest.fixture(scope='session')
 def server():
-    """一時データディレクトリでサーバーを起動するセッションフィクスチャ"""
+    """一時データディレクトリでサーバーを起動するセッションフィクスチャ。
+
+    MIO_TS1=1 を指定すると、Python の前に TypeScript プロキシ（ts/・リング0）を
+    立て、テストは TS サーバー経由で実行される（TS-1 の「同一サーバー」判定）。
+    """
     tmpdir = tempfile.mkdtemp(prefix='mio-ts0-')
-    port = _free_port()
-    base_url = f'http://127.0.0.1:{port}'
+    py_port = _free_port()
+    py_url = f'http://127.0.0.1:{py_port}'
+    ts1 = os.environ.get('MIO_TS1') == '1'
+    front_port = _free_port() if ts1 else py_port
+    front_url = f'http://127.0.0.1:{front_port}'
+
     env = dict(os.environ)
     env.update({
         'MIO_DATA_ROOT': tmpdir,
         'MIO_API_TOKEN': TEST_TOKEN,
-        'MIO_PORT': str(port),
-        'MIO_BASE_URL': base_url,
+        'MIO_PORT': str(py_port),
+        'MIO_BASE_URL': front_url,
         'MIO_LOG_LEVEL': 'off',
         'MIO_SEED_WELCOME': 'off',
         'MIO_NIGHTLY_BATCH_HOUR': 'off',
@@ -127,10 +147,27 @@ def server():
         [sys.executable, MAIN_PY], env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         cwd=REPO_ROOT)
+    ts_proc = None
     try:
-        _wait_health(base_url, proc)
-        yield Server(base_url, TEST_TOKEN, tmpdir, proc)
+        _wait_health(py_url, proc)
+        if ts1:
+            dist = _ensure_ts_built()
+            ts_env = dict(os.environ)
+            ts_env.update({
+                'MIO_PORT': str(front_port),
+                'MIO_UPSTREAM_HOST': '127.0.0.1',
+                'MIO_UPSTREAM_PORT': str(py_port),
+            })
+            ts_proc = subprocess.Popen(
+                ['node', dist], env=ts_env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                cwd=os.path.join(REPO_ROOT, 'ts'))
+            _wait_health(front_url, ts_proc)
+        yield Server(front_url, TEST_TOKEN, tmpdir, proc)
     finally:
+        if ts_proc is not None:
+            ts_proc.kill()
+            ts_proc.wait(timeout=10)
         proc.kill()
         proc.wait(timeout=10)
 

@@ -111,6 +111,8 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 Run this after changing main.py. Contract documentation: `docs/api-contract.ja.md` (primary) / `docs/api-contract.md`. Test hooks: `MIO_DATA_ROOT` / `MIO_PORT` env vars (unset = production defaults).
 
+`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/`, ring 0 — see `docs/ts1-migration.ja.md`). Run both modes when touching `ts/` or transport-level code.
+
 ## Dependencies
 
 Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is installed via `pip install anthropic` at build time (requires internet — see `Dockerfile`). To add another package, download its wheel (and all transitive deps) into `memory/wheels/` and add it to `requirements.txt`.
