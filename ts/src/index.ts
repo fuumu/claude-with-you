@@ -14,8 +14,10 @@
  *   MIO_UPSTREAM_PORT Python 側ポート（デフォルト 5002）
  */
 import http from 'node:http';
-import { extractBearer, verifyToken } from './auth.js';
+import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
+import { handleMcp } from './mcp.js';
+import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
 
 const PORT = parseInt(process.env.MIO_PORT ?? '5003', 10);
@@ -139,28 +141,28 @@ function handleNative(req: http.IncomingMessage, res: http.ServerResponse, url: 
   return true;
 }
 
-const server = http.createServer((req, res) => {
-  const url = req.url ?? '/';
+/** 透過プロキシ（ヘッダ・ボディ・ステータスをそのまま中継。SSE も pipe で流れる） */
+function proxyToUpstream(req: http.IncomingMessage, res: http.ServerResponse, url: string, parsed: URL): void {
+  const headers: http.IncomingHttpHeaders = { ...req.headers, host: `${UPSTREAM_HOST}:${UPSTREAM_PORT}` };
 
-  if (url === '/health' || url.startsWith('/health?')) {
-    void handleHealth(res);
-    return;
+  // トランスポート層の認証は TS が所有する: TS が検証できたトークン（API_TOKEN or
+  // TS 発行を含む OAuth トークン）は API_TOKEN に書き換えて転送する。
+  // Python は起動時に oauth_store.json を読むため、TS がネイティブ発行した
+  // トークンを知らない — この書き換えで proxied ルートでも TS 発行トークンが通る。
+  // 友達トークン・無効トークンは verifyToken が false なので書き換えず素通し
+  // （友達セッションの限定ツール・Python 側 401 の挙動を保つ）。
+  const token = extractBearer(req, parsed);
+  if (token && token !== API_TOKEN && verifyToken(token)) {
+    headers['authorization'] = `Bearer ${API_TOKEN}`;
   }
 
-  // リング1: 読み取り系 REST を TS がネイティブ応答
-  const parsed = new URL(url, `http://127.0.0.1:${PORT}`);
-  if (handleNative(req, res, parsed)) {
-    return;
-  }
-
-  // 透過プロキシ（ヘッダ・ボディ・ステータスをそのまま中継。SSE も pipe で流れる）
   const proxyReq = http.request(
     {
       host: UPSTREAM_HOST,
       port: UPSTREAM_PORT,
       path: url,
       method: req.method,
-      headers: { ...req.headers, host: `${UPSTREAM_HOST}:${UPSTREAM_PORT}` },
+      headers,
     },
     (proxyRes) => {
       res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
@@ -174,6 +176,37 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ error: 'upstream unavailable' }));
   });
   req.pipe(proxyReq);
+}
+
+const server = http.createServer((req, res) => {
+  const url = req.url ?? '/';
+
+  if (url === '/health' || url.startsWith('/health?')) {
+    void handleHealth(res);
+    return;
+  }
+
+  const parsed = new URL(url, `http://127.0.0.1:${PORT}`);
+
+  // リング1: 読み取り系 REST を TS がネイティブ応答
+  if (handleNative(req, res, parsed)) {
+    return;
+  }
+
+  // トランスポート前倒し: OAuth → MCP の順にネイティブ処理を試み、
+  // どちらも担当しなければ透過プロキシへ（友達セッションの /mcp を含む）
+  void (async () => {
+    try {
+      if (await handleOAuth(req, res, parsed)) return;
+      if (await handleMcp(req, res, parsed)) return;
+      proxyToUpstream(req, res, url, parsed);
+    } catch {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+      }
+      res.end(JSON.stringify({ error: 'Internal Server Error', code: 500 }));
+    }
+  })();
 });
 
 server.listen(PORT, '127.0.0.1', () => {

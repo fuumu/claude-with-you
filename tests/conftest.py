@@ -103,13 +103,16 @@ def _wait_health(base_url, proc, timeout=30):
 
 
 def _ensure_ts_built():
-    """TS-1 リング0 プロキシ（ts/）をビルドして dist/index.js のパスを返す"""
+    """TS-1 プロキシ（ts/）をビルドして dist/index.js のパスを返す"""
     ts_dir = os.path.join(REPO_ROOT, 'ts')
     dist = os.path.join(ts_dir, 'dist', 'index.js')
-    src = os.path.join(ts_dir, 'src', 'index.ts')
+    src_dir = os.path.join(ts_dir, 'src')
+    src_mtime = max(
+        os.path.getmtime(os.path.join(src_dir, f))
+        for f in os.listdir(src_dir) if f.endswith('.ts'))
     if not os.path.isdir(os.path.join(ts_dir, 'node_modules')):
         subprocess.run('npm install --no-audit --no-fund', shell=True, cwd=ts_dir, check=True)
-    if not os.path.exists(dist) or os.path.getmtime(dist) < os.path.getmtime(src):
+    if not os.path.exists(dist) or os.path.getmtime(dist) < src_mtime:
         subprocess.run('npx tsc', shell=True, cwd=ts_dir, check=True)
     return dist
 
@@ -163,6 +166,8 @@ def server():
                 # リング1〜: TS ネイティブ実装がデータ層・認証を直接扱う
                 'MIO_DATA_ROOT': tmpdir,
                 'MIO_API_TOKEN': TEST_TOKEN,
+                # トランスポート前倒し: OAuth メタデータの issuer 等に使用
+                'MIO_BASE_URL': front_url,
             })
             ts_proc = subprocess.Popen(
                 ['node', dist], env=ts_env,

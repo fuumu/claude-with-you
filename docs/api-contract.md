@@ -163,12 +163,19 @@ response shapes pinned by tests.
 | import-status | `/api/import-status` | Last ZIP import record |
 | friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
 
-## 8. Known uncovered areas (as of TS-0)
+## 8. Known uncovered areas (as of v3.62)
 
 - Friend system (register → approve → activate → friend MCP session)
 - Actual generation by `conversation_digest` / summary batch (local-LLM dependent; only status shapes pinned)
 - `album_save(url=...)` external download / HTML image extraction
-- Full OAuth flow (authorize→token; only discovery pinned)
-- SSE keepalive stream (`GET /mcp`) and legacy `/mcp/sse`
+- Legacy `/mcp/sse` / `/mcp/messages`
 
 Add these before executing TS-1 as needed.
+
+**Covered since v3.62** (tests/test_oauth_mcp_transport.py, 12 tests): the full OAuth
+flow (register → authorize → token → issued token used on REST/MCP; PKCE S256
+verification; rejection of bad verifier / password / grant) and the MCP transport
+(Mcp-Session-Id header on initialize, SSE response for `Accept: text/event-stream`,
+DELETE, GET without SSE accept = 405, parse error, batches, 401 auth).
+Note: v3.62 fixed a main.py bug where initialize never issued the `Mcp-Session-Id`
+header and leaked the internal `_session_id` key — behavior now matches §3.

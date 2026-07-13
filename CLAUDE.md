@@ -55,7 +55,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.61 — 31 regular-session tools):**
+**MCP tools exposed (v3.62 — 31 regular-session tools):**
 
 All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 
@@ -111,7 +111,7 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 Run this after changing main.py. Contract documentation: `docs/api-contract.ja.md` (primary) / `docs/api-contract.md`. Test hooks: `MIO_DATA_ROOT` / `MIO_PORT` env vars (unset = production defaults).
 
-`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/`, ring 0 — see `docs/ts1-migration.ja.md`). Run both modes when touching `ts/` or transport-level code.
+`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/` — see `docs/ts1-migration.ja.md`). As of v3.62 the TS layer natively serves read-only memory REST, OAuth 2.1/DCR, and the MCP transport shell (initialize/ping/notifications/SSE; tools/* forwarded to Python; friend sessions passed through). Run both modes when touching `ts/`, main.py auth/OAuth/MCP-transport code, or anything transport-level.
 
 ## Dependencies
 

@@ -439,7 +439,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.61'
+VERSION = '3.62'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -5129,7 +5129,11 @@ def mcp_streamable():
         return resp
 
     # initializeの場合、新しいSession-Idを発行してヘッダーに付ける
-    new_session_id = result.pop('_session_id', None)
+    # （_session_id は JSON-RPC envelope 内の result に入っている。v3.62 で
+    #   envelope 側を pop していたバグを修正 — ヘッダ未発行＋内部キー漏れの解消）
+    new_session_id = None
+    if isinstance(result.get('result'), dict):
+        new_session_id = result['result'].pop('_session_id', None)
     if new_session_id:
         session_id = new_session_id
         _log_info(f'MCP session created: {session_id[:8]}...')

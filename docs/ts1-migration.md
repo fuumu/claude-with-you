@@ -1,6 +1,6 @@
 # TS-1: TypeScript Migration Plan (Strangler Pattern)
 
-*Written: 2026-07-13 / Rings 0–1 implemented*
+*Written: 2026-07-13 / Rings 0–1 + transport pull-forward (part of rings 4/5) implemented*
 
 ## Approach
 
@@ -14,7 +14,7 @@ reverse proxy in front and move endpoints to TS one at a time** (strangler patte
   is identical whether 0 or 53 endpoints have been migrated)
 - Aborting mid-way costs nothing (remove the proxy and Python-only operation resumes)
 
-## Current state (Rings 0–1, completed 2026-07-13)
+## Current state (Rings 0–1 + transport pull-forward, as of 2026-07-14)
 
 ```
 client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
@@ -23,17 +23,27 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
            ├ GET /api/memory/tags          … TS native
            ├ GET /api/memory/hsearch       … TS native (incl. unified search)
            ├ GET /api/memory/<id>          … TS native
+           ├ /.well-known/oauth-*          … TS native
+           ├ /oauth/{register,authorize,token} … TS native (PKCE, DCR)
+           ├ /mcp transport layer          … TS native (initialize/ping/
+           │    notifications/SSE/sessions/Origin validation; tools/* are
+           │    forwarded to Python as raw JSON-RPC; friend sessions pass
+           │    through entirely)
            └ everything else               … transparently proxied to Python
+                 ※ tokens verified by TS are rewritten to API_TOKEN before
+                   proxying (TS-issued OAuth tokens work on unmigrated endpoints)
 ```
 
 - `ts/src/` — index.ts (router + proxy) / auth.ts (Bearer, ?token=, oauth_store.json) /
   data.ts (read layer over /data/ JSON) / search.ts (hierarchical search,
-  `_hierarchical_search`-compatible)
+  `_hierarchical_search`-compatible) / oauth.ts (OAuth 2.1 + DCR,
+  oauth_store.json-compatible persistence) / mcp.ts (MCP transport layer)
 - Zero dependencies (node:http only); SSE/chunked OK
-- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 53 tests pass**
+- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 65 tests pass**
   (direct mode passes too)
 - Build: `cd ts && npm install && npx tsc` → `node dist/index.js`
-- Env vars: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` / `MIO_API_TOKEN`
+- Env vars: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` /
+  `MIO_API_TOKEN` / `MIO_BASE_URL` / `MIO_ALLOWED_ORIGINS`
 
 **Ring-1 finding**: main.py has many `open()` calls without an explicit encoding —
 utf-8 on Linux (production) but cp932 on local Windows. Tests now pin `PYTHONUTF8=1`
@@ -45,10 +55,11 @@ to match production. The TS implementation is utf-8 fixed (production-compatible
 |---|---|---|
 | 0 | Proxy skeleton + /health | ✅ done (2026-07-13) |
 | 1 | Auth middleware + read-only REST (index/read/tags/hsearch) | ✅ done (2026-07-13) — auth.ts / data.ts / search.ts, unified search included; native-vs-proxy routing verified live via the Werkzeug Server header |
-| 2 | Write REST (write/upsert/patch/delete/reindex) | oplog / index-rebuild compat; exclusive-writer policy (**never both write**) |
+| 4/5 pull-forward | **MCP transport layer + OAuth/DCR** (mcp.ts / oauth.ts) | ✅ done (2026-07-14) — pulled forward because the breaking MCP 2026-07-28 spec (stateless core removing initialize/sessions + OAuth hardening) publishes July 28. tools/* dispatch stays forwarded to Python (migrates in ring 4 proper). Spec adaptation will touch ts/ only |
+| 2 | Write REST (write/upsert/patch/delete/reindex) | oplog / index-rebuild compat; exclusive-writer policy (**never both write**) — oauth_store.json solved this via TS-side writes + token rewrite on proxy; evaluate whether the same pattern applies |
 | 3 | inbox / coremem / conversations REST | symlink version-management compat |
-| 4 | MCP transport (initialize / tools list / call dispatch) | Tools should internally call the REST-equivalent functions |
-| 5 | Import, batch, OAuth, friend system | Batch needs an LLM client (Anthropic SDK / fetch) |
+| 4 | MCP tools/list + tools/call native in TS | Tools should internally call the REST-equivalent functions (transport layer already pulled forward) |
+| 5 | Import, batch, friend system | Batch needs an LLM client (Anthropic SDK / fetch); friend-session /mcp passthrough is also resolved here |
 | 6 | Remove Python; Node-based Dockerfile | Decide after a parallel-run period + full test green |
 
 ## Design commitments

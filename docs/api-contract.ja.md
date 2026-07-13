@@ -155,12 +155,18 @@ python -m venv .venv
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
 | friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |
 
-## 8. 既知の未カバー領域（TS-0 時点）
+## 8. 既知の未カバー領域（v3.62 時点）
 
 - 友達システム（登録→承認→アクティベーション→friend MCP セッション）
 - `conversation_digest` / 要約バッチの実生成（ローカルLLM 依存のため status 系のみ固定）
 - `album_save(url=...)` の外部ダウンロード・HTML画像抽出
-- OAuth フルフロー（authorize→token。ディスカバリのみ固定）
-- SSE keepalive ストリーム（`GET /mcp`）・レガシー `/mcp/sse`
+- レガシー `/mcp/sse` / `/mcp/messages`
 
 これらは TS-1 実施前に必要に応じて追加する。
+
+**v3.62 で追補済み**（tests/test_oauth_mcp_transport.py・12件）: OAuth フルフロー
+（register→authorize→token→発行トークンで REST/MCP。PKCE S256 検証・不正 verifier/
+password/grant の拒否）、MCP トランスポート（initialize の Mcp-Session-Id ヘッダ発行・
+Accept: text/event-stream の SSE 応答・DELETE・GET 405・parse error・バッチ・認証 401）。
+※ v3.62 で main.py の initialize が `Mcp-Session-Id` ヘッダ未発行＋`_session_id`
+内部キー漏れだったバグを修正（§3 の記載どおりの挙動になった）。

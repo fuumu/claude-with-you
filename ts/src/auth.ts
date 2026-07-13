@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import { OAUTH_STORE } from './data.js';
 
-const API_TOKEN = process.env.MIO_API_TOKEN ?? 'changeme';
+export const API_TOKEN = process.env.MIO_API_TOKEN ?? 'changeme';
 
 interface OAuthStore {
   clients?: Record<string, unknown>;
