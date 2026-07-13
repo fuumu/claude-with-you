@@ -1148,7 +1148,10 @@ async function openMemory(id) {
     body.className = 'modal-body md-body';
     body.innerHTML = renderMarkdown(e.body || '');
     setModalId(e.id || id);
-    setModalLinks('');
+    // source_thread があれば元の生ログ（会話）へのリンクを出す
+    setModalLinks(e.source_thread
+      ? `<span class="modal-link" onclick="openConvInLogs('${esc(e.source_thread)}')">📖 生ログを開く</span>`
+      : '');
     openModal();
   } catch {}
 }
