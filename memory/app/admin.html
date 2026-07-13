@@ -677,6 +677,12 @@
     <input type="file" id="file-input" accept=".zip" style="display:none" onchange="handleFile(this.files[0])">
     <button class="btn btn-secondary" onclick="document.getElementById('file-input').click()">ファイルを選択</button>
   </div>
+  <div class="drop-zone" id="code-drop-zone" style="margin-top:1rem">
+    <div class="icon">🛠</div>
+    <p>Claude Code セッションログをここにドロップ（.jsonl 複数可 / .zip）</p>
+    <input type="file" id="code-file-input" accept=".jsonl,.zip" multiple style="display:none" onchange="handleCodeFiles(this.files)">
+    <button class="btn btn-secondary" onclick="document.getElementById('code-file-input').click()">ファイルを選択</button>
+  </div>
   <div style="margin:.75rem 0 0;display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:#7a8a9a">
     <input type="checkbox" id="import-overwrite" style="accent-color:#7ec8e3;cursor:pointer">
     <label for="import-overwrite" style="cursor:pointer">上書きモード（既にインポート済みの会話も再処理する）</label>
@@ -1320,6 +1326,48 @@ dropZone.addEventListener('drop', e => {
   const file = e.dataTransfer.files[0];
   if (file) handleFile(file);
 });
+
+const codeDropZone = document.getElementById('code-drop-zone');
+codeDropZone.addEventListener('dragover',  e => { e.preventDefault(); codeDropZone.classList.add('drag-over'); });
+codeDropZone.addEventListener('dragleave', () => codeDropZone.classList.remove('drag-over'));
+codeDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  codeDropZone.classList.remove('drag-over');
+  handleCodeFiles(e.dataTransfer.files);
+});
+
+// Claude Code セッションログ取り込み（.jsonl 複数可 / .zip → POST /api/import/claude-code）
+async function handleCodeFiles(files) {
+  const list = [...(files || [])].filter(f => /\.(jsonl|zip)$/i.test(f.name));
+  if (!list.length) {
+    showResult('<span class="result-err">.jsonl または .zip を選択してください</span>');
+    return;
+  }
+  const overwrite = document.getElementById('import-overwrite')?.checked ? 'true' : 'false';
+  let imported = 0, skipped = 0, errors = 0, linked = 0;
+  for (let i = 0; i < list.length; i++) {
+    showResult(`<span class="spinner"></span>Codeログ取り込み中... (${i + 1}/${list.length})`);
+    const form = new FormData();
+    form.append('file', list[i]);
+    form.append('overwrite', overwrite);
+    try {
+      const res  = await apiFetch('/api/import/claude-code', { method: 'POST', body: form });
+      const d = await res.json();
+      imported += d.imported || 0;
+      skipped  += d.skipped  || 0;
+      errors   += d.errors   || 0;
+      linked   += d.source_threads_linked || 0;
+    } catch(e) {
+      errors++;
+      if (e.message === '401') return;
+      console.error('handleCodeFiles', list[i].name, e);
+    }
+  }
+  const cls = errors ? 'result-err' : 'result-ok';
+  showResult(`<span class="${cls}">✓ Code: imported ${imported}件 / skipped ${skipped}件 / errors ${errors}件 / 紐づけ ${linked}件</span>`);
+  document.getElementById('code-file-input').value = '';
+  setTimeout(pollBatchStatus, 1500);
+}
 
 async function handleFile(file) {
   if (!file || !file.name.toLowerCase().endsWith('.zip')) {

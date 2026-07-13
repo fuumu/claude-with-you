@@ -1206,6 +1206,18 @@ backward compatible); when true, conversation-title search results are returned 
 - Titles only (body search would require reading every conversation file and is too
   heavy; for body-level digging, use `conversation_search` → `conversation_read` as before)
 
+## 22. admin.html Import tab: Claude Code log import UI
+
+v3.54's `POST /api/import/claude-code` was REST-only, so the admin.html Import tab
+gains a dedicated drop zone.
+
+- A second drop zone (🛠) for Code logs sits below the existing claude.ai-export-ZIP zone
+- Supports multi-select `.jsonl` (posted sequentially, one per request) and a single `.zip`
+- The "overwrite mode" checkbox is shared by both drop zones
+- The result line aggregates imported / skipped / errors / linked (source_threads_linked)
+- After import, the existing summary-batch progress panel is polled (the auto-started
+  batch becomes visible)
+
 ### admin.html Memory tab: link to the raw log
 
 The memory-entry detail modal shows a "📖 open raw log" link when `source_thread` is
