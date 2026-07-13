@@ -1,4 +1,4 @@
-# protocol_guide.md — MCP tool operating guide (mio-memory v3.60 / 31 tools)
+# protocol_guide.md — MCP tool operating guide (mio-memory v3.61 / 31 tools)
 
 *A reference a new session can read in one pass to learn how the MCP tools work.*
 *This file is install-agnostic (the tool mechanics are common to every mio-memory). For environment-specific startup rules / naming, see `core_rules.md`.*
@@ -74,7 +74,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 **`memory_upsert`** — `id` (req) · `title` (req) · `body` (req). Overwrite by fixed id (create if absent). Cost = **med**.
 
-**`memory_search`** — `q` (req) · `limit` (def 10, 0=unlimited) · `offset` · `full_body` · `include_local` · `include_adult`. **Hierarchical**: stage 1 = index (title+tags+keywords+layer-3 symbolic) → stage 2 = summary → stage 3 = full text. Returns `summary` + `symbolic`, each hit with `match_layer` (keyword/symbolic/summary/full). For full text use `full_body=true` or `memory_read`. `local_only` / `adult` excluded by default (v3.56). **light–med**.
+**`memory_search`** — `q` (req) · `limit` (def 10, 0=unlimited) · `offset` · `full_body` · `include_local` · `include_adult` · `include_conversations`. **Hierarchical**: stage 1 = index (title+tags+keywords+layer-3 symbolic) → stage 2 = summary → stage 3 = full text. Returns `summary` + `symbolic`, each hit with `match_layer` (keyword/symbolic/summary/full). For full text use `full_body=true` or `memory_read`. `local_only` / `adult` excluded by default (v3.56). `include_conversations=true` also searches conversation titles and returns `conversations[]` (unified search, v3.61). **light–med**.
 
 **`memory_share`** — `id` (req). 24h share URL. **light**.
 

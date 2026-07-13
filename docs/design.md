@@ -1184,6 +1184,28 @@ Implementation is just an added argument on `_mark_inbox_read(msg_id, peek=False
   link lacked the token and returned 401; both now use `?token=` query URLs
   (leveraging `_extract_bearer`'s query fallback)
 
+## 21. Unified search (v3.61)
+
+### Design
+
+Removes the need to query memories (ExtMemory) and conversation logs (LogStore) with two
+separate tools for explorations like "what did we decide about auth?" (proposed 2026-06-20).
+`memory_search` / `GET /api/memory/hsearch` gain `include_conversations` (default false,
+backward compatible); when true, conversation-title search results are returned alongside.
+
+### Behavior
+
+- The existing hierarchical memory search is unchanged. Additionally, each conversation
+  title from `_load_conv_index()` is tested with the same AND matching
+  (`_query_terms` / `_all_terms_in`)
+- Matching conversations are sorted by `updated_at` descending and returned as
+  `conversations[]` (uuid, title, created_at, updated_at, message_count), capped at
+  `limit`; the full count is `conversations_total`
+- `rating=adult` conversations are included only with `include_adult=true`
+  (consistent with the v3.56 rating protection)
+- Titles only (body search would require reading every conversation file and is too
+  heavy; for body-level digging, use `conversation_search` → `conversation_read` as before)
+
 ### admin.html Memory tab: link to the raw log
 
 The memory-entry detail modal shows a "📖 open raw log" link when `source_thread` is

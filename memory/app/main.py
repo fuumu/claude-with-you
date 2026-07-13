@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.61 (2026-07-13) - 統合検索（memory_search include_conversations）
+    - memory_search / GET /api/memory/hsearch に include_conversations 引数追加
+      （デフォルトfalse・後方互換）。trueで会話ログのタイトルもAND判定で検索し、
+      conversations[]（uuid・title・日付・message_count）と conversations_total を併せて返す
+    - rating=adult の会話は include_adult=true のときのみ含める（レーティング保護と整合）
+    - 記憶と会話ログの一発検索（統合検索・淳さん提案 2026-06-20 の実装）
   v3.60 (2026-07-13) - インポート改善＋inbox peek＋Uploadsタブ強化
     - バグ修正: サマリー増殖の根本修正 — _existing_source_threads が index.json を参照して
       いたため常に空集合となり、v3.57 の重複チェックが機能していなかった。
@@ -433,7 +439,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.60'
+VERSION = '3.61'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -1203,7 +1209,8 @@ def api_memory_hsearch():
     return jsonify(_hierarchical_search(
         q, limit=limit, offset=offset, full_body=False,
         include_local=request.args.get('include_local') == 'true',
-        include_adult=request.args.get('include_adult') == 'true'))
+        include_adult=request.args.get('include_adult') == 'true',
+        include_conversations=request.args.get('include_conversations') == 'true'))
 
 @app.route('/api/memory/tags')
 @require_auth
@@ -2851,10 +2858,13 @@ def _rating_excluded(e, include_local: bool, include_adult: bool) -> bool:
 
 
 def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False,
-                         include_local: bool = False, include_adult: bool = False) -> dict:
+                         include_local: bool = False, include_adult: bool = False,
+                         include_conversations: bool = False) -> dict:
     """階層検索（1次:インデックス title+tags+keywords+3層symbolic → 2次:2層要約 → 3次:全文）。
     MCP memory_search と REST /api/memory/hsearch の共通実装。
-    クエリはスペース区切りで分割し各語をAND判定する（単語1つなら従来の部分一致と同じ）"""
+    クエリはスペース区切りで分割し各語をAND判定する（単語1つなら従来の部分一致と同じ）。
+    include_conversations=True で会話ログのタイトル検索結果も conversations[] として併せて返す
+    （統合検索・v3.61。rating=adult の会話は include_adult=True のときのみ含める）"""
     terms = _query_terms(q)
     index = []
     if os.path.exists(INDEX_FILE):
@@ -2925,7 +2935,20 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
         if full_body:
             item['body'] = entry.get('body', '')
         results.append(item)
-    return {"results": results, "total": total, "has_more": (offset + len(sliced)) < total}
+    result = {"results": results, "total": total, "has_more": (offset + len(sliced)) < total}
+
+    # 統合検索（v3.61）: 会話ログのタイトルもAND判定で検索して併せて返す
+    if include_conversations:
+        conv_hits = []
+        for m in _load_conv_index():
+            if m.get('rating') == 'adult' and not include_adult:
+                continue
+            if _all_terms_in(terms, str(m.get('title') or '').lower()):
+                conv_hits.append(m)
+        conv_hits.sort(key=lambda m: m.get('updated_at') or m.get('created_at', ''), reverse=True)
+        result['conversations_total'] = len(conv_hits)
+        result['conversations'] = conv_hits[:limit] if limit > 0 else conv_hits
+    return result
 
 
 def _parse_keywords_line(line: str) -> list:
@@ -4049,14 +4072,15 @@ _MCP_TOOLS = [
     },
     {
         "name": "memory_search",
-        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定。local_only / rating=adult のエントリはデフォルト除外",
+        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定。local_only / rating=adult のエントリはデフォルト除外。include_conversations=trueで会話ログのタイトル検索結果も conversations[] で併せて返す（統合検索・v3.61）",
         "inputSchema": {"type": "object", "properties": {
             "q":         {"type": "string", "description": "検索キーワード"},
             "limit":     {"type": "integer", "description": "最大取得件数（デフォルト10、0=無制限）"},
             "offset":    {"type": "integer", "description": "スキップ件数（デフォルト0）"},
             "full_body": {"type": "boolean", "description": "trueで従来どおりbody全文も返す（デフォルトfalse=要約のみ）"},
             "include_local": {"type": "boolean", "description": "trueで local_only エントリも検索対象に含める（デフォルトfalse・v3.56）"},
-            "include_adult": {"type": "boolean", "description": "trueで rating=adult エントリも検索対象に含める（デフォルトfalse・v3.56）"}
+            "include_adult": {"type": "boolean", "description": "trueで rating=adult エントリも検索対象に含める（デフォルトfalse・v3.56）"},
+            "include_conversations": {"type": "boolean", "description": "trueで会話ログもタイトル検索して conversations[]（uuid・title・日付・件数）を併せて返す（デフォルトfalse・v3.61）。adult会話は include_adult=true のときのみ含む"}
         }, "required": ["q"]}
     },
     {
@@ -4426,6 +4450,7 @@ def _handle_tool_call_raw(name, arguments):
                 full_body=bool(arguments.get("full_body", False)),
                 include_local=bool(arguments.get("include_local", False)),
                 include_adult=bool(arguments.get("include_adult", False)),
+                include_conversations=bool(arguments.get("include_conversations", False)),
             )
         except Exception as exc:
             import traceback

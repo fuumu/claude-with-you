@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.60","mcp_tool_count":31}
+# {"status":"ok","version":"3.61","mcp_tool_count":31}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -189,7 +189,7 @@ Claude calls these tools directly. All responses include `server_time` (JST) and
 | `memory_read` | Read one entry by ID | `id` |
 | `memory_write` | Create a new entry | `title`, `body`, `tags`, `importance` |
 | `memory_upsert` | Overwrite a fixed-ID entry | `id`, `title`, `body` |
-| `memory_search` | Hierarchical search (index keywords + layer-3 symbolic → summary → full text); returns `summary` + `match_layer` (keyword/symbolic/summary/full) per hit; multi-word queries are AND-matched (split on half/full-width spaces, v3.48) | `q`, `limit` (default 10), `offset`, `full_body` |
+| `memory_search` | Hierarchical search (index keywords + layer-3 symbolic → summary → full text); returns `summary` + `match_layer` (keyword/symbolic/summary/full) per hit; multi-word queries are AND-matched (split on half/full-width spaces, v3.48); `include_conversations=true` also searches conversation titles and returns `conversations[]` + `conversations_total` (unified search, v3.61; adult conversations only with `include_adult=true`) | `q`, `limit` (default 10), `offset`, `full_body`, `include_conversations` |
 | `memory_share` | Generate 24h shareable URL | `id` |
 
 **Example — Claude saves a decision:**
@@ -592,6 +592,7 @@ claude-with-you/
 - Inbox improvements + bug fixes (v3.57) — `inbox_check` gains `limit`/`days`/`from_model`/`to_model` filters (reduce load on local LLMs, fetch only messages for a specific model). `inbox_post` now accepts `from_model`/`to_model` as string or array (e.g. `["claude-opus-4-6", "しずく"]`). New MCP tools: `inbox_update` (partial update) and `inbox_delete` (physical delete, irreversible) — tool count 25→27. `CoreMem_list` excludes `__del__`-prefixed files. ZIP import adds source_thread-based dedup (prevents summary entry duplication). REST `/api/memory/index` now excludes deleted entries (fixes admin.html initial load)
 - MCP request logging + instructions + file uploader (v3.59) — Structured access logging on `/mcp` (M-PC1 triage). MCP `initialize` instructions expanded with concrete usage descriptions (tool_search). General-purpose file uploader (F5): `file_upload` / `file_read` / `file_list` / `file_delete` — 4 new MCP tools (tool count 27→31). Stores any file type (PDF, text, etc.) in `/data/uploads/`. REST `POST/GET/DELETE /api/uploads/`. admin.html Uploads tab added
 - Import improvements + inbox peek + Uploads tab (v3.60) — ① Root fix for the summary-duplication bug: the dedup helper `_existing_source_threads` read index.json (which never carries `source_thread`) and always returned an empty set; it now scans entry files directly, so re-imports no longer create duplicate entries even when `imported_uuids.json` is missing ② Automatic `source_thread` linking on import: scans conversation bodies for the `memory_id:` pattern (reliable) plus timestamp-range matching (only when exactly one candidate conversation matches, supplementary) to fill empty `source_thread` fields with the conversation UUID; never overwrites existing values; applies to both ZIP and claude-code imports; responses gain `source_threads_linked` ③ `inbox_read` gains a `peek` argument (true = read without marking as read, for inspecting messages addressed to other agents) ④ admin.html Uploads tab enhancements (F6): text-file preview, image thumbnails, authenticated download links on every file (the previous link lacked the token and returned 401) ⑤ admin.html Memory tab: detail modal gains a "📖 open raw log" link (jumps to the conversation in the Logs tab when source_thread is set; paired with ②'s backfill, tracing a summary back to its raw log is one click)
+- Unified search (v3.61) — `memory_search` / REST `hsearch` gain `include_conversations` (default false, backward compatible). When true, conversation titles are searched with the same AND matching and returned as `conversations[]` (uuid, title, dates, message_count) plus `conversations_total`. One-shot search across memories and conversation logs (implements the 2026-06-20 proposal). Adult-rated conversations are included only with `include_adult=true`
 
 ---
 
