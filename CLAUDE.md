@@ -100,6 +100,17 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 - Public pages: `/register` (registration form + invitation text from CoreMem `friend_invitation.md`), `/activate` (activation code entry)
 - `last_seen` timestamp recorded on each friend MCP request
 
+## Tests (TS-0)
+
+`tests/` holds a characterization test suite (pytest, black-box over HTTP — never imports main.py internals). conftest launches the server on a temp data dir + random port, so it never touches real data.
+
+```powershell
+# First time: python -m venv .venv && .venv/Scripts/python -m pip install flask pytest requests pillow
+.venv/Scripts/python -m pytest tests/ -q
+```
+
+Run this after changing main.py. Contract documentation: `docs/api-contract.ja.md` (primary) / `docs/api-contract.md`. Test hooks: `MIO_DATA_ROOT` / `MIO_PORT` env vars (unset = production defaults).
+
 ## Dependencies
 
 Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is installed via `pip install anthropic` at build time (requires internet — see `Dockerfile`). To add another package, download its wheel (and all transitive deps) into `memory/wheels/` and add it to `requirements.txt`.

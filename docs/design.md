@@ -1184,6 +1184,41 @@ Implementation is just an added argument on `_mark_inbox_read(msg_id, peek=False
   link lacked the token and returned 401; both now use `?token=` query URLs
   (leveraging `_extract_bearer`'s query fallback)
 
+## 20.5. TS-0: API contract documentation + characterization test suite (2026-07-13)
+
+The prerequisite for TS-1 (TypeScript migration, strangler pattern): pinning current
+behavior. Valuable on its own as a regression suite.
+
+### Design
+
+- **Black-box over HTTP** — tests never import main.py internals; they hit REST and
+  MCP JSON-RPC and assert response shapes. Swapping the server implementation (even a
+  TS port) only requires changing the launch command in conftest, and the whole suite
+  becomes the "same server" acceptance criterion
+- **Never touches existing environments** — conftest launches the server as a
+  subprocess on a temp data dir + free port per test session; this is not meant to run
+  against the production NAS
+- Env vars inject an unreachable LMStudio address so the summary batch cannot contact
+  a real one during tests
+
+### Test hooks (backward-compatible core changes)
+
+| Change | Description |
+|---|---|
+| `MIO_DATA_ROOT` | All previously hard-coded `/data` path constants now derive from one variable (default `/data`, production unchanged) |
+| `MIO_PORT` | Listen port (default `5002`, production unchanged) |
+| Symlink copy fallback | The CoreMem latest-version link (`_link_or_copy_latest`) falls back to a file copy on symlink-less environments (unprivileged Windows). `_artifacts_list` also accepts non-link regular files, deriving the version from versions/. Linux production keeps using symlinks |
+
+### Coverage (53 tests)
+
+Auth (Bearer/query/401), OAuth discovery, MCP transport (initialize / 31-tool list /
+notification 202 / unknown method -32601), 6 ExtMemory tools + REST CRUD, rating
+protection, 4 CoreMem tools (versioning, append, manifest merge, `__del__` exclusion,
+rename), 5 inbox tools (incl. peek), import (ZIP/claude-code, dedup, resilience to
+missing imported_uuids, source_thread auto-linking, no-overwrite), conversations
+(search/index/read slicing/annotations/rating gate), Uploads/Album REST, batch status,
+export/reindex. Uncovered areas are listed in docs/api-contract.md §8.
+
 ## 21. Unified search (v3.61)
 
 ### Design

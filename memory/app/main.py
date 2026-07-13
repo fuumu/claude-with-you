@@ -441,23 +441,26 @@ app = Flask(__name__)
 
 VERSION = '3.61'
 
-DATA_DIR      = '/data/memory'
-INDEX_FILE    = '/data/index.json'
-OPLOG_FILE    = '/data/oplog.json'
-ARTIFACTS_DIR = '/data/artifacts'
-IMPORT_LOG         = '/data/imported_uuids.json'
-IMPORT_STATUS_FILE = '/data/.import_status.json'
-SHARE_TOKENS_FILE  = '/data/share_tokens.json'
-CONVERSATIONS_DIR  = '/data/conversations'
-CONV_ARTIFACTS_DIR = '/data/conv_artifacts'
-ANNOTATIONS_DIR    = '/data/annotations'
-INBOX_DIR          = '/data/inbox'
-ALBUM_DIR          = '/data/album'
-UPLOADS_DIR        = '/data/uploads'
-ARTIFACTS_META_FILE = '/data/artifacts/_meta.json'
-FRIENDS_DIR            = '/data/friends'
-FRIENDS_REGISTRY_FILE  = '/data/friends/registry.json'
-FRIEND_CORE_FILE       = '/data/friend_core.md'
+# データルート。運用は常にデフォルト /data（docker マウント）。
+# MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
+DATA_ROOT     = os.environ.get('MIO_DATA_ROOT', '/data')
+DATA_DIR      = f'{DATA_ROOT}/memory'
+INDEX_FILE    = f'{DATA_ROOT}/index.json'
+OPLOG_FILE    = f'{DATA_ROOT}/oplog.json'
+ARTIFACTS_DIR = f'{DATA_ROOT}/artifacts'
+IMPORT_LOG         = f'{DATA_ROOT}/imported_uuids.json'
+IMPORT_STATUS_FILE = f'{DATA_ROOT}/.import_status.json'
+SHARE_TOKENS_FILE  = f'{DATA_ROOT}/share_tokens.json'
+CONVERSATIONS_DIR  = f'{DATA_ROOT}/conversations'
+CONV_ARTIFACTS_DIR = f'{DATA_ROOT}/conv_artifacts'
+ANNOTATIONS_DIR    = f'{DATA_ROOT}/annotations'
+INBOX_DIR          = f'{DATA_ROOT}/inbox'
+ALBUM_DIR          = f'{DATA_ROOT}/album'
+UPLOADS_DIR        = f'{DATA_ROOT}/uploads'
+ARTIFACTS_META_FILE = f'{DATA_ROOT}/artifacts/_meta.json'
+FRIENDS_DIR            = f'{DATA_ROOT}/friends'
+FRIENDS_REGISTRY_FILE  = f'{DATA_ROOT}/friends/registry.json'
+FRIEND_CORE_FILE       = f'{DATA_ROOT}/friend_core.md'
 # 新規インストール用スケルトン（docker: /app/skeleton, repo: memory/skeleton）
 _APP_DIR    = os.path.dirname(os.path.abspath(__file__))
 _SKEL_BASES = [
@@ -560,7 +563,7 @@ def _check_origin(req) -> bool:
     return allowed
 
 # ── OAuth ストア（/data/oauth_store.json に永続化）───────────────────
-OAUTH_STORE = '/data/oauth_store.json'
+OAUTH_STORE = f'{DATA_ROOT}/oauth_store.json'
 
 def _load_oauth_store():
     if os.path.exists(OAUTH_STORE):
@@ -707,6 +710,18 @@ def _validate_artifact_name(name: str) -> bool:
     norm = os.path.normpath(name)
     return not (norm.startswith('..') or os.path.isabs(norm))
 
+def _link_or_copy_latest(rel_target: str, symlink_path: str):
+    """最新バージョンへのトップレベルリンクを張る。symlink 非対応環境
+    （特権なし Windows でのローカルテスト等）ではファイルコピーにフォールバックする。
+    読み出しはどちらもトップレベルパスの open で成立する"""
+    try:
+        os.symlink(rel_target, symlink_path)
+    except (OSError, NotImplementedError):
+        src = rel_target if os.path.isabs(rel_target) \
+            else os.path.join(os.path.dirname(symlink_path), rel_target)
+        shutil.copyfile(src, symlink_path)
+
+
 def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None, mode: str = "overwrite") -> dict:
     name_slug = _name_slug(name)
     ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
@@ -737,7 +752,7 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
     rel_target = os.path.join('versions', name_slug, version_filename)
     if os.path.islink(symlink_path) or os.path.exists(symlink_path):
         os.remove(symlink_path)
-    os.symlink(rel_target, symlink_path)
+    _link_or_copy_latest(rel_target, symlink_path)
 
     # source_conversation_uuid をメタデータに保存
     if source_conversation_uuid:
@@ -823,7 +838,8 @@ def _artifacts_list() -> list:
     items = []
     for entry in sorted(os.listdir(ARTIFACTS_DIR)):
         full_path = os.path.join(ARTIFACTS_DIR, entry)
-        if not os.path.islink(full_path):
+        # versions/ ディレクトリとメタデータは対象外
+        if os.path.isdir(full_path) or entry == '_meta.json':
             continue
         # 壊れたシンボリックリンクをスキップ
         if not os.path.exists(full_path):
@@ -831,8 +847,14 @@ def _artifacts_list() -> list:
         # __del__ プレフィックスのファイルは一覧から除外（v3.57）
         if entry.startswith('__del__'):
             continue
-        target = os.readlink(full_path)
-        version_str = os.path.splitext(os.path.basename(target))[0]
+        if os.path.islink(full_path):
+            target = os.readlink(full_path)
+            version_str = os.path.splitext(os.path.basename(target))[0]
+        else:
+            # symlink 非対応環境（コピーフォールバック）: versions/ から最新番号を導出
+            vs = sorted(glob.glob(os.path.join(
+                ARTIFACTS_DIR, 'versions', _name_slug(entry), f'*{os.path.splitext(entry)[1]}')))
+            version_str = os.path.splitext(os.path.basename(vs[-1]))[0] if vs else ''
         try:
             version = int(version_str)
         except ValueError:
@@ -4513,12 +4535,12 @@ def _handle_tool_call_raw(name, arguments):
                                 os.path.join(dst_vdir, fname),
                                 os.path.join(dst_vdir, fname[:-len(src_ext)] + dst_ext)
                             )
-            if os.path.islink(src_sym):
+            if os.path.islink(src_sym) or os.path.isfile(src_sym):
                 os.remove(src_sym)
             if os.path.isdir(dst_vdir):
                 existing = sorted(glob.glob(os.path.join(dst_vdir, f'*{dst_ext}')))
                 if existing:
-                    os.symlink(existing[-1], dst_sym)
+                    _link_or_copy_latest(existing[-1], dst_sym)
             _log_info(f'CoreMem_rename via MCP: {src} → {dst}')
             return {"renamed": True, "src": src, "dst": dst, "server_time": now_jst()}
 
@@ -5242,4 +5264,5 @@ if __name__ == '__main__':
     _log_info(f'base_url={BASE_URL}')
     threading.Thread(target=_nightly_batch_loop, daemon=True).start()
     _log_info(f'nightly batch scheduler: hour={os.environ.get("MIO_NIGHTLY_BATCH_HOUR", "3")} backend={os.environ.get("MIO_NIGHTLY_BATCH_BACKEND", "lmstudio")}')
-    app.run(host='0.0.0.0', port=5002, debug=False)
+    # MIO_PORT はローカル特性テスト用フック（運用はデフォルト 5002 のまま）
+    app.run(host='0.0.0.0', port=int(os.environ.get('MIO_PORT', '5002')), debug=False)
