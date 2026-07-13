@@ -19,6 +19,7 @@ import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
 import { handleMcp } from './mcp.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
+import { createEntry, deleteEntry, reindexAll, updateEntry } from './write.js';
 
 const PORT = parseInt(process.env.MIO_PORT ?? '5003', 10);
 const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
@@ -141,6 +142,85 @@ function handleNative(req: http.IncomingMessage, res: http.ServerResponse, url: 
   return true;
 }
 
+function readRequestBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+const ENTRY_RESERVED = new Set(['index', 'tags', 'hsearch', 'search', 'reindex']);
+
+/** リング2: 書き込み系 REST のネイティブ実装。担当ルートなら true を返す */
+async function handleWriteNative(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+): Promise<boolean> {
+  const p = url.pathname;
+  const method = req.method ?? '';
+  const isCreate = p === '/api/memory' && method === 'POST';
+  const isReindex = p === '/api/memory/reindex' && method === 'POST';
+  const entryMatch = /^\/api\/memory\/([^/]+)$/.exec(p);
+  const isEntryWrite =
+    !!entryMatch &&
+    !ENTRY_RESERVED.has(entryMatch[1]) &&
+    (method === 'PATCH' || method === 'DELETE');
+  if (!isCreate && !isReindex && !isEntryWrite) return false;
+
+  if (!verifyToken(extractBearer(req, url))) {
+    sendJson(res, 401, { error: 'unauthorized' });
+    return true;
+  }
+
+  if (isReindex) {
+    sendJson(res, 200, { status: 'reindexed', count: reindexAll() });
+    return true;
+  }
+
+  if (isCreate) {
+    let data: Record<string, unknown> | null = null;
+    try {
+      data = JSON.parse(await readRequestBody(req)) as Record<string, unknown>;
+    } catch {
+      data = null;
+    }
+    const entry = data ? createEntry(data) : null;
+    if (entry === null) {
+      sendJson(res, 400, { error: 'Bad Request', code: 400 });
+    } else {
+      sendJson(res, 201, entry);
+    }
+    return true;
+  }
+
+  // PATCH / DELETE /api/memory/<id>
+  const id = decodeURIComponent(entryMatch![1]);
+  if (method === 'DELETE') {
+    if (deleteEntry(id)) {
+      sendJson(res, 200, { status: 'deleted', id });
+    } else {
+      sendJson(res, 404, { error: 'not found' });
+    }
+    return true;
+  }
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(await readRequestBody(req)) as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
+  const updated = updateEntry(id, data);
+  if (updated === null) {
+    sendJson(res, 404, { error: 'not found' });
+  } else {
+    sendJson(res, 200, updated);
+  }
+  return true;
+}
+
 /** 透過プロキシ（ヘッダ・ボディ・ステータスをそのまま中継。SSE も pipe で流れる） */
 function proxyToUpstream(req: http.IncomingMessage, res: http.ServerResponse, url: string, parsed: URL): void {
   const headers: http.IncomingHttpHeaders = { ...req.headers, host: `${UPSTREAM_HOST}:${UPSTREAM_PORT}` };
@@ -193,10 +273,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // トランスポート前倒し: OAuth → MCP の順にネイティブ処理を試み、
-  // どちらも担当しなければ透過プロキシへ（友達セッションの /mcp を含む）
+  // リング2（書き込み系REST）→ OAuth → MCP の順にネイティブ処理を試み、
+  // どれも担当しなければ透過プロキシへ（友達セッションの /mcp を含む）
   void (async () => {
     try {
+      if (await handleWriteNative(req, res, parsed)) return;
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
       proxyToUpstream(req, res, url, parsed);

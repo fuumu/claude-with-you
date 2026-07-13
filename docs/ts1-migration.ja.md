@@ -1,6 +1,6 @@
 # TS-1: TypeScript 移行計画（ストラングラー方式）
 
-*作成: 2026-07-13 / リング0・リング1・トランスポート前倒し（リング4/5の一部）実装済み*
+*作成: 2026-07-13 / リング0・1・2・トランスポート前倒し（リング4/5の一部）実装済み*
 
 ## 方針
 
@@ -13,15 +13,15 @@ main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScrip
   0本でも53本でも外部挙動は同じ）
 - 途中で中止しても損失なし（プロキシを外せば Python 単体運用に即戻る）
 
-## 現状（リング0＋リング1＋トランスポート前倒し・2026-07-14 時点）
+## 現状（リング0＋1＋2＋トランスポート前倒し・2026-07-14 時点）
 
 ```
 クライアント → [ts/ TypeScript サーバー] → [memory/app/main.py (Flask)]
                  ├ /health                          … TS ネイティブ
-                 ├ GET /api/memory/index            … TS ネイティブ
-                 ├ GET /api/memory/tags             … TS ネイティブ
-                 ├ GET /api/memory/hsearch          … TS ネイティブ（統合検索含む）
-                 ├ GET /api/memory/<id>             … TS ネイティブ
+                 ├ GET /api/memory/{index,tags,hsearch,<id>} … TS ネイティブ
+                 ├ POST /api/memory                 … TS ネイティブ（作成・ID採番）
+                 ├ PATCH/DELETE /api/memory/<id>    … TS ネイティブ（部分更新・論理削除）
+                 ├ POST /api/memory/reindex         … TS ネイティブ（index.json 再構築）
                  ├ /.well-known/oauth-*             … TS ネイティブ
                  ├ /oauth/{register,authorize,token} … TS ネイティブ（PKCE・DCR）
                  ├ /mcp トランスポート層             … TS ネイティブ（initialize/ping/
@@ -33,13 +33,20 @@ main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScrip
 ```
 
 - `ts/src/` — index.ts（ルーター＋プロキシ）/ auth.ts（Bearer・?token=・oauth_store.json）/
-  data.ts（/data/ JSON 読み取り層）/ search.ts（階層検索・_hierarchical_search 互換）/
+  data.ts（/data/ JSON 読み取り層）/ write.ts（作成・更新・削除・oplog・index再構築）/
+  search.ts（階層検索・_hierarchical_search 互換）/
   oauth.ts（OAuth 2.1+DCR・oauth_store.json 互換永続化）/ mcp.ts（MCPトランスポート層）
 - 依存ゼロ（node:http のみ）。SSE・チャンク対応
 - `MIO_TS1=1 pytest tests/` で二段構成起動 → **65件全パス確認済み**（直接モードも全パス）
 - ビルド: `cd ts && npm install && npx tsc` → `node dist/index.js`
 - 環境変数: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` /
   `MIO_API_TOKEN` / `MIO_BASE_URL` / `MIO_ALLOWED_ORIGINS`
+
+**リング2で得た知見**: Windows ローカルでは Python のテキストモード書き込みが
+`\n` → `\r\n` 変換するため、index.json 等が CRLF になる（本番 Linux は LF）。
+TS は常に LF（本番互換）。実機検証で「TS 再構築と Python 再構築の index.json は
+改行正規化後にバイト一致」を確認済み — 本番では正規化不要で完全一致する。
+oplog（create/update/delete・diff.before/after・author）も形式互換を確認済み。
 
 **リング1で得た知見**: main.py は `encoding` 指定なしの `open()` が多く、Linux（本番）では
 utf-8、Windows ローカルでは cp932 になる。テストは `PYTHONUTF8=1` で本番と同条件に固定した。
@@ -52,7 +59,7 @@ TS 実装は utf-8 固定（本番互換）。
 | 0 | プロキシ骨格＋/health | ✅ 完了（2026-07-13） |
 | 1 | 認証ミドルウェア＋読み取り系REST（index/read/tags/hsearch） | ✅ 完了（2026-07-13）— auth.ts / data.ts / search.ts。統合検索含む。Werkzeugヘッダ有無でネイティブ/プロキシ振り分けを実機検証済み |
 | 4/5前倒し | **MCPトランスポート層＋OAuth/DCR**（mcp.ts / oauth.ts） | ✅ 完了（2026-07-14）— MCP 2026-07-28 破壊的仕様（initialize廃止・ステートレス化・OAuth強化）の7/28公開確定を受け前倒し。tools/* ディスパッチは Python 転送のまま（リング4本体で移行）。新仕様対応時は ts/ のみ改修 |
-| 2 | 書き込み系REST（write/upsert/patch/delete/reindex） | oplog・index再構築の互換。**Python と同時書き込みしない**排他方針（oauth_store.json は TS 側書き込み＋プロキシ時トークン書き換えで解決済み — 同パターンが使えるか要検討） |
+| 2 | 書き込み系REST（create/patch/delete/reindex） | ✅ 完了（2026-07-14）— write.ts。ID採番（JST・タグslug）・oplog・index再構築とも Python 互換を実機検証（改行正規化後バイト一致）。テスト構成では REST 書き込み=TS・MCP 経由の書き込み=Python（転送先）が共存するが、両者同一アルゴリズムのため index/oplog は収束する |
 | 3 | inbox / coremem / conversations REST | symlink 版管理の互換 |
 | 4 | MCP tools/list・tools/call の TS ネイティブ化 | ツール実装は内部で REST 相当関数を呼ぶ構造に（トランスポート層は前倒し済み） |
 | 5 | インポート・バッチ・友達システム | バッチは要 LLM クライアント（Anthropic SDK / fetch）。友達セッションの /mcp 透過も此処で解消 |
