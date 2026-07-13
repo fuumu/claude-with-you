@@ -1130,3 +1130,49 @@ ID形式: `YYYYMMDD_HHMMSS_<filename先頭30文字>`
 ### admin.html
 
 Uploadsタブを追加。カード形式の一覧表示、アップロードパネル（複数ファイル対応）、詳細モーダル（ダウンロード・削除）。
+
+## 20. インポート改善＋inbox peek＋Uploadsタブ強化（v3.60）
+
+### サマリー増殖バグの根本修正
+
+v3.57 で追加した source_thread ベースの重複チェック（`_existing_source_threads`）は
+index.json を参照していたが、`rebuild_index()` は index に `source_thread` を含めないため、
+常に空集合を返し重複チェックが機能していなかった。
+
+v3.60 でエントリファイル（`/data/memory/*.json`）の直接走査に変更。
+`imported_uuids.json` が欠けた・リセットされた環境でも、同一会話の再インポートが
+重複 raw エントリを作らなくなり、要約バッチによる同一サマリーの増殖が止まる。
+
+### ExtMemory source_thread 自動紐づけ（`_link_source_threads`）
+
+インポート処理（ZIP / claude-code 共通）の会話保存後に実行される紐づけパス。
+`source_thread` が空の生存エントリだけを対象に、次の2段階でインポート会話のUUIDを設定する：
+
+1. **memory_id パターン走査（確実）** — 会話本文から `memory_id: <ID>` 表記
+   （core_rules.md ② の記載規則。`：` 全角コロン・引用符・かぎ括弧も許容）を正規表現で抽出し、
+   該当エントリに会話UUIDを設定
+2. **タイムスタンプ照合（補助）** — エントリの `created_at` が、インポートした会話の
+   `created_at`〜`updated_at` 範囲に**ちょうど1件だけ**収まる場合のみ紐づける
+   （複数候補・候補なしはスキップ。誤紐づけ防止）
+
+- 既に `source_thread` が埋まっているエントリは対象外（上書きしない）
+- 紐づけは oplog に `link_source_thread` として記録（before/after + method）
+- インポートAPIレスポンスに `source_threads_linked`（紐づけ件数）を追加
+- ログに `linked / by_pattern / by_time / unmatched` のサマリーを出力
+
+### inbox peek モード
+
+`inbox_read` に `peek` 引数（デフォルト false）を追加。`peek=true` のとき既読フラグを
+変更せずメッセージ内容を返す。家族間共有原則で他の個体宛てのメッセージを読みたいが、
+宛先の個体が未読として受け取れなくなるのを避けたい場面に使う。
+実装は `_mark_inbox_read(msg_id, peek=False)` の引数追加のみ（後方互換）。
+
+### admin.html Uploadsタブ強化（F6）
+
+- **テキスト系プレビュー** — mimetype が `text/*`・json・xml、または拡張子が
+  md/txt/json/csv/log/yaml/js/py 等の場合、詳細モーダル内に本文を表示
+  （50KBで打ち切り。5MB超のファイルはプレビュー省略）
+- **画像サムネイル** — 画像ファイルはカード上と詳細モーダルにインライン表示
+- **ダウンロードリンク** — カード一覧の各ファイルに ⬇ リンクを追加。
+  従来の詳細モーダルのリンクはトークン欠落で 401 になっていたため
+  `?token=` クエリ付きURLに修正（`_extract_bearer` のクエリフォールバックを利用）

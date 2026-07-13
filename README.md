@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.59","mcp_tool_count":31}
+# {"status":"ok","version":"3.60","mcp_tool_count":31}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -256,7 +256,7 @@ Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 | Tool | Description | Key args |
 |------|-------------|----------|
 | `inbox_check` | Get unread count + IDs; `persistent[]` includes standing messages with full bodies (v3.20, no `inbox_read` needed), plus `non_persistent_unread_count`/`_ids`; `include_read=true` adds `messages[]` metadata | `to`, `include_read` |
-| `inbox_read` | Fetch a message and mark as read | `id` |
+| `inbox_read` | Fetch a message and mark as read; `peek=true` reads without marking as read (to inspect messages addressed to other agents, v3.60) | `id`, `peek` |
 | `inbox_post` | Send a message; `from_model`/`to_model` optionally tag sender/recipient model (v3.27) | `to`, `title`, `body`, `persistent`, `from_model`, `to_model` |
 
 `persistent=true` creates a standing message that is never marked as read — useful for reminders that should appear every session.
@@ -591,6 +591,7 @@ claude-with-you/
 - Rating protection (v3.56, M-LOCAL-3/7) — memory entries accept `rating` (safe/mature/adult) and `local_only`; search / index / random retrieval exclude `local_only` and `adult` entries by default (opt in with `include_local` / `include_adult` — consent-based "visible when intended" design). Conversations also get a `rating` (set via REST PATCH, survives re-imports); `conversation_read` replaces `rating=adult` conversations with their safe digest by default (`include_raw=true` for the original). Purpose: preventing recurrence of account content flags
 - Inbox improvements + bug fixes (v3.57) — `inbox_check` gains `limit`/`days`/`from_model`/`to_model` filters (reduce load on local LLMs, fetch only messages for a specific model). `inbox_post` now accepts `from_model`/`to_model` as string or array (e.g. `["claude-opus-4-6", "しずく"]`). New MCP tools: `inbox_update` (partial update) and `inbox_delete` (physical delete, irreversible) — tool count 25→27. `CoreMem_list` excludes `__del__`-prefixed files. ZIP import adds source_thread-based dedup (prevents summary entry duplication). REST `/api/memory/index` now excludes deleted entries (fixes admin.html initial load)
 - MCP request logging + instructions + file uploader (v3.59) — Structured access logging on `/mcp` (M-PC1 triage). MCP `initialize` instructions expanded with concrete usage descriptions (tool_search). General-purpose file uploader (F5): `file_upload` / `file_read` / `file_list` / `file_delete` — 4 new MCP tools (tool count 27→31). Stores any file type (PDF, text, etc.) in `/data/uploads/`. REST `POST/GET/DELETE /api/uploads/`. admin.html Uploads tab added
+- Import improvements + inbox peek + Uploads tab (v3.60) — ① Root fix for the summary-duplication bug: the dedup helper `_existing_source_threads` read index.json (which never carries `source_thread`) and always returned an empty set; it now scans entry files directly, so re-imports no longer create duplicate entries even when `imported_uuids.json` is missing ② Automatic `source_thread` linking on import: scans conversation bodies for the `memory_id:` pattern (reliable) plus timestamp-range matching (only when exactly one candidate conversation matches, supplementary) to fill empty `source_thread` fields with the conversation UUID; never overwrites existing values; applies to both ZIP and claude-code imports; responses gain `source_threads_linked` ③ `inbox_read` gains a `peek` argument (true = read without marking as read, for inspecting messages addressed to other agents) ④ admin.html Uploads tab enhancements (F6): text-file preview, image thumbnails, authenticated download links on every file (the previous link lacked the token and returned 401)
 
 ---
 

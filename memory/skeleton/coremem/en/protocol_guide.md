@@ -1,4 +1,4 @@
-# protocol_guide.md — MCP tool operating guide (mio-memory v3.59 / 31 tools)
+# protocol_guide.md — MCP tool operating guide (mio-memory v3.60 / 31 tools)
 
 *A reference a new session can read in one pass to learn how the MCP tools work.*
 *This file is install-agnostic (the tool mechanics are common to every mio-memory). For environment-specific startup rules / naming, see `core_rules.md`.*
@@ -43,7 +43,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 | 15 | `conversation_digest` | LogStore | Generate digest via local LLM (cached) | **heavy** (LLM, sync) |
 | 16 | `log_annotate` | LogStore | Append an annotation to a conversation | light |
 | 17 | `inbox_check` | inbox | Unread count + standing bodies (filterable) | light |
-| 18 | `inbox_read` | inbox | Get one message, mark read | light |
+| 18 | `inbox_read` | inbox | Get one message, mark read (peek=true skips marking) | light |
 | 19 | `inbox_post` | inbox | Send a message | light |
 | 20 | `inbox_update` | inbox | Partial-update a message | light |
 | 21 | `inbox_delete` | inbox | Physically delete a message | light |
@@ -106,7 +106,7 @@ Plus **batch** (summary-layer generation) grows ExtMemory in the background.
 
 **`inbox_check`** — `to` ('chat'/'code') · `include_read` · `limit` (max count) · `days` (last N days, persistent always included) · `from_model` (sender filter, OR match) · `to_model` (recipient filter, OR match). Unread count + ids + **standing bodies** (`persistent[]`). Messages with null model fields don't match model filters. **light**.
 
-**`inbox_read`** — `id` (req). Get one and **mark read**. **light**.
+**`inbox_read`** — `id` (req), `peek` (opt, true = read without marking read — peek mode, v3.60). Get one and **mark read**. **light**.
 
 **`inbox_post`** — `to` (req) · `title` (req) · `body` (req) · `from` · `from_model` (string or array) · `to_model` (string or array) · `reply_to_id` · `persistent`. **light**.
 
@@ -203,7 +203,7 @@ rename:  CoreMem_delete(src="a.md", dst="b.md")
 - **`memory_write` triggers a full index rebuild.** Avoid rapid-fire writes; batch them.
 - **symbolic/keywords take effect after the summary batch.** A just-written raw entry only stage-1 hits on title/tags.
 - **Never save the merged manifest whole** (saving with the separator comments corrupts it). Save the individual split file.
-- **`inbox_read` marks read** (no "mark unread" feature yet).
+- **`inbox_read` marks read** (no "mark unread" feature yet). Use `peek=true` to inspect messages addressed to other agents without consuming unread status (v3.60).
 - **`log_annotate` cannot be undone** (correct mistakes with a new annotation).
 - **`batch_run_summary_layers` is heavy.** For a status check, always use `status_only=true`.
 - **Rating protection (v3.56)**: memories with `local_only` / `rating=adult` and conversations with `rating=adult` are invisible/unreadable by default. "Not found" does not mean "does not exist". Always accessible via explicit flags (`include_local` / `include_adult` / `include_raw`). In cloud AI sessions, pause before using those flags — ask whether the raw content really belongs in this context (the whole point is preventing content-flag recurrence).

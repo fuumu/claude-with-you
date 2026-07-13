@@ -2324,14 +2324,35 @@ function renderUploadsGrid() {
       : f.size < 1048576 ? (f.size / 1024).toFixed(1) + ' KB'
       : (f.size / 1048576).toFixed(1) + ' MB';
     const tags = (f.tags || []).map(t => `<span style="background:#e8f0fe;color:#1a73e8;padding:1px 6px;border-radius:8px;font-size:.7rem;margin-right:3px">${t}</span>`).join('');
+    const fileUrl = `${API}/api/uploads/${encodeURIComponent(f.id)}?token=${getToken()}`;
+    const thumb = uploadsIsImage(f)
+      ? `<img src="${fileUrl}" loading="lazy" style="width:100%;max-height:120px;object-fit:cover;border-radius:6px;margin-bottom:.3rem">`
+      : '';
     return `<div class="card" onclick="openUploadDetail(${i})" style="cursor:pointer">
-      <div class="card-title">📄 ${f.filename || f.id}</div>
-      <div class="card-meta">${sizeStr} · ${f.mimetype || ''}</div>
+      ${thumb}
+      <div class="card-title">${uploadsIsImage(f) ? '🖼' : '📄'} ${esc(f.filename || f.id)}</div>
+      <div class="card-meta">${sizeStr} · ${esc(f.mimetype || '')}</div>
       <div class="card-meta">${f.uploaded_at || ''}</div>
-      ${f.comment ? `<div class="card-body" style="font-size:.78rem">${f.comment}</div>` : ''}
-      <div style="margin-top:.3rem">${tags}</div>
+      ${f.comment ? `<div class="card-body" style="font-size:.78rem">${esc(f.comment)}</div>` : ''}
+      <div style="margin-top:.3rem;display:flex;justify-content:space-between;align-items:center">
+        <span>${tags}</span>
+        <a href="${fileUrl}" download onclick="event.stopPropagation()" title="Download"
+           style="text-decoration:none;font-size:.85rem">⬇</a>
+      </div>
     </div>`;
   }).join('');
+}
+
+function uploadsIsImage(f) {
+  return (f.mimetype || '').startsWith('image/')
+    || ['png','jpg','jpeg','gif','webp','bmp','svg'].includes((f.ext || '').toLowerCase());
+}
+
+function uploadsIsText(f) {
+  const mt = f.mimetype || '';
+  if (mt.startsWith('text/') || mt.includes('json') || mt.includes('xml')) return true;
+  return ['md','txt','json','csv','log','yaml','yml','js','ts','py','sh','html','css','xml','ini','toml','conf']
+    .includes((f.ext || '').toLowerCase());
 }
 
 function toggleUploadsPanel() {
@@ -2368,14 +2389,21 @@ function openUploadDetail(idx) {
   const sizeStr = f.size < 1024 ? f.size + ' B'
     : f.size < 1048576 ? (f.size / 1024).toFixed(1) + ' KB'
     : (f.size / 1048576).toFixed(1) + ' MB';
-  const tags = (f.tags || []).map(t => `<span style="background:#e8f0fe;color:#1a73e8;padding:2px 8px;border-radius:8px;font-size:.75rem">${t}</span>`).join(' ');
-  const downloadUrl = API + '/api/uploads/' + f.id;
+  const tags = (f.tags || []).map(t => `<span style="background:#e8f0fe;color:#1a73e8;padding:2px 8px;border-radius:8px;font-size:.75rem">${esc(t)}</span>`).join(' ');
+  const downloadUrl = `${API}/api/uploads/${encodeURIComponent(f.id)}?token=${getToken()}`;
+  let preview = '';
+  if (uploadsIsImage(f)) {
+    preview = `<img src="${downloadUrl}" style="max-width:100%;border-radius:6px;margin-bottom:.8rem">`;
+  } else if (uploadsIsText(f)) {
+    preview = `<pre id="upload-preview" style="background:#f5f7fa;border:1px solid #dde3ea;border-radius:6px;padding:.6rem;font-size:.78rem;max-height:50vh;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-bottom:.8rem">読み込み中…</pre>`;
+  }
   const body = `
-    <div style="margin-bottom:.5rem"><strong>${f.filename}</strong></div>
-    <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.3rem">${f.mimetype} · ${sizeStr}</div>
+    <div style="margin-bottom:.5rem"><strong>${esc(f.filename)}</strong></div>
+    <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.3rem">${esc(f.mimetype)} · ${sizeStr}</div>
     <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.5rem">${f.uploaded_at}</div>
-    ${f.comment ? `<div style="margin-bottom:.5rem">${f.comment}</div>` : ''}
+    ${f.comment ? `<div style="margin-bottom:.5rem">${esc(f.comment)}</div>` : ''}
     <div style="margin-bottom:.8rem">${tags}</div>
+    ${preview}
     <div style="display:flex;gap:.5rem;flex-wrap:wrap">
       <a href="${downloadUrl}" class="btn btn-secondary" style="text-decoration:none;font-size:.8rem" download>⬇ Download</a>
       <button class="btn" style="background:#e74c3c;color:#fff;font-size:.8rem" onclick="uploadsDelete('${f.id}')">🗑 Delete</button>
@@ -2384,6 +2412,25 @@ function openUploadDetail(idx) {
   document.getElementById('modal-title').textContent = f.filename || f.id;
   document.getElementById('modal-body').innerHTML = body;
   document.getElementById('modal-overlay').style.display = 'flex';
+  if (uploadsIsText(f)) loadUploadPreview(f);
+}
+
+const UPLOAD_PREVIEW_MAX = 51200;  // 50KB 超はプレビューを打ち切る
+
+async function loadUploadPreview(f) {
+  const el = document.getElementById('upload-preview');
+  if (!el) return;
+  if (f.size > 5 * 1048576) { el.textContent = '（5MB超のためプレビュー省略。ダウンロードして確認してください）'; return; }
+  try {
+    const res = await apiFetch('/api/uploads/' + encodeURIComponent(f.id));
+    let text = await res.text();
+    let truncated = false;
+    if (text.length > UPLOAD_PREVIEW_MAX) { text = text.slice(0, UPLOAD_PREVIEW_MAX); truncated = true; }
+    el.textContent = text + (truncated ? '\n\n…（50KBで打ち切り。全文はダウンロードで確認）' : '');
+  } catch (e) {
+    el.textContent = 'プレビュー取得失敗: ' + e.message;
+    console.error('loadUploadPreview', e);
+  }
 }
 
 async function uploadsDelete(id) {

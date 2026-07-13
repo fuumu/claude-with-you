@@ -3,6 +3,18 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.60 (2026-07-13) - インポート改善＋inbox peek＋Uploadsタブ強化
+    - バグ修正: サマリー増殖の根本修正 — _existing_source_threads が index.json を参照して
+      いたため常に空集合となり、v3.57 の重複チェックが機能していなかった。
+      エントリファイル直接走査に変更（imported_uuids.json が欠けた環境でも再インポートが
+      重複エントリを作らない → 要約バッチによるサマリー増殖を防止）
+    - インポート時の ExtMemory source_thread 自動紐づけ（_link_source_threads）:
+      ①会話本文の memory_id: パターン走査 ②タイムスタンプ照合（唯一候補のみ・補助）。
+      既に source_thread が埋まっているエントリは上書きしない。ZIP/claude-code 両インポート
+      共通。レスポンスに source_threads_linked を追加、oplog に link_source_thread を記録
+    - inbox_read に peek 引数追加（true で既読フラグを変更せず読む・のぞき見モード）
+    - admin.html Uploads タブ（F6）: テキスト系ファイルのプレビュー・全ファイルの
+      ダウンロードリンク・画像サムネイル表示
   v3.59 (2026-07-09) - F5 ファイルアップローダ＋MCPリクエストログ＋instructions拡充
     - file_upload / file_read / file_list / file_delete MCPツール新設（ツール数 27→31）
     - /data/uploads/ に汎用ファイル保管（画像以外のPDF・テキスト等に対応）
@@ -421,7 +433,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.59'
+VERSION = '3.60'
 
 DATA_DIR      = '/data/memory'
 INDEX_FILE    = '/data/index.json'
@@ -843,17 +855,17 @@ def _save_imported_uuids(uuids: set):
         json.dump(list(uuids), f, ensure_ascii=False)
 
 def _existing_source_threads():
-    """既存 ExtMemory エントリの source_thread 集合（インポート時の重複チェック用, v3.57）"""
+    """既存 ExtMemory エントリの source_thread 集合（インポート時の重複チェック用, v3.57）
+    index.json には source_thread が載らないため、エントリファイルを直接走査する（v3.60修正:
+    旧実装は index.json を参照していて常に空集合となり、重複チェックが機能していなかった）"""
     threads = set()
-    if os.path.exists(INDEX_FILE):
-        try:
-            with open(INDEX_FILE) as f:
-                for e in json.load(f):
-                    st = e.get('source_thread')
-                    if st and not e.get('deleted'):
-                        threads.add(st)
-        except Exception:
-            pass
+    try:
+        for e in load_all_entries():
+            st = e.get('source_thread')
+            if st and not e.get('deleted'):
+                threads.add(st)
+    except Exception:
+        pass
     return threads
 
 def _write_import_status(filename: str):
@@ -1503,14 +1515,14 @@ def _post_inbox_message(to, title, body, from_='code', persistent=False,
         json.dump(msg, f, ensure_ascii=False, indent=2)
     return msg
 
-def _mark_inbox_read(msg_id):
+def _mark_inbox_read(msg_id, peek=False):
     path = _find_inbox_file(msg_id)
     if not path:
         return None
     with open(path, encoding='utf-8') as f:
         msg = json.load(f)
-    # persistent メッセージは既読にしない
-    if not msg.get('persistent'):
+    # persistent メッセージは既読にしない。peek=True は既読フラグを変更しない（v3.60）
+    if not peek and not msg.get('persistent'):
         msg['read'] = True
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(msg, f, ensure_ascii=False, indent=2)
@@ -2301,6 +2313,86 @@ def _save_conversations(conversations):
     _save_conv_index(index)
     return saved
 
+# ── source_thread 自動紐づけ（v3.60）─────────────────────────────────
+
+_MEMORY_ID_RE = re.compile(r'memory_id\s*[:：]\s*[`"\'*＊「]*([0-9]{8}_[0-9]{6}_[^\s`"\'。、，,）)\]】」…]+)')
+
+def _conv_message_texts(conv):
+    """会話の各メッセージからテキストを取り出すジェネレータ"""
+    for m in conv.get('chat_messages', []):
+        content = m.get('content') or m.get('text') or ''
+        if isinstance(content, list):
+            yield ' '.join(c.get('text', '') for c in content if isinstance(c, dict) and c.get('type') == 'text')
+        else:
+            yield str(content)
+
+def _parse_iso_ts(s):
+    """ISO文字列 → aware datetime（失敗時 None）。naive は JST とみなす"""
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(s).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=JST)
+        return dt
+    except Exception:
+        return None
+
+def _link_source_threads(conversations):
+    """インポートした会話と ExtMemory エントリの source_thread を自動紐づけする（v3.60）
+    1. 会話本文中の memory_id: パターン走査（core_rules.md ② の記載規則に基づく・最も確実）
+    2. タイムスタンプ照合（補助）: エントリ created_at が唯一の会話の時間範囲に収まる場合のみ
+    既に source_thread が埋まっているエントリは上書きしない
+    """
+    pending = {}  # id -> entry（source_thread 未設定の生存エントリのみ）
+    for e in load_all_entries():
+        if not e.get('deleted') and not e.get('source_thread') and e.get('id'):
+            pending[e['id']] = e
+    if not pending:
+        return {'linked': 0, 'by_pattern': 0, 'by_time': 0, 'unmatched': 0}
+
+    def _apply(entry, uid, how):
+        before = {'source_thread': entry.get('source_thread', '')}
+        entry['source_thread'] = uid
+        entry['updated_at'] = now_jst()
+        with open(f'{DATA_DIR}/{entry["id"]}.json', 'w') as f:
+            json.dump(entry, f, ensure_ascii=False, indent=2)
+        append_oplog('link_source_thread', entry['id'], before,
+                     {'source_thread': uid, 'method': how})
+
+    by_pattern = 0
+    conv_ranges = []  # (uid, start, end)
+    for conv in conversations:
+        uid = conv.get('uuid') or conv.get('id', '')
+        if not uid:
+            continue
+        start = _parse_iso_ts(conv.get('created_at'))
+        end = _parse_iso_ts(conv.get('updated_at')) or start
+        if start:
+            conv_ranges.append((uid, start, end))
+        for text in _conv_message_texts(conv):
+            for mid in _MEMORY_ID_RE.findall(text):
+                entry = pending.pop(mid, None)
+                if entry is not None:
+                    _apply(entry, uid, 'pattern')
+                    by_pattern += 1
+
+    # 補助: created_at がちょうど1つの会話の時間範囲に収まるエントリのみ紐づける
+    by_time = 0
+    for eid in list(pending.keys()):
+        ts = _parse_iso_ts(pending[eid].get('created_at'))
+        if not ts:
+            continue
+        hits = {uid for uid, s, e in conv_ranges if s <= ts <= e}
+        if len(hits) == 1:
+            _apply(pending.pop(eid), hits.pop(), 'time')
+            by_time += 1
+
+    result = {'linked': by_pattern + by_time, 'by_pattern': by_pattern,
+              'by_time': by_time, 'unmatched': len(pending)}
+    _log_info(f'source_thread link: {result}')
+    return result
+
 # ── ZIP インポート ─────────────────────────────────────────────────────
 
 @app.route('/import', methods=['POST'])
@@ -2374,6 +2466,13 @@ def import_zip():
             conv_saved = _save_conversations(conversations)
         except Exception as e:
             _log_error(f'conv save error: {e}')
+
+        # ExtMemory エントリの source_thread 自動紐づけ（v3.60）
+        link_result = {}
+        try:
+            link_result = _link_source_threads(conversations)
+        except Exception as e:
+            _log_error(f'source_thread link error: {e}')
 
         # アーティファクト抽出
         artifacts_extracted = 0
@@ -2465,7 +2564,8 @@ def import_zip():
     _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name} conv_saved={conv_saved} artifacts_extracted={artifacts_extracted}')
     if imported > 0 or artifact_name:
         _write_import_status(f.filename)
-    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved, 'artifacts_extracted': artifacts_extracted}
+    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved, 'artifacts_extracted': artifacts_extracted,
+              'source_threads_linked': link_result.get('linked', 0)}
     if artifact_name:
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
@@ -2668,6 +2768,13 @@ def import_claude_code():
         except Exception as e:
             _log_error(f'claude-code conv save error: {e}')
 
+        # ExtMemory エントリの source_thread 自動紐づけ（v3.60）
+        link_result = {}
+        try:
+            link_result = _link_source_threads(convs)
+        except Exception as e:
+            _log_error(f'source_thread link error: {e}')
+
         if imported > 0:
             rebuild_index()
         _save_imported_uuids(imported_uuids)
@@ -2681,7 +2788,8 @@ def import_claude_code():
             _log_info(f'auto summary batch started: backend={info["backend"]}')
 
     return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
-                    'conversations_saved': conv_saved})
+                    'conversations_saved': conv_saved,
+                    'source_threads_linked': link_result.get('linked', 0)})
 
 
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
@@ -4071,9 +4179,10 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_read",
-        "description": "インボックスの特定メッセージを取得し既読にする",
+        "description": "インボックスの特定メッセージを取得し既読にする。peek=true でのぞき見モード（既読にせず読む。他の個体宛てのメッセージを未読のまま確認する用途, v3.60）",
         "inputSchema": {"type": "object", "properties": {
-            "id": {"type": "string", "description": "inbox_checkで取得したメッセージID"}
+            "id":   {"type": "string", "description": "inbox_checkで取得したメッセージID"},
+            "peek": {"type": "boolean", "description": "trueのとき既読フラグを変更せずに内容だけ返す（省略時false）"}
         }, "required": ["id"]}
     },
     {
@@ -4659,7 +4768,7 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "inbox_read":
         msg_id = arguments.get("id", "")
-        msg = _mark_inbox_read(msg_id)
+        msg = _mark_inbox_read(msg_id, peek=bool(arguments.get("peek", False)))
         if msg is None:
             return {"error": f"message not found: {msg_id}"}
         return msg

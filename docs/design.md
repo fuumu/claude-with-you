@@ -1134,3 +1134,52 @@ ID format: `YYYYMMDD_HHMMSS_<first 30 chars of filename>`
 ### admin.html
 
 Uploads tab added. Card-grid listing, upload panel (multi-file), detail modal (download, delete).
+
+## 20. Import improvements + inbox peek + Uploads tab enhancements (v3.60)
+
+### Root fix for the summary-duplication bug
+
+The source_thread-based dedup check added in v3.57 (`_existing_source_threads`) read
+index.json, but `rebuild_index()` never includes `source_thread` in index items, so the
+function always returned an empty set and the dedup check never worked.
+
+v3.60 switches it to scanning the entry files (`/data/memory/*.json`) directly.
+Even in environments where `imported_uuids.json` is missing or was reset, re-importing
+the same conversation no longer creates duplicate raw entries, which stops the summary
+batch from generating duplicate summaries.
+
+### Automatic ExtMemory source_thread linking (`_link_source_threads`)
+
+A linking pass that runs after conversations are saved in both import paths
+(ZIP / claude-code). It targets only live entries with an empty `source_thread` and fills
+in the imported conversation's UUID in two stages:
+
+1. **memory_id pattern scan (reliable)** — extracts `memory_id: <ID>` notations from
+   conversation bodies via regex (per the core_rules.md ② convention; tolerates full-width
+   colons, quotes, and Japanese brackets) and links the matching entries
+2. **Timestamp matching (supplementary)** — links an entry only when its `created_at`
+   falls within the `created_at`–`updated_at` range of **exactly one** imported
+   conversation (multiple candidates or none → skipped, to avoid mislinking)
+
+- Entries that already have a `source_thread` are never overwritten
+- Each link is recorded in the oplog as `link_source_thread` (before/after + method)
+- Import API responses gain `source_threads_linked` (number of entries linked)
+- A summary (`linked / by_pattern / by_time / unmatched`) is written to the log
+
+### Inbox peek mode
+
+`inbox_read` gains a `peek` argument (default false). With `peek=true` the message body is
+returned without touching the read flag. Used when the family-sharing principle makes you
+want to read a message addressed to another agent without consuming its unread status.
+Implementation is just an added argument on `_mark_inbox_read(msg_id, peek=False)`
+(backward compatible).
+
+### admin.html Uploads tab enhancements (F6)
+
+- **Text preview** — when the mimetype is `text/*`/json/xml or the extension is
+  md/txt/json/csv/log/yaml/js/py etc., the detail modal shows the file body
+  (truncated at 50KB; files over 5MB skip the preview)
+- **Image thumbnails** — image files render inline on cards and in the detail modal
+- **Download links** — every card in the grid gets a ⬇ link. The existing detail-modal
+  link lacked the token and returned 401; both now use `?token=` query URLs
+  (leveraging `_extract_bearer`'s query fallback)
