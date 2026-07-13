@@ -1183,3 +1183,13 @@ Implementation is just an added argument on `_mark_inbox_read(msg_id, peek=False
 - **Download links** — every card in the grid gets a ⬇ link. The existing detail-modal
   link lacked the token and returned 401; both now use `?token=` query URLs
   (leveraging `_extract_bearer`'s query fallback)
+
+### admin.html Memory tab: link to the raw log
+
+The memory-entry detail modal shows a "📖 open raw log" link when `source_thread` is
+set (same `openConvInLogs` pattern as the Files tab's "open originating conversation").
+It jumps to the conversation in the Logs tab via the `logs.html?conv=<uuid>` deep link.
+Paired with the automatic source_thread backfill, tracing a summary back to its raw log
+(the "memory journey") becomes one click in admin. The reverse direction (raw log →
+memories) already exists as the "related memories" panel in logs.html
+(source_thread match, v3.42).
