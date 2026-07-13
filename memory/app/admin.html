@@ -1075,10 +1075,17 @@ function onSearchInput(val) {
   searchTimer = setTimeout(() => loadMemory(), 300);
 }
 
+// tags が配列以外（文字列・null 等）のエントリでも描画が落ちないよう正規化
+function normTags(t) {
+  if (Array.isArray(t)) return t;
+  if (typeof t === 'string') return t.trim() ? [t.trim()] : [];
+  return [];
+}
+
 function renderFilterBar() {
   const counts = {};
   for (const e of allEntries) {
-    for (const t of (e.tags || [])) {
+    for (const t of normTags(e.tags)) {
       counts[t] = (counts[t] || 0) + 1;
     }
   }
@@ -1105,7 +1112,7 @@ function renderCards() {
   const grid = document.getElementById('memory-grid');
   const entries = currentFilter === '全て'
     ? allEntries
-    : allEntries.filter(e => (e.tags || []).includes(currentFilter));
+    : allEntries.filter(e => normTags(e.tags).includes(currentFilter));
 
   if (!entries.length) {
     grid.innerHTML = '<div class="empty">エントリなし</div>';
@@ -1115,7 +1122,7 @@ function renderCards() {
   grid.innerHTML = entries.map(e => {
     const imp  = e.importance || 'normal';
     const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
-    const tags = (e.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+    const tags = normTags(e.tags).map(t => `<span class="tag">${esc(t)}</span>`).join('');
     return `
       <div class="card${e.deleted ? ' deleted' : ''}" onclick="openMemory('${esc(e.id)}')">
         <div class="card-title"><span class="dot dot-${imp}"></span>${esc(e.title)}</div>
@@ -1136,7 +1143,7 @@ async function openMemory(id) {
     const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
     document.getElementById('modal-title').textContent = e.title || '';
     document.getElementById('modal-meta').textContent =
-      `${date}　${(e.tags || []).join(' · ')}　importance: ${e.importance || 'normal'}`;
+      `${date}　${normTags(e.tags).join(' · ')}　importance: ${e.importance || 'normal'}`;
     const body = document.getElementById('modal-body');
     body.className = 'modal-body md-body';
     body.innerHTML = renderMarkdown(e.body || '');
@@ -2519,7 +2526,7 @@ function copyTextToClipboard(text) {
         const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
         document.getElementById('modal-title').textContent = e.title || '';
         document.getElementById('modal-meta').textContent =
-          `${date}　${(e.tags || []).join(' · ')}　importance: ${e.importance || 'normal'}`;
+          `${date}　${normTags(e.tags).join(' · ')}　importance: ${e.importance || 'normal'}`;
         const body = document.getElementById('modal-body');
         body.className = 'modal-body';
         body.textContent = e.body || '';
