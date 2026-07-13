@@ -23,6 +23,7 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
            ├ POST /api/memory              … TS native (create, ID minting)
            ├ PATCH/DELETE /api/memory/<id> … TS native (partial update, logical delete)
            ├ POST /api/memory/reindex      … TS native (index.json rebuild)
+           ├ /api/inbox* (list/post/read/update/delete) … TS native
            ├ /.well-known/oauth-*          … TS native
            ├ /oauth/{register,authorize,token} … TS native (PKCE, DCR)
            ├ /mcp transport layer          … TS native (initialize/ping/
@@ -65,7 +66,7 @@ to match production. The TS implementation is utf-8 fixed (production-compatible
 | 1 | Auth middleware + read-only REST (index/read/tags/hsearch) | ✅ done (2026-07-13) — auth.ts / data.ts / search.ts, unified search included; native-vs-proxy routing verified live via the Werkzeug Server header |
 | 4/5 pull-forward | **MCP transport layer + OAuth/DCR** (mcp.ts / oauth.ts) | ✅ done (2026-07-14) — pulled forward because the breaking MCP 2026-07-28 spec (stateless core removing initialize/sessions + OAuth hardening) publishes July 28. tools/* dispatch stays forwarded to Python (migrates in ring 4 proper). Spec adaptation will touch ts/ only |
 | 2 | Write REST (create/patch/delete/reindex) | ✅ done (2026-07-14) — write.ts. ID minting (JST, tag slug), oplog, and index rebuild all verified Python-compatible live (byte-identical after newline normalization). In the test config REST writes = TS and MCP-driven writes = Python (forward target) coexist; both use the same algorithm so index/oplog converge |
-| 3 | inbox / coremem / conversations REST | symlink version-management compat |
+| 3 | inbox / coremem / conversations REST | **inbox slice ✅ done (2026-07-14, inbox.ts; 5 new REST characterization tests; interop live-verified)**. Remaining: coremem (symlink version-management compat), conversations |
 | 4 | MCP tools/list + tools/call native in TS | Tools should internally call the REST-equivalent functions (transport layer already pulled forward) |
 | 5 | Import, batch, friend system | Batch needs an LLM client (Anthropic SDK / fetch); friend-session /mcp passthrough is also resolved here |
 | 6 | Remove Python; Node-based Dockerfile | Decide after a parallel-run period + full test green |

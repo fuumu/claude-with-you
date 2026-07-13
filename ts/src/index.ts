@@ -16,6 +16,7 @@
 import http from 'node:http';
 import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
+import { handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
@@ -273,11 +274,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // リング2（書き込み系REST）→ OAuth → MCP の順にネイティブ処理を試み、
+  // リング2/3（書き込み系REST・inbox）→ OAuth → MCP の順にネイティブ処理を試み、
   // どれも担当しなければ透過プロキシへ（友達セッションの /mcp を含む）
   void (async () => {
     try {
       if (await handleWriteNative(req, res, parsed)) return;
+      if (parsed.pathname === '/api/inbox' || parsed.pathname.startsWith('/api/inbox/')) {
+        if (!verifyToken(extractBearer(req, parsed))) {
+          sendJson(res, 401, { error: 'unauthorized' });
+          return;
+        }
+        if (await handleInbox(req, res, parsed)) return;
+      }
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
       proxyToUpstream(req, res, url, parsed);
