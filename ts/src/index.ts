@@ -15,6 +15,8 @@
  */
 import http from 'node:http';
 import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
+import { handleConversations } from './conversations.js';
+import { handleCoremem } from './coremem.js';
 import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
 import { handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
@@ -285,6 +287,18 @@ const server = http.createServer((req, res) => {
           return;
         }
         if (await handleInbox(req, res, parsed)) return;
+      }
+      // リング3: coremem REST（全ルート認証必須）
+      if (parsed.pathname === '/api/coremem' || parsed.pathname.startsWith('/api/coremem/')) {
+        if (!verifyToken(extractBearer(req, parsed))) {
+          sendJson(res, 401, { error: 'unauthorized' });
+          return;
+        }
+        if (await handleCoremem(req, res, parsed)) return;
+      }
+      // リング3: conversations REST（認証はハンドラ内。digest は担当外 = プロキシ）
+      if (parsed.pathname.startsWith('/api/conversations')) {
+        if (await handleConversations(req, res, parsed)) return;
       }
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;

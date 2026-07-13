@@ -16,9 +16,9 @@ import { extractLayer3 } from './search.js';
 
 export const OPLOG_FILE = path.join(DATA_ROOT, 'oplog.json');
 
-/** Python now_jst()（datetime.now(JST).isoformat()）互換の JST タイムスタンプ */
-export function nowJst(): string {
-  const d = new Date(Date.now() + 9 * 3600 * 1000);
+/** UNIXミリ秒を Python datetime.isoformat()（JST）互換文字列にする */
+export function jstIsoFromMs(ms: number): string {
+  const d = new Date(ms + 9 * 3600 * 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
   const micro = String(d.getUTCMilliseconds()).padStart(3, '0') + '000';
   return (
@@ -26,6 +26,11 @@ export function nowJst(): string {
     `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}` +
     `.${micro}+09:00`
   );
+}
+
+/** Python now_jst()（datetime.now(JST).isoformat()）互換の JST タイムスタンプ */
+export function nowJst(): string {
+  return jstIsoFromMs(Date.now());
 }
 
 /** Python strftime('%Y%m%d_%H%M%S')（JST）互換 */

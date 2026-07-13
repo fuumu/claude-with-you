@@ -146,8 +146,8 @@ python -m venv .venv
 
 | グループ | パス | 契約の要点 |
 |---|---|---|
-| conversations | `/api/conversations/*` | index / rebuild / rating PATCH（safe/mature/adult 以外は 400） |
-| coremem | `/api/coremem/<name>` | manifest マージ返却。`?raw=true` で素通し |
+| conversations | `/api/conversations/*` | 検索（`q`/`from`/`to`/`limit`/`body_search`・updated_at 降順）/ index（`search`/`limit`≤500/`offset`・`{total,offset,limit,items}`）/ rebuild（`{rebuilt}`）/ `<uuid>` 取得（404）/ annotations（空なら `[]`）/ share POST（`{token,url,expires_at}`・`expires_in` 指定可）/ view GET（認証不要・不正 404・期限切れ 410）/ rating PATCH（safe/mature/adult 以外は 400） |
+| coremem | `/api/coremem*` | 一覧 `[{name,version,updated_at}]` / POST `{content}`→201 `{name,version,version_str}`（版番号は連番）/ `?version=N` で旧版 / DELETE は全版削除 `{deleted}`（対象なし 404）/ manifest マージ返却。`?raw=true` で素通し |
 | inbox | `/api/inbox*` | GET一覧 / POST / PATCH read・unread / PATCH 部分更新 / DELETE |
 | album | `/api/album/*` | 一覧 / 画像 / upload / PATCH メタ / DELETE / share（共有画像は認証不要） |
 | uploads | `/api/uploads/*` | 一覧 / ダウンロード / POST（201・タグはカンマ・読点・空白区切り）/ DELETE（404 if missing） |
@@ -170,3 +170,8 @@ password/grant の拒否）、MCP トランスポート（initialize の Mcp-Ses
 Accept: text/event-stream の SSE 応答・DELETE・GET 405・parse error・バッチ・認証 401）。
 ※ v3.62 で main.py の initialize が `Mcp-Session-Id` ヘッダ未発行＋`_session_id`
 内部キー漏れだったバグを修正（§3 の記載どおりの挙動になった）。
+
+**リング3で追補済み**（tests/test_coremem_rest.py・7件 / tests/test_conversations_rest.py・8件）:
+coremem REST（保存 201・版番号連番・版指定読み・一覧形状・content なし 400・404・全版削除・認証）、
+conversations REST（検索フィルタ・body_search・index ページング・rebuild・取得・注記一覧・
+share/view（期限切れ 410 含む）・認証）。

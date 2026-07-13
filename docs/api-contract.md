@@ -154,8 +154,8 @@ response shapes pinned by tests.
 
 | Group | Path | Essentials |
 |---|---|---|
-| conversations | `/api/conversations/*` | index / rebuild / rating PATCH (400 unless safe/mature/adult) |
-| coremem | `/api/coremem/<name>` | Manifest-merged; `?raw=true` bypasses |
+| conversations | `/api/conversations/*` | search (`q`/`from`/`to`/`limit`/`body_search`, updated_at desc) / index (`search`/`limit`≤500/`offset`, `{total,offset,limit,items}`) / rebuild (`{rebuilt}`) / `<uuid>` fetch (404) / annotations (`[]` when none) / share POST (`{token,url,expires_at}`, `expires_in` accepted) / view GET (no auth; bad token 404, expired 410) / rating PATCH (400 unless safe/mature/adult) |
+| coremem | `/api/coremem*` | list `[{name,version,updated_at}]` / POST `{content}` → 201 `{name,version,version_str}` (sequential versions) / `?version=N` reads old version / DELETE removes all versions `{deleted}` (404 if missing) / manifest-merged; `?raw=true` bypasses |
 | inbox | `/api/inbox*` | GET list / POST / PATCH read・unread / PATCH partial update / DELETE |
 | album | `/api/album/*` | list / image / upload / PATCH meta / DELETE / share (shared image needs no auth) |
 | uploads | `/api/uploads/*` | list / download / POST (201; tags split on commas, Japanese commas, whitespace) / DELETE (404 if missing) |
@@ -177,5 +177,11 @@ flow (register → authorize → token → issued token used on REST/MCP; PKCE S
 verification; rejection of bad verifier / password / grant) and the MCP transport
 (Mcp-Session-Id header on initialize, SSE response for `Accept: text/event-stream`,
 DELETE, GET without SSE accept = 405, parse error, batches, 401 auth).
+
+**Covered in ring 3** (tests/test_coremem_rest.py, 7 tests / tests/test_conversations_rest.py,
+8 tests): coremem REST (save 201, sequential version numbers, version-specific reads,
+list shape, missing content = 400, 404s, delete-all-versions, auth) and conversations
+REST (search filters, body_search, index paging, rebuild, fetch, annotations list,
+share/view including expired = 410, auth).
 Note: v3.62 fixed a main.py bug where initialize never issued the `Mcp-Session-Id`
 header and leaked the internal `_session_id` key — behavior now matches §3.

@@ -1,6 +1,6 @@
 # TS-1: TypeScript Migration Plan (Strangler Pattern)
 
-*Written: 2026-07-13 / Rings 0–2 + transport pull-forward (part of rings 4/5) implemented*
+*Written: 2026-07-13 / Rings 0–3 + transport pull-forward (part of rings 4/5) implemented*
 
 ## Approach
 
@@ -14,7 +14,7 @@ reverse proxy in front and move endpoints to TS one at a time** (strangler patte
   is identical whether 0 or 53 endpoints have been migrated)
 - Aborting mid-way costs nothing (remove the proxy and Python-only operation resumes)
 
-## Current state (Rings 0–2 + transport pull-forward, as of 2026-07-14)
+## Current state (Rings 0–3 + transport pull-forward, as of 2026-07-14)
 
 ```
 client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
@@ -24,6 +24,9 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
            ├ PATCH/DELETE /api/memory/<id> … TS native (partial update, logical delete)
            ├ POST /api/memory/reindex      … TS native (index.json rebuild)
            ├ /api/inbox* (list/post/read/update/delete) … TS native
+           ├ /api/coremem* (list/save/versioned read/merge/delete) … TS native
+           ├ /api/conversations* (search/index/rebuild/fetch/annotations/
+           │    share/view/rating)         … TS native (only digest forwarded)
            ├ /.well-known/oauth-*          … TS native
            ├ /oauth/{register,authorize,token} … TS native (PKCE, DCR)
            ├ /mcp transport layer          … TS native (initialize/ping/
@@ -39,9 +42,11 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
   data.ts (read layer over /data/ JSON) / write.ts (create/update/delete, oplog,
   index rebuild) / search.ts (hierarchical search, `_hierarchical_search`-compatible) /
   oauth.ts (OAuth 2.1 + DCR, oauth_store.json-compatible persistence) /
-  mcp.ts (MCP transport layer)
+  mcp.ts (MCP transport layer) / inbox.ts / coremem.ts (symlink version management
+  with copy fallback, Python-compatible) / conversations.ts (conversation REST,
+  share_tokens.json-compatible)
 - Zero dependencies (node:http only); SSE/chunked OK
-- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 65 tests pass**
+- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 85 tests pass**
   (direct mode passes too)
 - Build: `cd ts && npm install && npx tsc` → `node dist/index.js`
 - Env vars: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` /
@@ -66,9 +71,9 @@ to match production. The TS implementation is utf-8 fixed (production-compatible
 | 1 | Auth middleware + read-only REST (index/read/tags/hsearch) | ✅ done (2026-07-13) — auth.ts / data.ts / search.ts, unified search included; native-vs-proxy routing verified live via the Werkzeug Server header |
 | 4/5 pull-forward | **MCP transport layer + OAuth/DCR** (mcp.ts / oauth.ts) | ✅ done (2026-07-14) — pulled forward because the breaking MCP 2026-07-28 spec (stateless core removing initialize/sessions + OAuth hardening) publishes July 28. tools/* dispatch stays forwarded to Python (migrates in ring 4 proper). Spec adaptation will touch ts/ only |
 | 2 | Write REST (create/patch/delete/reindex) | ✅ done (2026-07-14) — write.ts. ID minting (JST, tag slug), oplog, and index rebuild all verified Python-compatible live (byte-identical after newline normalization). In the test config REST writes = TS and MCP-driven writes = Python (forward target) coexist; both use the same algorithm so index/oplog converge |
-| 3 | inbox / coremem / conversations REST | **inbox slice ✅ done (2026-07-14, inbox.ts; 5 new REST characterization tests; interop live-verified)**. Remaining: coremem (symlink version-management compat), conversations |
+| 3 | inbox / coremem / conversations REST | ✅ done (2026-07-14) — inbox.ts / coremem.ts / conversations.ts. 20 new REST characterization tests (inbox 5, coremem 7, conversations 8). Symlink version management: TS uses the same symlink→copy fallback; version numbering verified live to continue sequentially across implementations. The conversation _index.json rebuilt by TS is byte-identical to Python's. Share tokens and rating gating live-verified interoperable. Only digest (needs local LLM) stays forwarded to Python until ring 5 |
 | 4 | MCP tools/list + tools/call native in TS | Tools should internally call the REST-equivalent functions (transport layer already pulled forward) |
-| 5 | Import, batch, friend system | Batch needs an LLM client (Anthropic SDK / fetch); friend-session /mcp passthrough is also resolved here |
+| 5 | Import, batch, friend system, conversation digest | Batch/digest need an LLM client (Anthropic SDK / fetch); friend-session /mcp passthrough is also resolved here |
 | 6 | Remove Python; Node-based Dockerfile | Decide after a parallel-run period + full test green |
 
 ## Design commitments

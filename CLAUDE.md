@@ -111,7 +111,7 @@ Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 Run this after changing main.py. Contract documentation: `docs/api-contract.ja.md` (primary) / `docs/api-contract.md`. Test hooks: `MIO_DATA_ROOT` / `MIO_PORT` env vars (unset = production defaults).
 
-`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/` — see `docs/ts1-migration.ja.md`). As of 2026-07-14 the TS layer natively serves memory REST (reads and writes incl. reindex/oplog), OAuth 2.1/DCR, and the MCP transport shell (initialize/ping/notifications/SSE; tools/* forwarded to Python; friend sessions passed through). Run both modes when touching `ts/`, main.py auth/OAuth/MCP-transport/memory-REST code, or anything transport-level.
+`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/` — see `docs/ts1-migration.ja.md`). As of 2026-07-14 the TS layer natively serves memory REST (reads and writes incl. reindex/oplog), inbox REST, coremem REST (symlink versioning), conversations REST (all except digest), OAuth 2.1/DCR, and the MCP transport shell (initialize/ping/notifications/SSE; tools/* forwarded to Python; friend sessions passed through). Run both modes when touching `ts/`, main.py auth/OAuth/MCP-transport code, or any REST surface listed above.
 
 ## Dependencies
 
