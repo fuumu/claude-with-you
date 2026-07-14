@@ -1,6 +1,6 @@
 # TS-1: TypeScript Migration Plan (Strangler Pattern)
 
-*Written: 2026-07-13 / Rings 0–3 + transport pull-forward (part of rings 4/5) implemented*
+*Written: 2026-07-13 / Rings 0–3 + transport pull-forward (part of rings 4/5) + MCP 2026-07-28 early RC implementation done*
 
 ## Approach
 
@@ -29,10 +29,12 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
            │    share/view/rating)         … TS native (only digest forwarded)
            ├ /.well-known/oauth-*          … TS native
            ├ /oauth/{register,authorize,token} … TS native (PKCE, DCR)
-           ├ /mcp transport layer          … TS native (initialize/ping/
-           │    notifications/SSE/sessions/Origin validation; tools/* are
-           │    forwarded to Python as raw JSON-RPC; friend sessions pass
-           │    through entirely)
+           ├ /mcp transport layer          … TS native (dual-era:
+           │    legacy = initialize/ping/notifications/SSE/sessions,
+           │    modern = MCP 2026-07-28 stateless core (server/discover,
+           │    subscriptions/listen, required-header validation,
+           │    resultType/ttlMs injection); tools/* are forwarded to
+           │    Python as raw JSON-RPC; friend sessions pass through entirely)
            └ everything else               … transparently proxied to Python
                  ※ tokens verified by TS are rewritten to API_TOKEN before
                    proxying (TS-issued OAuth tokens work on unmigrated endpoints)
@@ -46,8 +48,9 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
   with copy fallback, Python-compatible) / conversations.ts (conversation REST,
   share_tokens.json-compatible)
 - Zero dependencies (node:http only); SSE/chunked OK
-- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 85 tests pass**
-  (direct mode passes too)
+- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 100 tests pass**
+  (direct mode: 85 pass + 15 skipped — the MCP 2026-07-28 characterization tests
+  only run against the TS layer, where the new spec is implemented)
 - Build: `cd ts && npm install && npx tsc` → `node dist/index.js`
 - Env vars: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` /
   `MIO_API_TOKEN` / `MIO_BASE_URL` / `MIO_ALLOWED_ORIGINS`
@@ -70,6 +73,7 @@ to match production. The TS implementation is utf-8 fixed (production-compatible
 | 0 | Proxy skeleton + /health | ✅ done (2026-07-13) |
 | 1 | Auth middleware + read-only REST (index/read/tags/hsearch) | ✅ done (2026-07-13) — auth.ts / data.ts / search.ts, unified search included; native-vs-proxy routing verified live via the Werkzeug Server header |
 | 4/5 pull-forward | **MCP transport layer + OAuth/DCR** (mcp.ts / oauth.ts) | ✅ done (2026-07-14) — pulled forward because the breaking MCP 2026-07-28 spec (stateless core removing initialize/sessions + OAuth hardening) publishes July 28. tools/* dispatch stays forwarded to Python (migrates in ring 4 proper). Spec adaptation will touch ts/ only |
+| New-spec RC | **MCP 2026-07-28 early RC implementation** (mcp.ts / oauth.ts revisions) | ✅ done (2026-07-14) — dual-era server (legacy initialize and modern stateless core coexist on the same endpoint per the spec's era-detection rules). server/discover, subscriptions/listen, required-header validation (-32020/-32022/-32601), resultType/ttlMs/cacheScope injection, OAuth hardening (iss / application_type / refresh_token / RFC 8414 suffix). 15 new characterization tests (TS1 mode only) → 100 pass in TS1 mode. Remaining task: diff against the official July 28 release |
 | 2 | Write REST (create/patch/delete/reindex) | ✅ done (2026-07-14) — write.ts. ID minting (JST, tag slug), oplog, and index rebuild all verified Python-compatible live (byte-identical after newline normalization). In the test config REST writes = TS and MCP-driven writes = Python (forward target) coexist; both use the same algorithm so index/oplog converge |
 | 3 | inbox / coremem / conversations REST | ✅ done (2026-07-14) — inbox.ts / coremem.ts / conversations.ts. 20 new REST characterization tests (inbox 5, coremem 7, conversations 8). Symlink version management: TS uses the same symlink→copy fallback; version numbering verified live to continue sequentially across implementations. The conversation _index.json rebuilt by TS is byte-identical to Python's. Share tokens and rating gating live-verified interoperable. Only digest (needs local LLM) stays forwarded to Python until ring 5 |
 | 4 | MCP tools/list + tools/call native in TS | Tools should internally call the REST-equivalent functions (transport layer already pulled forward) |

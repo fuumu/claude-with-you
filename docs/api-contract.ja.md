@@ -95,6 +95,19 @@ python -m venv .venv
 - 未知メソッド → JSON-RPC error `-32601`
 - 友達トークン（`/mcp?token=<friend_token>`）では別ツールセット（4本）
 
+### 4b. MCP 2026-07-28 ステートレスコア（TS層のみ・`MIO_TS1=1` で検証）
+
+新仕様の契約は `tests/test_mcp_2026.py` に固定（Python 単体モードでは skip — main.py は 2025-11-25 のまま）。デュアル時代サーバーとして、レガシー（initialize + `Mcp-Session-Id`）と同一エンドポイントで共存する。
+
+- モダン判定: `params._meta["io.modelcontextprotocol/protocolVersion"]` または `MCP-Protocol-Version` ヘッダが 2026-07-28（または未知の版）を宣言したリクエスト。セッションIDは発行も参照もしない
+- `server/discover`（MUST）→ `result.{resultType, supportedVersions, capabilities, serverInfo, instructions, ttlMs, cacheScope}`。版宣言なしのプローブにも応答
+- 必須ヘッダ検証（2026-07-28 宣言時）: `MCP-Protocol-Version` / `Mcp-Method` /（tools/call は）`Mcp-Name` がボディと不一致・欠落 → **400** + error `-32020`（HeaderMismatch）。`Mcp-Name` は `=?base64?...?=` センチネルをデコードして比較
+- 未対応の版 → **400** + error `-32022`（`data.supported` / `data.requested` 付き）
+- 廃止メソッド（`ping`・`initialize` をモダン宣言で呼ぶ等）→ **404** + `-32601`
+- 全結果に `resultType: "complete"`、`tools/list` に `ttlMs` / `cacheScope` を注入（tools/* の中身は従来どおり Python 転送）
+- `subscriptions/listen` → SSE（`notifications/subscriptions/acknowledged` + keep-alive コメント）
+- OAuth 強化: 認可応答リダイレクトに `iss`（RFC 9207）／DCR で `application_type` 受理（既定 `web`）／`grant_type=refresh_token`（発行・使用ごとローテーション・再利用は `invalid_grant`・`scope` 縮小可）／`/.well-known/oauth-authorization-server/<suffix>` にも応答・`grant_types_supported` に `refresh_token`
+
 ## 5. MCP ツール（31本）の返却形状（要点）
 
 引数の詳細は README.ja.md / CoreMem `protocol_guide_detail.md` を参照。ここではテストで固定化した返却形状のみ列挙する。

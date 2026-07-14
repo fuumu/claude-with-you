@@ -5,8 +5,16 @@
  * initialize/ping/notifications）を TS が所有し、ツールディスパッチ
  * （tools/list・tools/call）は JSON-RPC のまま Python へ転送する。
  *
- * MCP 2026-07-28 仕様（ステートレスコア・initialize廃止・_meta方式）への
- * 追従は本モジュールの改修で行う — main.py には触れない。
+ * デュアル時代（dual-era）サーバー実装:
+ *   - レガシー（2025-11-25 以前）: initialize ハンドシェイク＋Mcp-Session-Id。
+ *     従来どおりのセッション付き応答（後方互換・挙動不変）。
+ *   - モダン（2026-07-28）: ステートレスコア。リクエストごとに _meta
+ *     （io.modelcontextprotocol/protocolVersion 等）で版・クライアント情報を運ぶ。
+ *     server/discover（MUST）・subscriptions/listen をネイティブ実装し、
+ *     必須ヘッダ（MCP-Protocol-Version / Mcp-Method / Mcp-Name）をボディと
+ *     突き合わせ検証する（不一致→400 + -32020 HeaderMismatch）。
+ *     未対応版→400 + -32022 UnsupportedProtocolVersion、未知メソッド→404 + -32601。
+ *   仕様: modelcontextprotocol.io/specification/draft（2026-07-28 RC）
  *
  * 友達セッション（friends registry のトークン）はツール構成が動的なため
  * 丸ごと Python へ透過転送する（このモジュールは false を返す）。
@@ -41,6 +49,217 @@ interface JsonRpcMessage {
   method?: string;
   params?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+// ── MCP 2026-07-28（モダン時代）────────────────────────────────────
+const MODERN_VERSIONS = ['2026-07-28'];
+/** server/discover の supportedVersions（モダン優先で列挙） */
+const SUPPORTED_VERSIONS = ['2026-07-28', '2025-11-25', '2025-03-26'];
+const META_PROTOCOL_VERSION = 'io.modelcontextprotocol/protocolVersion';
+const TOOLS_LIST_TTL_MS = 3600000;
+
+function metaOf(msg: JsonRpcMessage): Record<string, unknown> {
+  const params = (msg.params ?? {}) as Record<string, unknown>;
+  const meta = params['_meta'];
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    return meta as Record<string, unknown>;
+  }
+  return {};
+}
+
+/** Mcp-Name 等の Base64 センチネル形式（=?base64?...?=）をデコード */
+function decodeSentinel(value: string): string {
+  if (value.startsWith('=?base64?') && value.endsWith('?=')) {
+    try {
+      return Buffer.from(value.slice(9, -2), 'base64').toString('utf-8');
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function headerStr(req: http.IncomingMessage, name: string): string {
+  const v = req.headers[name];
+  return typeof v === 'string' ? v : '';
+}
+
+/**
+ * モダン時代のリクエストか（デュアル時代サーバーの時代判別）。
+ * _meta かヘッダで 2026-07-28 以降を宣言している、server/discover を呼んでいる、
+ * または未知の版を宣言している（→ -32022 で supported を返すため modern 側で処理）。
+ */
+function isModernMessage(req: http.IncomingMessage, msg: JsonRpcMessage): boolean {
+  if ((msg.method ?? '') === 'server/discover') return true;
+  const metaVer = metaOf(msg)[META_PROTOCOL_VERSION];
+  if (typeof metaVer === 'string' && metaVer !== '') {
+    return MODERN_VERSIONS.includes(metaVer) || !SUPPORTED_VERSIONS.includes(metaVer);
+  }
+  const headerVer = headerStr(req, 'mcp-protocol-version');
+  if (headerVer === '') return false;
+  return MODERN_VERSIONS.includes(headerVer) || !SUPPORTED_VERSIONS.includes(headerVer);
+}
+
+/** モダン時代の応答（セッションIDヘッダは発行しない） */
+function modernJson(res: http.ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+function modernError(
+  res: http.ServerResponse,
+  status: number,
+  id: number | string | null,
+  code: number,
+  message: string,
+  data?: Record<string, unknown>,
+): void {
+  const error: Record<string, unknown> = { code, message };
+  if (data) error.data = data;
+  modernJson(res, status, { jsonrpc: '2.0', id, error });
+}
+
+/** 2026-07-28 ステートレスコアのリクエストを処理する */
+async function processModernMessage(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  msg: JsonRpcMessage,
+): Promise<void> {
+  const method = msg.method ?? '';
+  const msgId = msg.id ?? null;
+  const meta = metaOf(msg);
+  const metaVer = typeof meta[META_PROTOCOL_VERSION] === 'string'
+    ? (meta[META_PROTOCOL_VERSION] as string)
+    : '';
+  const headerVer = headerStr(req, 'mcp-protocol-version');
+
+  // ヘッダとボディの版宣言は一致必須（400 + HeaderMismatch -32020）
+  if (metaVer && headerVer && metaVer !== headerVer) {
+    modernError(res, 400, msgId, -32020,
+      `Header mismatch: MCP-Protocol-Version header value '${headerVer}' does not match body value '${metaVer}'`);
+    return;
+  }
+
+  const requested = metaVer || headerVer;
+  if (requested && !SUPPORTED_VERSIONS.includes(requested)) {
+    modernError(res, 400, msgId, -32022, 'Unsupported protocol version', {
+      supported: SUPPORTED_VERSIONS,
+      requested,
+    });
+    return;
+  }
+
+  // 2026-07-28 を宣言するリクエストは標準ヘッダの検証が必須。
+  // 版宣言なしの server/discover（プローブ）はヘッダ検証を免除して応答する。
+  if (MODERN_VERSIONS.includes(requested)) {
+    if (!headerVer) {
+      modernError(res, 400, msgId, -32020,
+        'Header mismatch: required MCP-Protocol-Version header is missing');
+      return;
+    }
+    const mcpMethod = headerStr(req, 'mcp-method');
+    if (!mcpMethod) {
+      modernError(res, 400, msgId, -32020,
+        'Header mismatch: required Mcp-Method header is missing');
+      return;
+    }
+    if (mcpMethod !== method) {
+      modernError(res, 400, msgId, -32020,
+        `Header mismatch: Mcp-Method header value '${mcpMethod}' does not match body value '${method}'`);
+      return;
+    }
+    if (method === 'tools/call') {
+      const params = (msg.params ?? {}) as Record<string, unknown>;
+      const bodyName = typeof params.name === 'string' ? params.name : '';
+      const rawName = headerStr(req, 'mcp-name');
+      if (!rawName) {
+        modernError(res, 400, msgId, -32020,
+          'Header mismatch: required Mcp-Name header is missing');
+        return;
+      }
+      if (decodeSentinel(rawName) !== bodyName) {
+        modernError(res, 400, msgId, -32020,
+          `Header mismatch: Mcp-Name header value '${rawName}' does not match body value '${bodyName}'`);
+        return;
+      }
+    }
+  }
+
+  // 通知（モダンコアはHTTP上のクライアント通知を定義しないが、寛容に 202 で受ける）
+  if (msgId === null && method.startsWith('notifications/')) {
+    res.writeHead(202);
+    res.end();
+    return;
+  }
+
+  if (method === 'server/discover') {
+    const version = await upstreamVersion();
+    modernJson(res, 200, {
+      jsonrpc: '2.0',
+      id: msgId,
+      result: {
+        resultType: 'complete',
+        supportedVersions: SUPPORTED_VERSIONS,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'mio-memory', version: `${version}.0` },
+        instructions: INSTRUCTIONS,
+        ttlMs: TOOLS_LIST_TTL_MS,
+        cacheScope: 'private',
+      },
+    });
+    return;
+  }
+
+  if (method === 'subscriptions/listen') {
+    // 長寿命通知ストリーム。本サーバーは listChanged を発行しないため、
+    // acknowledged 通知＋SSEコメント keep-alive のみの最小実装。
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+    });
+    const ack = {
+      jsonrpc: '2.0',
+      method: 'notifications/subscriptions/acknowledged',
+      params: { _meta: { 'io.modelcontextprotocol/subscriptionId': randomUUID() } },
+    };
+    res.write(`event: message\ndata: ${JSON.stringify(ack)}\n\n`);
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 20000);
+    req.on('close', () => clearInterval(keepalive));
+    return;
+  }
+
+  if (method === 'tools/list' || method === 'tools/call') {
+    try {
+      const { status, body } = await forwardToUpstream(msg);
+      let out = body;
+      try {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        const result = parsed.result;
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+          const r = result as Record<string, unknown>;
+          if (!('resultType' in r)) r.resultType = 'complete';
+          if (method === 'tools/list') {
+            if (!('ttlMs' in r)) r.ttlMs = TOOLS_LIST_TTL_MS;
+            if (!('cacheScope' in r)) r.cacheScope = 'private';
+          }
+          out = JSON.stringify(parsed);
+        }
+      } catch {
+        /* 変換不能ならそのまま返す */
+      }
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(out);
+    } catch {
+      modernJson(res, 502, { error: 'upstream unavailable' });
+    }
+    return;
+  }
+
+  // ping・initialize を含む未知メソッド → 404 + Method not found（仕様どおり）
+  modernError(res, 404, msgId, -32601, 'Method not found');
 }
 
 /** 友達トークンか（friends registry に active で存在するか） */
@@ -287,6 +506,13 @@ export async function handleMcp(
       '',
       false,
     );
+    return true;
+  }
+
+  // モダン時代（2026-07-28）: 単一メッセージのみ（バッチは版 2025-06-18 で廃止済み）。
+  // ステートレス処理 — セッションIDは発行も参照もしない
+  if (!Array.isArray(msg) && isModernMessage(req, msg as JsonRpcMessage)) {
+    await processModernMessage(req, res, msg as JsonRpcMessage);
     return true;
   }
 
