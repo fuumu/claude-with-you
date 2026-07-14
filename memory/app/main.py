@@ -3,6 +3,13 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.63 (2026-07-14) - バックアップ復元 import（B1後半・これでB1完結）
+    - POST /api/import/backup: /api/export が生成した ZIP から CoreMem＋ExtMemory を復元
+    - mode=skip（デフォルト・既存は触らない）/ overwrite。dry_run=true で書き込みなしの
+      プレビュー（復元予定件数＋衝突一覧）
+    - CoreMem は版管理（_artifacts_save）経由で新バージョンとして積む — 既存版を破壊しない
+    - ExtMemory は oplog に restore を記録し、復元後に index.json を再構築
+    - export に含まれないストア（conversations・album・uploads 等）には触れない
   v3.61 (2026-07-13) - 統合検索（memory_search include_conversations）
     - memory_search / GET /api/memory/hsearch に include_conversations 引数追加
       （デフォルトfalse・後方互換）。trueで会話ログのタイトルもAND判定で検索し、
@@ -439,7 +446,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.62'
+VERSION = '3.63'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1196,6 +1203,104 @@ def api_export():
     fname = f'mio_backup_{datetime.now(JST).strftime("%Y%m%d_%H%M%S")}.zip'
     return Response(buf.read(), mimetype='application/zip',
                     headers={'Content-Disposition': f'attachment; filename={fname}'})
+
+@app.route('/api/import/backup', methods=['POST'])
+@require_auth
+def import_backup():
+    """B1後半: /api/export が生成した ZIP から CoreMem＋ExtMemory を復元する。
+    file: export ZIP（multipart）
+    mode: skip（デフォルト・既存は触らない）/ overwrite（既存を上書き）
+    dry_run=true: 書き込みなしで復元予定件数と衝突一覧を返す
+    CoreMem は _artifacts_save（版管理）経由で新バージョンとして積む（既存版は破壊しない）。
+    export に含まれないストア（conversations・album・uploads 等）には触れない。"""
+    if 'file' not in request.files:
+        abort(400)
+    f = request.files['file']
+    mode = request.form.get('mode', 'skip').lower()
+    if mode not in ('skip', 'overwrite'):
+        return jsonify({'error': "mode must be 'skip' or 'overwrite'"}), 400
+    dry_run = request.form.get('dry_run', 'false').lower() == 'true'
+
+    result = {
+        'mode': mode, 'dry_run': dry_run,
+        'memory': {'restored': 0, 'skipped': 0, 'overwritten': 0},
+        'coremem': {'restored': 0, 'skipped': 0, 'overwritten': 0},
+        'conflicts': [], 'errors': [],
+    }
+    mem_written = False
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, 'backup.zip')
+        f.save(zip_path)
+        try:
+            zf = zipfile.ZipFile(zip_path, 'r')
+        except zipfile.BadZipFile:
+            return jsonify({'error': 'valid zip file required'}), 400
+        with zf:
+            names = zf.namelist()
+            if not any(n.startswith('extmemory/') or n.startswith('coremem/') for n in names):
+                return jsonify({'error': 'not an export zip (no extmemory/ or coremem/)'}), 400
+            if 'export_meta.json' in names:
+                try:
+                    result['export_meta'] = json.loads(zf.read('export_meta.json').decode('utf-8'))
+                except Exception:
+                    pass
+
+            # ExtMemory（/data/memory/*.json）。index.json は復元せず最後に rebuild する
+            for n in sorted(names):
+                if not (n.startswith('extmemory/memory/') and n.endswith('.json')):
+                    continue
+                fn = os.path.basename(n)
+                entry_id = fn[:-len('.json')]
+                try:
+                    entry = json.loads(zf.read(n).decode('utf-8'))
+                except Exception:
+                    result['errors'].append(f'memory:{entry_id}: parse error')
+                    continue
+                dest = os.path.join(DATA_DIR, fn)
+                exists = os.path.exists(dest)
+                if exists and mode == 'skip':
+                    result['memory']['skipped'] += 1
+                    result['conflicts'].append(f'memory:{entry_id}')
+                    continue
+                if not dry_run:
+                    before = None
+                    if exists:
+                        try:
+                            with open(dest) as ef:
+                                before = json.load(ef)
+                        except Exception:
+                            before = None
+                    with open(dest, 'w') as wf:
+                        json.dump(entry, wf, ensure_ascii=False, indent=2)
+                    append_oplog('restore', entry_id, before, entry)
+                    mem_written = True
+                result['memory']['overwritten' if exists else 'restored'] += 1
+
+            # CoreMem（版管理経由で新バージョンとして保存）
+            for n in sorted(names):
+                if not n.startswith('coremem/') or n.endswith('/'):
+                    continue
+                name = n[len('coremem/'):]
+                if not name or not _validate_artifact_name(name):
+                    result['errors'].append(f'coremem:{name}: invalid name')
+                    continue
+                try:
+                    content = zf.read(n).decode('utf-8')
+                except Exception:
+                    result['errors'].append(f'coremem:{name}: read error')
+                    continue
+                exists = 'content' in _artifacts_read(name)
+                if exists and mode == 'skip':
+                    result['coremem']['skipped'] += 1
+                    result['conflicts'].append(f'coremem:{name}')
+                    continue
+                if not dry_run:
+                    _artifacts_save(name, content)
+                result['coremem']['overwritten' if exists else 'restored'] += 1
+
+    if mem_written:
+        rebuild_index()
+    return jsonify(result)
 
 @app.route('/api/memory/search')
 @require_auth

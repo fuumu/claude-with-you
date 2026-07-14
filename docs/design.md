@@ -631,15 +631,27 @@ An annotation layer for audits and re-experiencing sessions. Design principle:
 Intended for surveying/clustering similar entries and as a future cascade entry point.
 No MCP tool; REST only.
 
-### reindex and backup export (v3.46)
+### reindex and backup export (v3.46) / restore import (v3.63)
 
 - `POST /api/memory/reindex` — calls `rebuild_index()` explicitly. Normally the index is rebuilt
   automatically on write/update/delete, but this lets you reflect changes (e.g. after regenerating
   symbolic/keywords layers) without a dummy write.
 - `GET /api/export` — read-only backup ZIP of CoreMem (latest content of each file) + ExtMemory
   (`memory/*.json` plus `index.json`), as B1's first half. Layout: `coremem/` + `extmemory/` +
-  `export_meta.json`. Latest snapshot only (no version history). Restore (import) involves writes and
-  is to be implemented separately, with care.
+  `export_meta.json`. Latest snapshot only (no version history).
+- `POST /api/import/backup` (v3.63, B1 second half) — accepts an export ZIP as multipart (`file`)
+  and restores it.
+  - `mode=skip` (default): existing ExtMemory IDs / CoreMem names are left untouched and listed in
+    `conflicts[]`. `mode=overwrite`: existing data is overwritten
+  - `dry_run=true`: returns the would-be counts (restored/skipped/overwritten) and conflicts
+    without writing anything
+  - CoreMem is restored through `_artifacts_save` (versioning), **stacked as a new version** — the
+    pre-overwrite content stays reachable via version-specific reads
+  - ExtMemory restores are logged to the oplog as `restore` operations, and `index.json` is rebuilt
+    afterwards
+  - Stores not covered by export (conversations, album, uploads, etc.) are never touched
+  - This completes B1 (backup & restore): keep an export ZIP → import it into a new environment
+    is now the single path for memory migration and disaster recovery
 
 ---
 

@@ -85,6 +85,7 @@ command in `tests/conftest.py`.
 | POST | `/api/memory/share/<id>` | Issue share token |
 | GET | `/api/share/<token>` | Entry without auth (24h expiry) |
 | GET | `/api/export` | ZIP of CoreMem + ExtMemory |
+| POST | `/api/import/backup` | Restore from an export ZIP (multipart `file`, `mode=skip/overwrite`, `dry_run=true`). Response `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`. Bad ZIP / wrong structure / bad mode → 400 (v3.63; contract pinned in tests/test_backup_restore.py) |
 
 ## 4. MCP transport (`/mcp`)
 

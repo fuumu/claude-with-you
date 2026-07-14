@@ -45,7 +45,7 @@ main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScrip
   inbox.ts / coremem.ts（symlink 版管理・コピーフォールバック互換）/
   conversations.ts（会話 REST・share_tokens.json 互換）
 - 依存ゼロ（node:http のみ）。SSE・チャンク対応
-- `MIO_TS1=1 pytest tests/` で二段構成起動 → **100件全パス確認済み**（直接モードは85件パス＋
+- `MIO_TS1=1 pytest tests/` で二段構成起動 → **105件全パス確認済み**（直接モードは90件パス＋
   15件skip — MCP 2026-07-28 特性テストは TS 層のみの実装のため Python 単体では skip）
 - ビルド: `cd ts && npm install && npx tsc` → `node dist/index.js`
 - 環境変数: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` /

@@ -629,13 +629,23 @@ conversation_share(uuid: str)
 （symbolic が空＝3層未生成のものは除外、読み取り専用）。俯瞰して似たエントリを束ねる・
 将来のカスケード入口としての利用を想定。MCP ツールは設けず REST のみ。
 
-### reindex とバックアップ export（v3.46）
+### reindex とバックアップ export（v3.46）／復元 import（v3.63）
 
 - `POST /api/memory/reindex` — `rebuild_index()` を明示的に呼ぶ。通常は write/update/delete で
   自動再構築されるが、層（symbolic/keywords）の再生成後など、ダミー書き込みなしで確定反映したい場合に使う。
 - `GET /api/export` — CoreMem（各ファイルの最新版本文）＋ ExtMemory（`memory/*.json` 全件＋`index.json`）を
   ZIP で返す読み取り専用バックアップ（B1 前半）。`coremem/` ＋ `extmemory/` ＋ `export_meta.json` の構成。
-  版履歴は含まず最新スナップショットのみ。復元（import）は書き込みを伴うため別途・慎重に実装予定。
+  版履歴は含まず最新スナップショットのみ。
+- `POST /api/import/backup`（v3.63・B1 後半）— export の ZIP を multipart（`file`）で受けて復元する。
+  - `mode=skip`（デフォルト）: 既存の ExtMemory ID・CoreMem 名は触らず `conflicts[]` に列挙。
+    `mode=overwrite`: 既存を上書き
+  - `dry_run=true`: 書き込みなしで復元予定件数（restored/skipped/overwritten）と衝突一覧を返す
+  - CoreMem は `_artifacts_save`（版管理）経由で**新バージョンとして積む** — 既存版は破壊されず、
+    上書き前の内容にも版指定読みで戻れる
+  - ExtMemory は oplog に `restore` 操作を記録し、復元後に `index.json` を再構築
+  - export に含まれないストア（conversations・album・uploads 等）には触れない
+  - これで B1（バックアップ＆復元）が完結: 「export ZIP を保管 → 新環境に import」の一本道で
+    記憶の引っ越し・災害復旧ができる
 
 ---
 

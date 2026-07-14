@@ -82,6 +82,7 @@ python -m venv .venv
 | POST | `/api/memory/share/<id>` | 共有トークン発行 |
 | GET | `/api/share/<token>` | 認証不要でエントリ返却（24h期限） |
 | GET | `/api/export` | CoreMem+ExtMemory の ZIP |
+| POST | `/api/import/backup` | export ZIP から復元（multipart `file`・`mode=skip/overwrite`・`dry_run=true`）。応答 `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`。ZIP不正・構造不一致・不正modeは400（v3.63・契約は tests/test_backup_restore.py） |
 
 ## 4. MCP トランスポート（`/mcp`）
 

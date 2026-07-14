@@ -48,8 +48,8 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
   with copy fallback, Python-compatible) / conversations.ts (conversation REST,
   share_tokens.json-compatible)
 - Zero dependencies (node:http only); SSE/chunked OK
-- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 100 tests pass**
-  (direct mode: 85 pass + 15 skipped — the MCP 2026-07-28 characterization tests
+- `MIO_TS1=1 pytest tests/` boots the two-tier stack → **all 105 tests pass**
+  (direct mode: 90 pass + 15 skipped — the MCP 2026-07-28 characterization tests
   only run against the TS layer, where the new spec is implemented)
 - Build: `cd ts && npm install && npx tsc` → `node dist/index.js`
 - Env vars: `MIO_PORT` / `MIO_UPSTREAM_HOST` / `MIO_UPSTREAM_PORT` / `MIO_DATA_ROOT` /
