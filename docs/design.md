@@ -653,6 +653,26 @@ No MCP tool; REST only.
   - This completes B1 (backup & restore): keep an export ZIP → import it into a new environment
     is now the single path for memory migration and disaster recovery
 
+#### admin.html backup UI (v3.64, B1-UI)
+
+A "Backup (CoreMem + ExtMemory)" section at the end of the Import tab. The API stays at v3.63,
+unchanged.
+
+- **Download side**: a "📦 Download backup ZIP" button. Direct browser download via
+  `GET /api/export?token=<token>` query-token auth (same scheme as the authenticated download
+  links on the Uploads tab)
+- **Restore side (mandatory two-step flow)**: ZIP drag & drop / file picker → mode selection
+  (skip = protect existing (default) / overwrite, each with a short explanation) →
+  "1. Preview (dry run)" runs `dry_run=true` and shows a count table (ExtMemory / CoreMem ×
+  restored/skipped/overwritten) plus a collapsible conflict list → the user reviews and presses
+  "2. Run restore" for the real run. **The real run cannot be reached without a preview**
+  (the run button appears only after a successful preview, and changing the mode requires a new
+  preview). Running in overwrite mode additionally asks for a confirm dialog
+- i18n (ja/en, `backup.*` keys) and mobile responsive (the result table scrolls horizontally)
+- Goal: backup operations work entirely without curl. Especially during disaster recovery (right
+  after standing up a fresh environment) a command line may not be available, so the browser-only
+  path matters
+
 ---
 
 ## 11. memory_share MCP tool + admin.html Memory keyword search

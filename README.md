@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.62","mcp_tool_count":31}
+# {"status":"ok","version":"3.64","mcp_tool_count":31}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -349,7 +349,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 |-----|-----------------|
 | **Memory** | Browse, search, read, and edit memory entries |
 | **CoreMem** | View UserCoreMemory files, content preview, and delete |
-| **Import** | Upload Claude.ai export ZIP; overwrite mode for re-processing |
+| **Import** | Upload Claude.ai export ZIP; overwrite mode for re-processing; backup download/restore (v3.64) |
 | **Files** | Browse files extracted from conversation tool-use blocks |
 | **Inbox** | Read messages between Claude Code and Claude.ai sessions |
 | **Logs** | Search and read full conversation history |
@@ -606,6 +606,7 @@ claude-with-you/
 - TS-1 ring 3 complete: coremem / conversations REST in TypeScript (2026-07-14) — new `ts/src/coremem.ts` / `ts/src/conversations.ts`. Coremem (list, save 201, version-specific reads, manifest merge, delete-all-versions; symlink version management uses the same symlink→copy fallback, and version numbering was live-verified to continue sequentially across implementations) and conversations (search q/from/to/body_search, index paging, rebuild, fetch, annotations list, share/view, rating PATCH) are now TS-native. Only digest (needs a local LLM) stays forwarded to Python until ring 5. The conversation _index.json rebuilt by TS is **byte-identical** to Python's; share-token interop and Python-side gating of TS-set ratings live-verified. 15 new REST characterization tests (coremem 7, conversations 8) → **85 tests pass in both modes**. No main.py changes; production stays Python-only
 - MCP 2026-07-28 spec: early RC implementation (2026-07-14) — the breaking new spec (final publication July 28, RC locked) is now implemented ahead of time in `ts/src/mcp.ts` / `oauth.ts` as a **dual-era server** (old and new coexist on the same endpoint). ① Stateless core: every request is processed independently without initialize/sessions (protocol version and client info travel in `_meta` keys like `io.modelcontextprotocol/protocolVersion`); legacy clients (initialize + `Mcp-Session-Id`) keep working unchanged ② `server/discover` (MUST) implemented — supportedVersions/capabilities/serverInfo/instructions/ttlMs/cacheScope ③ Required header validation: `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` are checked against the body (mismatch → 400 + `-32020 HeaderMismatch`), unsupported versions → 400 + `-32022 UnsupportedProtocolVersion` (with the supported list), removed methods such as ping → 404 + `-32601` ④ `resultType: "complete"` added to all results and `ttlMs`/`cacheScope` to `tools/list` (injected on demand; Python forwarding retained) ⑤ minimal `subscriptions/listen` (acknowledged + keep-alive SSE) ⑥ OAuth hardening: `iss` on authorization responses (RFC 9207), `application_type` accepted in DCR, **refresh tokens** (`grant_type=refresh_token`, rotated on every use, scope narrowing allowed), RFC 8414 path-suffix discovery. 15 new characterization tests (`tests/test_mcp_2026.py`; skipped in Python-only mode since the new spec lives in the TS layer) → **100 tests pass in TS1 mode / 85 in Python-only mode**. No main.py changes; final diff against the official July 28 release still pending
 - Backup restore import (v3.63, completes B1) — new `POST /api/import/backup`. Accepts the ZIP produced by `GET /api/export` (v3.46, B1 first half) as multipart and restores CoreMem + ExtMemory. `mode=skip` (default; existing data untouched and listed in conflicts) / `mode=overwrite`, and `dry_run=true` for a write-free preview (counts + conflict list). CoreMem is restored through versioning as a new stacked version, so existing versions are never destroyed. ExtMemory restores are logged to the oplog as `restore` and the index is rebuilt afterwards. Stores not covered by export (conversations, album, etc.) are never touched. 5 new characterization tests (round-trip, skip/overwrite/dry_run, invalid input) → **all pass in both modes (TS1: 105 / Python-only: 90 + 15 skipped)**. Memory migration and disaster recovery are now a single path: keep an export ZIP → import it into a new environment
+- admin.html backup UI (v3.64, B1-UI) — new "Backup (CoreMem + ExtMemory)" section on the Import tab. Download side: an authenticated download button for `GET /api/export`. Restore side: ZIP drag & drop / file picker → mode selection (skip = protect existing (default) / overwrite, each with a short explanation) → **dry-run preview (counts + conflict list) → confirm and run** as a mandatory two-step flow (no one-click destructive restore). i18n (ja/en) and mobile responsive. No API changes (uses v3.63 as-is). Backup download and restore now work entirely from the browser — no curl needed, which matters most right after standing up a fresh environment during disaster recovery
 
 ---
 

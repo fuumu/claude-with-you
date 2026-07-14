@@ -49,13 +49,13 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 **Three layers in one file:**
 
-1. **REST API** (`/api/memory/*`) — CRUD for memory entries with Bearer token auth. Supports both `Authorization: Bearer <token>` header and legacy path-embedded token (`/api/<token>/memory/...`). Backup: `GET /api/export` (CoreMem + ExtMemory ZIP, v3.46) / `POST /api/import/backup` (restore with `mode=skip/overwrite`, `dry_run=true` preview; CoreMem restored as new stacked versions, oplog `restore` entries, index rebuild — v3.63, completes B1).
+1. **REST API** (`/api/memory/*`) — CRUD for memory entries with Bearer token auth. Supports both `Authorization: Bearer <token>` header and legacy path-embedded token (`/api/<token>/memory/...`). Backup: `GET /api/export` (CoreMem + ExtMemory ZIP, v3.46) / `POST /api/import/backup` (restore with `mode=skip/overwrite`, `dry_run=true` preview; CoreMem restored as new stacked versions, oplog `restore` entries, index rebuild — v3.63, completes B1). admin.html Import tab has a backup download/restore UI (two-step dry-run preview → run, v3.64).
 
 2. **OAuth 2.1 + Dynamic Client Registration** — enables Claude.ai to authenticate without a pre-shared API token. Endpoints: `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`. PKCE (S256 and plain) is required. Auth codes expire in 10 minutes; access tokens last 30 days and are persisted to `oauth_store.json`.
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.63 — 31 regular-session tools):**
+**MCP tools exposed (v3.64 — 31 regular-session tools):**
 
 All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 

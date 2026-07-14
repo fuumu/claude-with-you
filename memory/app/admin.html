@@ -714,6 +714,34 @@
       <button class="copy-btn" id="copy-btn" onclick="copyCmd()">コピー</button>
     </div>
   </div>
+
+  <!-- Backup download & restore (B1-UI, v3.64) -->
+  <div class="batch-section" id="backup-section">
+    <h3 data-i18n="backup.title">バックアップ（CoreMem＋ExtMemory）</h3>
+    <p data-i18n="backup.desc">CoreMem最新版とExtMemory全件をZIPで取得・復元できます。会話ログ・アルバム・アップロードは対象外です。</p>
+    <div style="margin-bottom:1rem">
+      <button class="btn btn-secondary" onclick="downloadBackup()" data-i18n="backup.download">📦 バックアップZIPをダウンロード</button>
+    </div>
+    <div class="drop-zone" id="backup-drop-zone" style="padding:1.5rem">
+      <div class="icon">♻️</div>
+      <p data-i18n="backup.drop">バックアップZIPをここにドロップして復元</p>
+      <input type="file" id="backup-file-input" accept=".zip" style="display:none" onchange="backupSelectFile(this.files[0])">
+      <button class="btn btn-secondary" onclick="document.getElementById('backup-file-input').click()" data-i18n="backup.choose">ファイルを選択</button>
+    </div>
+    <div id="backup-restore-panel" style="display:none;margin-top:.9rem">
+      <div style="font-size:.85rem;color:#c8d8e8;margin-bottom:.6rem">📄 <span id="backup-filename"></span></div>
+      <div style="display:flex;flex-direction:column;gap:.35rem;font-size:.83rem;color:#7a8a9a;margin-bottom:.85rem">
+        <label style="cursor:pointer"><input type="radio" name="backup-mode" value="skip" checked style="accent-color:#7ec8e3"> <b>skip</b> — <span data-i18n="backup.mode.skip">既存エントリは触らない（安全・デフォルト）</span></label>
+        <label style="cursor:pointer"><input type="radio" name="backup-mode" value="overwrite" style="accent-color:#e67e22"> <b>overwrite</b> — <span data-i18n="backup.mode.overwrite">既存エントリをZIPの内容で上書きする</span></label>
+      </div>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="backup-preview-btn" onclick="backupPreview()" data-i18n="backup.preview">1. プレビュー（dry run）</button>
+        <button class="btn" id="backup-execute-btn" onclick="backupExecute()" style="display:none" data-i18n="backup.execute">2. 復元を実行</button>
+        <button class="btn btn-secondary" onclick="backupReset()" data-i18n="backup.cancel">キャンセル</button>
+      </div>
+    </div>
+    <div id="backup-result" style="margin-top:.9rem;font-size:.85rem"></div>
+  </div>
 </div>
 
 <!-- Oplog tab -->
@@ -923,7 +951,7 @@ const TAB_HELP = {
     Inbox:   '澪チャット↔澪コード間のメッセージ（完了報告・伝言）',
     Logs:    'インポートしたClaude.ai会話ログのビューア（共有・お気に入り）',
     Files:   '会話から抽出されたファイル（conv_artifacts）',
-    Import:  'Claude.aiエクスポートZIPの取り込み＋要約バッチ進捗',
+    Import:  'Claude.aiエクスポートZIPの取り込み＋要約バッチ進捗＋バックアップ取得/復元',
     Friends: 'お友達システムの登録・承認・コード管理',
     Oplog:   '記憶操作の操作ログ（システム）',
     Album:   'アルバム（澪の画像記憶）。サムネイル一覧・アップロード・共有',
@@ -937,7 +965,7 @@ const TAB_HELP = {
     Inbox:   'Messages between Mio-chat and Mio-code (reports, handoffs)',
     Logs:    'Viewer for imported Claude.ai conversation logs (share, favorites)',
     Files:   'Files extracted from conversations (conv_artifacts)',
-    Import:  'Import Claude.ai export ZIP + summary batch progress',
+    Import:  'Import Claude.ai export ZIP + summary batch progress + backup download/restore',
     Friends: 'Friend system: registration, approval, codes',
     Oplog:   'Memory operation log (system)',
     Uploads: 'Uploaded files (general-purpose file storage: PDF, text, etc.)',
@@ -995,6 +1023,29 @@ const I18N = {
   'friends.revoked':   { ja: '失効済み', en: 'Revoked' },
   // Import
   'import.last':       { ja: '最終インポート：', en: 'Last import:' },
+  // Backup (B1-UI, v3.64)
+  'backup.title':      { ja: 'バックアップ（CoreMem＋ExtMemory）', en: 'Backup (CoreMem + ExtMemory)' },
+  'backup.desc':       { ja: 'CoreMem最新版とExtMemory全件をZIPで取得・復元できます。会話ログ・アルバム・アップロードは対象外です。', en: 'Download / restore a ZIP of the latest CoreMem files and all ExtMemory entries. Conversations, album, and uploads are not included.' },
+  'backup.download':   { ja: '📦 バックアップZIPをダウンロード', en: '📦 Download backup ZIP' },
+  'backup.drop':       { ja: 'バックアップZIPをここにドロップして復元', en: 'Drop a backup ZIP here to restore' },
+  'backup.choose':     { ja: 'ファイルを選択', en: 'Choose file' },
+  'backup.mode.skip':      { ja: '既存エントリは触らない（安全・デフォルト）', en: 'leave existing entries untouched (safe, default)' },
+  'backup.mode.overwrite': { ja: '既存エントリをZIPの内容で上書きする', en: 'overwrite existing entries with ZIP contents' },
+  'backup.preview':    { ja: '1. プレビュー（dry run）', en: '1. Preview (dry run)' },
+  'backup.execute':    { ja: '2. 復元を実行', en: '2. Run restore' },
+  'backup.cancel':     { ja: 'キャンセル', en: 'Cancel' },
+  'backup.needzip':    { ja: 'ZIPファイルを選択してください', en: 'Please choose a ZIP file' },
+  'backup.previewing': { ja: 'プレビュー実行中...', en: 'Running preview...' },
+  'backup.restoring':  { ja: '復元実行中...', en: 'Restoring...' },
+  'backup.previewed':  { ja: 'プレビュー結果（まだ書き込みしていません）— 内容を確認して「復元を実行」を押してください', en: 'Preview result (nothing written yet) — review and press "Run restore"' },
+  'backup.done':       { ja: '✓ 復元完了', en: '✓ Restore complete' },
+  'backup.confirm.ow': { ja: 'overwriteモードで復元します。既存エントリがZIPの内容で上書きされます。よろしいですか？', en: 'Restore in overwrite mode? Existing entries will be overwritten with ZIP contents.' },
+  'backup.restored':   { ja: '復元', en: 'restored' },
+  'backup.skipped':    { ja: 'スキップ', en: 'skipped' },
+  'backup.overwritten':{ ja: '上書き', en: 'overwritten' },
+  'backup.conflicts':  { ja: '衝突（既存と重複するID）', en: 'Conflicts (IDs that already exist)' },
+  'backup.errors':     { ja: 'エラー', en: 'Errors' },
+  'backup.commfail':   { ja: '通信エラー', en: 'Request failed' },
   // Inbox / Files 共通
   'inbox.all':         { ja: 'すべて', en: 'All' },
   'files.search.ph':   { ja: '🔍 ファイル名・会話名で検索...', en: '🔍 Search by file or conversation name...' },
@@ -1398,6 +1449,110 @@ async function handleFile(file) {
 
 function showResult(html) {
   document.getElementById('import-result').innerHTML = html;
+}
+
+// ── Backup download & restore (B1-UI, v3.64) ──────────────────────────
+let _backupFile = null;
+
+function downloadBackup() {
+  window.location.href = `${API}/api/export?token=${encodeURIComponent(getToken())}`;
+}
+
+const backupDropZone = document.getElementById('backup-drop-zone');
+backupDropZone.addEventListener('dragover',  e => { e.preventDefault(); backupDropZone.classList.add('drag-over'); });
+backupDropZone.addEventListener('dragleave', () => backupDropZone.classList.remove('drag-over'));
+backupDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  backupDropZone.classList.remove('drag-over');
+  backupSelectFile(e.dataTransfer.files[0]);
+});
+
+function backupSelectFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.zip')) {
+    showBackupResult(`<span class="result-err">${t('backup.needzip')}</span>`);
+    return;
+  }
+  _backupFile = file;
+  document.getElementById('backup-filename').textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+  document.getElementById('backup-restore-panel').style.display = 'block';
+  document.getElementById('backup-execute-btn').style.display = 'none';  // 実行はプレビュー後のみ
+  showBackupResult('');
+}
+
+function backupReset() {
+  _backupFile = null;
+  document.getElementById('backup-file-input').value = '';
+  document.getElementById('backup-restore-panel').style.display = 'none';
+  showBackupResult('');
+}
+
+function backupMode() {
+  return document.querySelector('input[name="backup-mode"]:checked').value;
+}
+
+// mode を変えたらプレビューからやり直し（実行ボタンを隠す）
+document.querySelectorAll('input[name="backup-mode"]').forEach(r =>
+  r.addEventListener('change', () => { document.getElementById('backup-execute-btn').style.display = 'none'; }));
+
+function showBackupResult(html) {
+  document.getElementById('backup-result').innerHTML = html;
+}
+
+async function backupRun(dryRun) {
+  const form = new FormData();
+  form.append('file', _backupFile);
+  form.append('mode', backupMode());
+  form.append('dry_run', dryRun ? 'true' : 'false');
+  const res = await apiFetch('/api/import/backup', { method: 'POST', body: form });
+  return res.json();
+}
+
+function backupSummaryHtml(d, heading) {
+  const row = (label, s) =>
+    `<tr><td style="padding:.2rem .6rem;border:1px solid #2a3a5a;color:#7a8a9a">${label}</td>` +
+    `<td style="padding:.2rem .6rem;border:1px solid #2a3a5a">${t('backup.restored')} ${s.restored || 0}</td>` +
+    `<td style="padding:.2rem .6rem;border:1px solid #2a3a5a">${t('backup.skipped')} ${s.skipped || 0}</td>` +
+    `<td style="padding:.2rem .6rem;border:1px solid #2a3a5a">${t('backup.overwritten')} ${s.overwritten || 0}</td></tr>`;
+  let html = `<div style="color:#c8d8e8;margin-bottom:.5rem">${heading}</div>`;
+  html += `<div style="overflow-x:auto;margin-bottom:.5rem"><table style="border-collapse:collapse;margin:0 auto;font-size:.83rem;color:#c8d8e8">` +
+          row('ExtMemory', d.memory || {}) + row('CoreMem', d.coremem || {}) + `</table></div>`;
+  const conflicts = d.conflicts || [];
+  if (conflicts.length) {
+    const shown = conflicts.slice(0, 20).map(esc).join('<br>');
+    const more  = conflicts.length > 20 ? `<br>… +${conflicts.length - 20}` : '';
+    html += `<details style="color:#7a8a9a;margin-bottom:.4rem"><summary style="cursor:pointer">⚠ ${t('backup.conflicts')}: ${conflicts.length}</summary>` +
+            `<div style="font-family:monospace;font-size:.78rem;margin-top:.35rem;max-height:200px;overflow-y:auto">${shown}${more}</div></details>`;
+  }
+  const errors = d.errors || [];
+  if (errors.length) {
+    html += `<div class="result-err">${t('backup.errors')}: ${errors.map(esc).join(' / ')}</div>`;
+  }
+  return html;
+}
+
+async function backupPreview() {
+  if (!_backupFile) return;
+  showBackupResult(`<span class="spinner"></span>${t('backup.previewing')}`);
+  try {
+    const d = await backupRun(true);
+    showBackupResult(backupSummaryHtml(d, `🔍 ${t('backup.previewed')}`));
+    document.getElementById('backup-execute-btn').style.display = '';
+  } catch (e) {
+    if (e.message !== '401') showBackupResult(`<span class="result-err">${t('backup.commfail')}: ${esc(e.message)}</span>`);
+  }
+}
+
+async function backupExecute() {
+  if (!_backupFile) return;
+  if (backupMode() === 'overwrite' && !confirm(t('backup.confirm.ow'))) return;
+  showBackupResult(`<span class="spinner"></span>${t('backup.restoring')}`);
+  try {
+    const d = await backupRun(false);
+    showBackupResult(backupSummaryHtml(d, `<span class="result-ok">${t('backup.done')}</span>`));
+    document.getElementById('backup-execute-btn').style.display = 'none';
+  } catch (e) {
+    if (e.message !== '401') showBackupResult(`<span class="result-err">${t('backup.commfail')}: ${esc(e.message)}</span>`);
+  }
 }
 
 function copyCmd() {

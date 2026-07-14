@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.64 (2026-07-14) - admin.html バックアップUI（B1-UI・API変更なし）
+    - Import タブに「バックアップ（CoreMem＋ExtMemory）」セクション新設
+    - 取得側: GET /api/export の認証付きダウンロードボタン（?token= 方式）
+    - 復元側: ZIPドロップ/選択 → mode 選択（skip/overwrite）→ dry_run プレビュー
+      （件数＋衝突一覧表示）→ 確認して本実行、の2段階フロー。いきなり本実行はさせない
+    - i18n（日英）対応。main.py はバージョン番号のみ変更
   v3.63 (2026-07-14) - バックアップ復元 import（B1後半・これでB1完結）
     - POST /api/import/backup: /api/export が生成した ZIP から CoreMem＋ExtMemory を復元
     - mode=skip（デフォルト・既存は触らない）/ overwrite。dry_run=true で書き込みなしの
@@ -446,7 +452,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.63'
+VERSION = '3.64'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
