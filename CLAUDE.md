@@ -55,7 +55,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.64 — 31 regular-session tools):**
+**MCP tools exposed (v3.65 — 31 regular-session tools):**
 
 All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 
@@ -128,6 +128,7 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | `ANTHROPIC_API_KEY` | *(empty)* | If set, auto-starts summary batch after ZIP import |
 | `LM_STUDIO_HOST` | `192.168.10.32` | LMStudio host for manual batch runs |
 | `LM_STUDIO_PORT` | `1234` | LMStudio port |
+| `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | LMStudio model for local LLM work — summary batch and conversation digest (v3.65) |
 | `MIO_NIGHTLY_BATCH_HOUR` | `3` | Hour (JST, 0-23) for nightly summary batch; `off` disables |
 | `MIO_NIGHTLY_BATCH_BACKEND` | `lmstudio` | Backend for the nightly batch (`lmstudio` / `anthropic`) |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails |

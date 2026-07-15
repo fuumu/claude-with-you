@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.64","mcp_tool_count":31}
+# {"status":"ok","version":"3.65","mcp_tool_count":31}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -502,6 +502,7 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
 | `LM_STUDIO_HOST` | `192.168.x.x` | LM Studio host for local summarization (replace with your own IP) |
 | `LM_STUDIO_PORT` | `1234` | LM Studio port |
+| `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | LM Studio model used for local LLM work (summary batch, conversation digest) (v3.65) |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails (Mail Send scope) |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to `MIO_BASE_URL`) |
@@ -607,6 +608,7 @@ claude-with-you/
 - MCP 2026-07-28 spec: early RC implementation (2026-07-14) — the breaking new spec (final publication July 28, RC locked) is now implemented ahead of time in `ts/src/mcp.ts` / `oauth.ts` as a **dual-era server** (old and new coexist on the same endpoint). ① Stateless core: every request is processed independently without initialize/sessions (protocol version and client info travel in `_meta` keys like `io.modelcontextprotocol/protocolVersion`); legacy clients (initialize + `Mcp-Session-Id`) keep working unchanged ② `server/discover` (MUST) implemented — supportedVersions/capabilities/serverInfo/instructions/ttlMs/cacheScope ③ Required header validation: `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` are checked against the body (mismatch → 400 + `-32020 HeaderMismatch`), unsupported versions → 400 + `-32022 UnsupportedProtocolVersion` (with the supported list), removed methods such as ping → 404 + `-32601` ④ `resultType: "complete"` added to all results and `ttlMs`/`cacheScope` to `tools/list` (injected on demand; Python forwarding retained) ⑤ minimal `subscriptions/listen` (acknowledged + keep-alive SSE) ⑥ OAuth hardening: `iss` on authorization responses (RFC 9207), `application_type` accepted in DCR, **refresh tokens** (`grant_type=refresh_token`, rotated on every use, scope narrowing allowed), RFC 8414 path-suffix discovery. 15 new characterization tests (`tests/test_mcp_2026.py`; skipped in Python-only mode since the new spec lives in the TS layer) → **100 tests pass in TS1 mode / 85 in Python-only mode**. No main.py changes; final diff against the official July 28 release still pending
 - Backup restore import (v3.63, completes B1) — new `POST /api/import/backup`. Accepts the ZIP produced by `GET /api/export` (v3.46, B1 first half) as multipart and restores CoreMem + ExtMemory. `mode=skip` (default; existing data untouched and listed in conflicts) / `mode=overwrite`, and `dry_run=true` for a write-free preview (counts + conflict list). CoreMem is restored through versioning as a new stacked version, so existing versions are never destroyed. ExtMemory restores are logged to the oplog as `restore` and the index is rebuilt afterwards. Stores not covered by export (conversations, album, etc.) are never touched. 5 new characterization tests (round-trip, skip/overwrite/dry_run, invalid input) → **all pass in both modes (TS1: 105 / Python-only: 90 + 15 skipped)**. Memory migration and disaster recovery are now a single path: keep an export ZIP → import it into a new environment
 - admin.html backup UI (v3.64, B1-UI) — new "Backup (CoreMem + ExtMemory)" section on the Import tab. Download side: an authenticated download button for `GET /api/export`. Restore side: ZIP drag & drop / file picker → mode selection (skip = protect existing (default) / overwrite, each with a short explanation) → **dry-run preview (counts + conflict list) → confirm and run** as a mandatory two-step flow (no one-click destructive restore). i18n (ja/en) and mobile responsive. No API changes (uses v3.63 as-is). Backup download and restore now work entirely from the browser — no curl needed, which matters most right after standing up a fresh environment during disaster recovery
+- Local LLM model name externalized (v3.65) — the lmstudio model name hardcoded in the summary batch and `conversation_digest` (`qwen/qwen3.6-35b-a3b`) moved to the `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`). Unifying all local LLM work on the everyday model stops LM Studio from on-demand double-loading a second model onto the CPU side
 
 ---
 

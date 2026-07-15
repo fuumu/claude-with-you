@@ -327,7 +327,7 @@ data/artifacts/
 バックエンドは自動選択：
 
 - `ANTHROPIC_API_KEY` あり → `anthropic`（`claude-haiku-4-5-20251001`）
-- なし → `lmstudio`（`LM_STUDIO_HOST:LM_STUDIO_PORT` の Qwen3、課金なし）
+- なし → `lmstudio`（`LM_STUDIO_HOST:LM_STUDIO_PORT` の `MIO_LM_MODEL` モデル、課金なし）
 
 **実装箇所：** `import_zip()` 末尾 → `_start_summary_batch()` ヘルパー（`memory/app/main.py`）
 
@@ -442,7 +442,7 @@ anthropic / LMStudio API で生成:
 | 処理分岐 | `raw` → 会話全文から2層3層4層を生成し body に追記・`summarized` タグ付与／`raw` でなく keywords 未生成（summarized済み or **memory_write 由来の本文エントリ**）→ 本文（または2層要約）から**キーワードのみ生成**し `keywords` だけ更新（body・tags は変更しない・v3.48） |
 | スキップ条件 | 2層3層マーカーが揃い **かつ** `keywords` 生成済み |
 | 使用モデル（anthropic） | `claude-haiku-4-5-20251001` |
-| 使用モデル（lmstudio） | `qwen/qwen3.6-35b-a3b` |
+| 使用モデル（lmstudio） | `MIO_LM_MODEL` 環境変数（デフォルト `google/gemma-4-26b-a4b`・v3.65） |
 | レート制限 | 処理間 0.5秒スリープ |
 | 冪等性 | マーカー＋`keywords` の有無でチェック（生成後は対象から外れる） |
 
@@ -465,7 +465,7 @@ anthropic / LMStudio API で生成:
 | バックエンド | デフォルトモデル | 他の候補 |
 |-------------|----------------|---------|
 | anthropic | `claude-haiku-4-5-20251001` | — |
-| lmstudio | `qwen/qwen3.6-35b-a3b` | `google/gemma-4-26b-a4b`、`liquid/lfm2-24b-a2b` |
+| lmstudio | `MIO_LM_MODEL` 環境変数（デフォルト `google/gemma-4-26b-a4b`） | `qwen/qwen3.6-35b-a3b`、`liquid/lfm2-24b-a2b` |
 
 **必要な環境変数（CLIスクリプト用）：**
 
@@ -476,6 +476,7 @@ anthropic / LMStudio API で生成:
 | `MIO_SERVER_URL` | mio-memoryサーバーURL | `http://localhost:5002` |
 | `LM_STUDIO_HOST` | LMStudioホスト（lmstudioバックエンド） | `192.168.10.32` |
 | `LM_STUDIO_PORT` | LMStudioポート | `1234` |
+| `MIO_LM_MODEL` | lmstudioバックエンドで使うモデル名（v3.65） | `google/gemma-4-26b-a4b` |
 
 `MIO_SERVER_URL` はコンテナ内実行前提のデフォルト。コンテナ外実行時は `.env` に `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` を追加。
 
@@ -977,7 +978,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 
 既存 `batch_run_summary_layers` と同じパターン:
 - `anthropic.Anthropic(base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)`
-- モデル: `qwen/qwen3.6-35b-a3b`
+- モデル: `MIO_LM_MODEL` 環境変数（デフォルト `google/gemma-4-26b-a4b`・v3.65）
 
 ### safe_mode
 

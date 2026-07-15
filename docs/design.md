@@ -326,7 +326,7 @@ Starts in a background thread once `POST /import` completes, unless another batc
 The backend is auto-selected:
 
 - `ANTHROPIC_API_KEY` set → `anthropic` (`claude-haiku-4-5-20251001`)
-- not set → `lmstudio` (Qwen3 at `LM_STUDIO_HOST:LM_STUDIO_PORT`, no billing)
+- not set → `lmstudio` (the `MIO_LM_MODEL` model at `LM_STUDIO_HOST:LM_STUDIO_PORT`, no billing)
 
 **Implementation:** end of `import_zip()` → the `_start_summary_batch()` helper (`memory/app/main.py`)
 
@@ -441,7 +441,7 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | Branching | `raw` → generate layers 2/3/4 from the full conversation, append to body, add `summarized` tag / not `raw` and no keywords (already `summarized`, or **a memory_write-originated body entry**) → generate **keywords only** from the body (or layer-2 summary) and update `keywords` only (body/tags unchanged, v3.48) |
 | Skip condition | layer-2 and layer-3 markers present **and** `keywords` already generated |
 | Model (anthropic) | `claude-haiku-4-5-20251001` |
-| Model (lmstudio) | `qwen/qwen3.6-35b-a3b` |
+| Model (lmstudio) | `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`, v3.65) |
 | Rate limiting | 0.5 s sleep between items |
 | Idempotency | checked via markers + presence of `keywords` (entry drops out of the target set once generated) |
 
@@ -464,7 +464,7 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | Backend | Default model | Other candidates |
 |-------------|----------------|---------|
 | anthropic | `claude-haiku-4-5-20251001` | — |
-| lmstudio | `qwen/qwen3.6-35b-a3b` | `google/gemma-4-26b-a4b`, `liquid/lfm2-24b-a2b` |
+| lmstudio | `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`) | `qwen/qwen3.6-35b-a3b`, `liquid/lfm2-24b-a2b` |
 
 **Required environment variables (for the CLI script):**
 
@@ -475,6 +475,7 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | `MIO_SERVER_URL` | mio-memory server URL | `http://localhost:5002` |
 | `LM_STUDIO_HOST` | LMStudio host (lmstudio backend) | `192.168.10.32` |
 | `LM_STUDIO_PORT` | LMStudio port | `1234` |
+| `MIO_LM_MODEL` | Model name for the lmstudio backend (v3.65) | `google/gemma-4-26b-a4b` |
 
 The `MIO_SERVER_URL` default assumes in-container execution. When running outside the container, add `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` to `.env`.
 
@@ -986,7 +987,7 @@ Generates a digest of conversation logs using a local LLM (LMStudio). Two-stage 
 
 Same pattern as `batch_run_summary_layers`:
 - `anthropic.Anthropic(base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)`
-- Model: `qwen/qwen3.6-35b-a3b`
+- Model: `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`, v3.65)
 
 ### safe_mode
 

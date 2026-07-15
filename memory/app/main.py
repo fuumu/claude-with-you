@@ -3,6 +3,11 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.65 (2026-07-15) - ローカルLLMモデル名の環境変数化（MIO_LM_MODEL）
+    - サマリバッチ・conversation_digest でハードコードされていた lmstudio 用モデル名
+      （qwen/qwen3.6-35b-a3b）を環境変数 MIO_LM_MODEL に外出し
+    - デフォルトは google/gemma-4-26b-a4b（ローカルLLM統一方針・2026-07-15 淳さん決定。
+      しずくBと同一モデルに揃えることで LMStudio のオンデマンド二重ロードを解消）
   v3.64 (2026-07-14) - admin.html バックアップUI（B1-UI・API変更なし）
     - Import タブに「バックアップ（CoreMem＋ExtMemory）」セクション新設
     - 取得側: GET /api/export の認証付きダウンロードボタン（?token= 方式）
@@ -452,7 +457,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.64'
+VERSION = '3.65'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -3115,7 +3120,7 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
         if backend == 'lmstudio':
             client = _anthropic.Anthropic(
                 base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-            model = 'qwen/qwen3.6-35b-a3b'
+            model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
         else:
             client = _anthropic.Anthropic(api_key=api_key)
             model  = 'claude-haiku-4-5-20251001'
@@ -3351,7 +3356,7 @@ def _conversation_digest(uuid, force=False, safe_mode=False):
     lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
     client = _anthropic.Anthropic(
         base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-    model = 'qwen/qwen3.6-35b-a3b'
+    model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
 
     safe_instruction = ('\n\n※重要：身体的・性的な直接表現は使わないでください。'
                         '体験の構造と感情の動きを抽象的に伝える表現に変換してください。'

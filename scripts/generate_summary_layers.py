@@ -55,7 +55,7 @@ LM_STUDIO_HOST    = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
 LM_STUDIO_PORT    = os.environ.get('LM_STUDIO_PORT', '1234')
 
 DEFAULT_MODEL_ANTHROPIC  = 'claude-haiku-4-5-20251001'
-DEFAULT_MODEL_LMSTUDIO   = 'qwen/qwen3.6-35b-a3b'
+DEFAULT_MODEL_LMSTUDIO   = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
 RATE_LIMIT_SLEEP = 0.5
 
 SUMMARY_MARKER = '## 2層: 要約'
@@ -65,7 +65,7 @@ FORCE_REPROCESS = os.environ.get('FORCE_REPROCESS', 'false').lower() == 'true'
 
 MODEL_CANDIDATES = {
     'anthropic': ['claude-haiku-4-5-20251001'],
-    'lmstudio':  ['qwen/qwen3.6-35b-a3b', 'google/gemma-4-26b-a4b', 'liquid/lfm2-24b-a2b'],
+    'lmstudio':  ['google/gemma-4-26b-a4b', 'qwen/qwen3.6-35b-a3b', 'liquid/lfm2-24b-a2b'],
 }
 
 
