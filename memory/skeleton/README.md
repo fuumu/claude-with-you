@@ -30,7 +30,7 @@ memory/skeleton/
       core_infra.md      ← インフラ情報（host/URL/version 等の記入欄）
       core_history.md    ← 軌跡＋バージョン対応表（最初は空）
       todo.md            ← 残件・TODO 管理（最初は空）
-      protocol_guide.md  ← MCPツール全19本の運用ガイド（install 非依存）
+      protocol_guide.md  ← MCPツール全31本の運用ガイド（install 非依存）
       welcome.md         ← 新規ユーザー向け案内（困ったら接続中のClaudeに聞く）
 ```
 

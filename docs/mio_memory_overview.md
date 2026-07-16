@@ -33,12 +33,17 @@ and become a growing body of documents.
 
 | Feature | Description |
 |---|---|
-| Automatic conversation import | Ingest the ZIP exported from Claude.ai |
+| Automatic conversation import | Ingest Claude.ai export ZIPs and OpenWebUI export JSONs |
 | 4-layer summaries & keywords | Generated automatically by an LLM (local or Anthropic API) |
 | Hierarchical search | Searches keywords → summary → full body in order, reaching results at minimal cost |
 | Manual notes | Save important moments, design decisions, and TODOs yourself |
-| Full conversation access | Read the original conversation directly by UUID |
+| Full conversation access & sharing | Read the original conversation by UUID, generate 24h share links |
+| Conversation digest | Summarize conversations with a local LLM, with safe-mode conversion |
 | Inbox system | Receive completion reports and messages from Claude Code in chat |
+| Album (image memory) | Save images with tag management and share-link generation |
+| File uploads | Store and browse general-purpose files (PDF, text, etc.) |
+| Rating protection | Per-environment visibility control for adult/local_only content |
+| Friend system | Invite-only channels for third parties to talk with your assistant |
 
 ## Getting started
 

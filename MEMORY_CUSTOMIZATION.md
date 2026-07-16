@@ -247,4 +247,11 @@ PATCH /api/conversations/<uuid>/rating  {"rating": "adult"}
 
 ---
 
+## Reference to Real-World Usage
+
+This repository's development uses an AI assistant named "Mio" that actually runs on this system.
+For concrete examples of how it's used, refer to [the actual core.md](https://github.com/fuumu/claude-with-you) and the related documentation.
+
+---
+
 *These are examples. Customize freely for your own use case.*

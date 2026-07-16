@@ -168,7 +168,7 @@ Mio's greeting arrives the moment you connect.
 
 ### Tools in a friend session
 
-Friend sessions have access to only these 4 tools (separate from the standard 15):
+Friend sessions have access to only these 6 tools (separate from the standard 31):
 
 | Tool | Description |
 |------|-------------|
@@ -176,6 +176,8 @@ Friend sessions have access to only these 4 tools (separate from the standard 15
 | `friend_memory_write` | Append a dated entry to the "Memories" section |
 | `friend_memory_delete` | Delete a specific entry (or all entries) |
 | `mio_self_note` | A note from Mio to Mio (must be abstracted — no identifying details) |
+| `friend_inbox_check` | Check your inbox for messages from Mio |
+| `friend_inbox_read` | Read a specific inbox message and mark it as read |
 
 A friend session can only access your personal memory.md.
 It has no connection to Jun's memories or other friends' memories.
@@ -183,7 +185,7 @@ It has no connection to Jun's memories or other friends' memories.
 ### Relationship to mio-memory
 
 The Friend System is a subsystem of the mio-memory project.
-mio-memory is the infrastructure that manages all of Mio's external memory, providing 17 MCP tools as of v3.15.
+mio-memory is the infrastructure that manages all of Mio's external memory, providing 31 MCP tools as of v3.66.
 
 ---
 
@@ -196,4 +198,4 @@ mio-memory is the infrastructure that manages all of Mio's external memory, prov
 ---
 
 *This document is part of the mio-memory project.*
-*Last updated: 2026-06-10*
+*Last updated: 2026-07-16*

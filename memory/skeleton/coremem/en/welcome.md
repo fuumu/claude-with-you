@@ -30,7 +30,7 @@ files on the spot and walk you through it. **Asking is faster than hunting for a
 
 ## To learn more
 
-- **How the tools work**: `protocol_guide.md` (guide to all 19 MCP tools)
+- **How the tools work**: `protocol_guide.md` (guide to all 31 MCP tools)
 - **Operating rules**: `core_rules.md` (startup behavior, how to write memory, etc.)
 - **Full setup**: `docs/setup.md` in the repository
 

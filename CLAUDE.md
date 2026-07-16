@@ -72,11 +72,13 @@ Regular sessions (31 tools):
 - `album_save` / `album_read` / `album_list` / `album_share` / `album_delete` — Album (image memory, `/data/album/`); `album_delete` removes image + metadata permanently (v3.55); `album_save(url=...)` downloads and resizes to max 1024px long side (Pillow), HTMLページ（Gemini共有リンク等）の場合はog:image/`<img>`タグから画像を自動抽出（複数画像は`items[]`で返却, v3.52）; `album_save(file_path=...)` reads from NAS local path; metadata JSON (`{id}.json`) stored alongside image (`{id}.{ext}`); `album_read` returns MCP image content (base64) + metadata; `album_list(tags=[...])` filters by tag; `album_share` generates 24h auth-free URL; REST `GET /api/album/` (list), `GET /api/album/{id}` (image), `POST /api/album/upload` (browser upload), `PATCH /api/album/{id}` (metadata update), `DELETE /api/album/{id}` (delete), `POST /api/album/{id}/share` (share URL), `GET /api/album/shared/{token}` (shared image); admin.html Album tab with thumbnail grid, drag-and-drop upload, edit, delete, share
 - `file_upload` / `file_read` / `file_list` / `file_delete` — Uploads (general-purpose file storage, `/data/uploads/`, v3.59); `file_upload(url=...|file_path=..., filename?, comment?, tags?)` downloads and saves any file type; `file_read(id)` returns metadata + content for text files (truncated at 50K chars); `file_list(tags?)` lists all uploads with optional tag filter; `file_delete(id)` permanently removes file and metadata; REST `GET /api/uploads/` (list), `GET /api/uploads/{id}` (download), `POST /api/uploads/` (browser upload), `DELETE /api/uploads/{id}` (delete); admin.html Uploads tab
 
-Friend sessions (4 tools, exposed when `/mcp?token=<friend_token>` is used):
+Friend sessions (6 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `friend_memory_read` — read this friend's memory file (`/data/friends/{seq_no:03d}/memory.md`)
 - `friend_memory_write` — append a dated entry to the friend's memory
 - `friend_memory_delete` — delete a specific entry from the friend's memory
 - `mio_self_note` — post a note to the owner's inbox (creates `inbox_post(to="chat", from_="friend")`)
+- `friend_inbox_check` — check for messages from Mio (unread count + message list)
+- `friend_inbox_read` — read a specific inbox message and mark as read
 
 **Batch summary API:**
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
