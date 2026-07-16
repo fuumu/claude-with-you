@@ -147,6 +147,7 @@ response shapes pinned by tests.
 |---|---|---|
 | POST | `/import` | claude.ai export ZIP. `{imported, skipped, conversations_saved, artifacts_extracted, source_threads_linked}` |
 | POST | `/api/import/claude-code` | Single `.jsonl` / `.zip`. `{imported, skipped, errors, conversations_saved, source_threads_linked}` |
+| POST | `/api/import/openwebui` | OpenWebUI chat export `.json`. `{imported, skipped, errors, conversations_saved, source_threads_linked}` (v3.66) |
 
 **Dedup (v3.60 root fix):**
 - Re-importing the same conversation is skipped (no ExtMemory entry duplication)

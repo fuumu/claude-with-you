@@ -1034,11 +1034,22 @@ Claude Code session logs (`~/.claude/projects/<project>/*.jsonl`) are not includ
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/import/claude-code` | admin | Import a single `.jsonl` or a `.zip` batch (`overwrite=true` to reprocess) |
+| POST | `/api/import/openwebui` | admin | Import OpenWebUI chat export `.json` (`overwrite=true` to reprocess) (v3.66) |
 
-- For `.zip`, `.jsonl` files are collected recursively (anything under `subagents/` is excluded)
-- Deduplication uses the session ID (file name) against `imported_uuids.json` (shared with ZIP import)
-- An ExtMemory entry is created per conversation: title `[会話/Code] {title}`, tags `["会話ログ", "claude-code", "raw"]`, `author: "claude-code"`
+- Claude Code: for `.zip`, `.jsonl` files are collected recursively (anything under `subagents/` is excluded)
+- Deduplication uses the session ID (file name / chat ID) against `imported_uuids.json` (shared with ZIP import)
+- An ExtMemory entry is created per conversation:
+  - Claude Code: title `[会話/Code] {title}`, tags `["会話ログ", "claude-code", "raw"]`, `author: "claude-code"`
+  - OpenWebUI: title `[会話/OpenWebUI] {title}`, tags `["会話ログ", "openwebui", "raw"]`, `author: "openwebui"`
 - After a successful import, the summary batch auto-starts (same behavior as ZIP import)
+
+### OpenWebUI import conversion spec (v3.66)
+
+- OpenWebUI export JSON is an array of objects (`{id, title, chat: {messages, history, models, ...}}`)
+- If `chat.messages` array exists, it is used. Otherwise, messages are reconstructed from `chat.history.messages` sorted by timestamp
+- UNIX timestamps (seconds / milliseconds) are converted to JST ISO format
+- Top level carries `source: "openwebui"`
+- A drop zone is added to the admin.html Import tab for browser-based import
 
 ### Background
 
@@ -1151,7 +1162,7 @@ ID format: `YYYYMMDD_HHMMSS_<first 30 chars of filename>`
 | Tool | Description |
 |------|-------------|
 | `file_upload` | Download and save a file from URL or NAS local path |
-| `file_read` | Return metadata; text/* files include content (truncated at 50K chars) |
+| `file_read` | Return metadata; text files include content (truncated at 50K chars). Detection uses mimetype (text/*, application/json, etc.) + extension fallback (json/jsonl/yaml/py etc., 17 types, v3.66) |
 | `file_list` | List uploads with optional tag filter |
 | `file_delete` | Permanently delete file and metadata |
 

@@ -143,6 +143,7 @@ python -m venv .venv
 |---|---|---|
 | POST | `/import` | claude.ai エクスポート ZIP。`{imported, skipped, conversations_saved, artifacts_extracted, source_threads_linked}` |
 | POST | `/api/import/claude-code` | `.jsonl` 単体 / `.zip`。`{imported, skipped, errors, conversations_saved, source_threads_linked}` |
+| POST | `/api/import/openwebui` | OpenWebUI チャットエクスポート `.json`。`{imported, skipped, errors, conversations_saved, source_threads_linked}`（v3.66） |
 
 **重複チェック（v3.60 根本修正）:**
 - 同一会話の再インポートは skip（ExtMemory エントリを増殖させない）

@@ -1,6 +1,6 @@
 # OpenWebUI Conversation Log Sync — Design Document
 
-Status: **Design phase** (not yet implemented)
+Status: **Phase 1 partially implemented** (v3.66 implements manual import from export files. Automatic sync via API polling is not yet implemented)
 
 ## 1. Overview
 
@@ -172,16 +172,16 @@ When `MIO_OPENWEBUI_URL` is empty, no sync-related processing runs (zero impact 
 ## 8. Implementation Plan
 
 ### Phase 1: Foundation (minimum viable)
-- [ ] OpenWebUI API client (list chats + get individual)
-- [ ] Format conversion (OpenWebUI → mio-memory conversations format)
-- [ ] Integration with `_save_conversations()` (reuse existing function)
-- [ ] `POST /api/openwebui/sync` REST endpoint
-- [ ] Deduplication (UUID + updated_at)
+- [ ] OpenWebUI API client (list chats + get individual) — not yet implemented (API polling approach)
+- [x] Format conversion (OpenWebUI → mio-memory conversations format) — v3.66 `_convert_openwebui_chat()`. Handles both messages array and history.messages tree
+- [x] Integration with `_save_conversations()` (reuse existing function) — v3.66
+- [x] `POST /api/import/openwebui` REST endpoint — v3.66 (path differs from design's `POST /api/openwebui/sync`; uses export file upload approach)
+- [x] Deduplication (UUID + imported_uuids) — v3.66 (OR check with _existing_source_threads)
 
 ### Phase 2: Automation
-- [ ] `_openwebui_sync_loop()` daemon thread
-- [ ] Environment variable configuration
-- [ ] admin.html Import tab sync button
+- [ ] `_openwebui_sync_loop()` daemon thread — not yet implemented
+- [ ] Environment variable configuration — not yet implemented
+- [x] admin.html Import tab import UI — v3.66 drop zone added (file upload approach rather than sync button)
 
 ### Phase 3: Extensions (as needed)
 - [ ] conversation_index source filter (filter by openwebui / claude)

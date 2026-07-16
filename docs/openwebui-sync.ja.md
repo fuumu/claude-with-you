@@ -1,6 +1,6 @@
 # OpenWebUI 会話ログ同期 設計書
 
-ステータス: **設計フェーズ**（未実装）
+ステータス: **Phase 1 部分実装**（v3.66 でエクスポートファイルからの手動インポートを実装。API ポーリングによる自動同期は未実装）
 
 ## 1. 概要
 
@@ -171,16 +171,16 @@ REST エンドポイントと MCP ツールで手動同期も可能:
 ## 8. 実装計画
 
 ### Phase 1: 基盤（最小構成）
-- [ ] OpenWebUI API クライアント（チャット一覧取得 + 個別取得）
-- [ ] フォーマット変換（OpenWebUI → mio-memory conversations 形式）
-- [ ] `_save_conversations()` への統合（既存関数を再利用）
-- [ ] `POST /api/openwebui/sync` REST エンドポイント
-- [ ] 重複チェック（UUID + updated_at）
+- [ ] OpenWebUI API クライアント（チャット一覧取得 + 個別取得）— 未実装（API ポーリング方式）
+- [x] フォーマット変換（OpenWebUI → mio-memory conversations 形式）— v3.66 `_convert_openwebui_chat()` で実装。messages 配列 / history.messages ツリー両対応
+- [x] `_save_conversations()` への統合（既存関数を再利用）— v3.66 で実装
+- [x] `POST /api/import/openwebui` REST エンドポイント — v3.66 で実装（設計書の `POST /api/openwebui/sync` とはパスが異なる。エクスポートファイルのアップロード方式）
+- [x] 重複チェック（UUID + imported_uuids）— v3.66 で実装（_existing_source_threads との OR チェック）
 
 ### Phase 2: 自動化
-- [ ] `_openwebui_sync_loop()` デーモンスレッド
-- [ ] 環境変数による設定
-- [ ] admin.html Import タブに同期ボタン追加
+- [ ] `_openwebui_sync_loop()` デーモンスレッド — 未実装
+- [ ] 環境変数による設定 — 未実装
+- [x] admin.html Import タブにインポートUI追加 — v3.66 でドロップゾーン追加（同期ボタンではなくファイルアップロード方式）
 
 ### Phase 3: 拡張（必要に応じて）
 - [ ] conversation_index の source フィルタ（openwebui / claude 等で絞り込み）
