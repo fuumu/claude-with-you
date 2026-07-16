@@ -3,6 +3,13 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.66 (2026-07-16) - file_read JSON対応強化＋OpenWebUIインポート＋admin.html改善
+    - file_read: 拡張子ベースのフォールバック追加（mimetype不正でもjson/jsonl等の
+      テキスト系ファイルは content フィールドに展開する）
+    - POST /api/import/openwebui: OpenWebUI チャットエクスポート JSON のインポート
+      （messages配列 / history.messages ツリー両対応、重複スキップ、要約バッチ自動起動）
+    - admin.html Uploads タブ: モーダルを openModal() に統一、IDコピー対応
+    - admin.html Album タブ: 画像クリックで最大化（ライトボックス）表示
   v3.65 (2026-07-15) - ローカルLLMモデル名の環境変数化（MIO_LM_MODEL）
     - サマリバッチ・conversation_digest でハードコードされていた lmstudio 用モデル名
       （qwen/qwen3.6-35b-a3b）を環境変数 MIO_LM_MODEL に外出し
@@ -457,7 +464,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.65'
+VERSION = '3.66'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -2937,6 +2944,204 @@ def import_claude_code():
                     'source_threads_linked': link_result.get('linked', 0)})
 
 
+# ── OpenWebUI チャットエクスポートインポート ────────────────────────────
+
+def _convert_openwebui_chat(chat_obj):
+    """OpenWebUI のチャットエクスポート1件を conversations 形式の dict に変換する。
+    OpenWebUI の chat 構造:
+      { id, title, chat: { id, title, models, messages: [{role, content, timestamp?, ...}], history: {messages: {id: {role, content, childrenIds, ...}}} } }
+    messages 配列がある場合はそれを使い、なければ history.messages からツリーを辿る。
+    """
+    chat_data = chat_obj.get('chat', chat_obj)
+    chat_id = chat_obj.get('id') or chat_data.get('id', '')
+    title = chat_obj.get('title') or chat_data.get('title') or ''
+    created_at = ''
+    updated_at = ''
+    if chat_obj.get('created_at'):
+        ts_val = chat_obj['created_at']
+        if isinstance(ts_val, (int, float)):
+            created_at = datetime.fromtimestamp(ts_val, tz=JST).isoformat()
+        else:
+            created_at = str(ts_val)
+    if chat_obj.get('updated_at'):
+        ts_val = chat_obj['updated_at']
+        if isinstance(ts_val, (int, float)):
+            updated_at = datetime.fromtimestamp(ts_val, tz=JST).isoformat()
+        else:
+            updated_at = str(ts_val)
+
+    messages = []
+    raw_msgs = chat_data.get('messages')
+    if not raw_msgs and chat_data.get('history', {}).get('messages'):
+        hist = chat_data['history']['messages']
+        current_id = chat_data['history'].get('currentId')
+        chain = []
+        visited = set()
+        for mid, mdata in hist.items():
+            if mid not in visited:
+                chain.append(mdata)
+                visited.add(mid)
+        chain.sort(key=lambda m: m.get('timestamp', 0) if isinstance(m.get('timestamp'), (int, float)) else 0)
+        raw_msgs = chain
+
+    if not raw_msgs:
+        return None
+
+    models = chat_data.get('models', [])
+    model = models[0] if models else ''
+
+    for m in raw_msgs:
+        role = m.get('role', '')
+        content_raw = m.get('content', '')
+        if role not in ('user', 'assistant', 'system'):
+            continue
+        if not content_raw and role != 'system':
+            continue
+        ts = ''
+        if m.get('timestamp'):
+            ts_val = m['timestamp']
+            if isinstance(ts_val, (int, float)):
+                ts = datetime.fromtimestamp(ts_val, tz=JST).isoformat()
+            else:
+                ts = str(ts_val)
+        if not created_at and ts:
+            created_at = ts
+        if ts:
+            updated_at = ts
+
+        text = content_raw if isinstance(content_raw, str) else json.dumps(content_raw, ensure_ascii=False)
+        sender = 'human' if role == 'user' else 'assistant'
+        blocks = [{'type': 'text', 'text': text}]
+        messages.append({
+            'uuid': m.get('id', ''),
+            'sender': sender,
+            'text': text,
+            'content': blocks,
+            'created_at': ts,
+            'updated_at': ts,
+        })
+
+    if not messages:
+        return None
+    if not title:
+        for msg in messages:
+            if msg['sender'] == 'human' and msg['text']:
+                title = msg['text'].strip().replace('\n', ' ')[:40]
+                break
+
+    return {
+        'uuid': chat_id,
+        'name': title or chat_id[:8],
+        'source': 'openwebui',
+        'model': model,
+        'created_at': created_at,
+        'updated_at': updated_at or created_at,
+        'chat_messages': messages,
+    }
+
+
+@app.route('/api/import/openwebui', methods=['POST'])
+@require_auth
+def import_openwebui():
+    """OpenWebUI チャットエクスポート JSON を会話ストアに取り込む。
+    file: chat-export-*.json（配列形式）
+    overwrite=true で重複チェックを無視して上書き
+    """
+    if 'file' not in request.files:
+        abort(400)
+    f = request.files['file']
+    fname = f.filename or ''
+    if not fname.lower().endswith('.json'):
+        return jsonify({'error': 'JSON file required'}), 400
+    overwrite = request.form.get('overwrite', 'false').lower() == 'true'
+
+    try:
+        data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return jsonify({'error': f'Invalid JSON: {e}'}), 400
+
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return jsonify({'error': 'Expected JSON array of chat objects'}), 400
+
+    imported = 0
+    skipped = 0
+    errors = 0
+    convs = []
+
+    imported_uuids = _load_imported_uuids()
+    existing_threads = _existing_source_threads()
+
+    for chat_obj in data:
+        cid = chat_obj.get('id') or chat_obj.get('chat', {}).get('id', '')
+        if not cid:
+            skipped += 1
+            continue
+        if not overwrite and (cid in imported_uuids or cid in existing_threads):
+            skipped += 1
+            continue
+        try:
+            conv = _convert_openwebui_chat(chat_obj)
+        except Exception as e:
+            _log_error(f'openwebui convert error ({cid}): {e}')
+            errors += 1
+            continue
+        if not conv:
+            skipped += 1
+            continue
+        convs.append(conv)
+
+    for i, conv in enumerate(convs):
+        uid = conv['uuid']
+        ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+        entry_id = f'{ts}_{i:04d}_{uid[:8]}'
+        entry = {
+            'id': entry_id,
+            'created_at': conv.get('created_at') or now_jst(),
+            'updated_at': now_jst(),
+            'title': f'[会話/OpenWebUI] {conv["name"]}',
+            'body': '',
+            'tags': ['会話ログ', 'openwebui', 'raw'],
+            'source_thread': uid,
+            'importance': 'low',
+            'author': 'openwebui',
+            'deleted': False
+        }
+        with open(f'{DATA_DIR}/{entry_id}.json', 'w') as ef:
+            json.dump(entry, ef, ensure_ascii=False, indent=2)
+        append_oplog('import', entry_id, None, entry)
+        imported_uuids.add(uid)
+        imported += 1
+
+    conv_saved = 0
+    try:
+        conv_saved = _save_conversations(convs)
+    except Exception as e:
+        _log_error(f'openwebui conv save error: {e}')
+
+    link_result = {}
+    try:
+        link_result = _link_source_threads(convs)
+    except Exception as e:
+        _log_error(f'source_thread link error: {e}')
+
+    if imported > 0:
+        rebuild_index()
+    _save_imported_uuids(imported_uuids)
+
+    _log_info(f'openwebui import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved}')
+
+    if imported > 0:
+        ok, info = _start_summary_batch()
+        if ok:
+            _log_info(f'auto summary batch started: backend={info["backend"]}')
+
+    return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
+                    'conversations_saved': conv_saved,
+                    'source_threads_linked': link_result.get('linked', 0)})
+
+
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
 
 # ── 要約レイヤー定数・ヘルパー ─────────────────────────────────────────
@@ -4021,7 +4226,12 @@ def _upload_read(upload_id):
     if not os.path.exists(file_path):
         return {"error": f"File data missing: {upload_id}"}
     mime = meta.get('mimetype', '')
-    if mime.startswith('text/') or mime in ('application/json', 'application/xml', 'application/javascript'):
+    file_ext = meta.get('ext', '').lower()
+    text_exts = {'txt','md','json','csv','log','yaml','yml','js','ts','py','sh','html','css','xml','ini','toml','conf','jsonl'}
+    is_text = (mime.startswith('text/')
+               or mime in ('application/json', 'application/xml', 'application/javascript')
+               or file_ext in text_exts)
+    if is_text:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()

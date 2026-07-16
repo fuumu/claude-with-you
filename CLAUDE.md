@@ -31,7 +31,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 - `/data/oauth_store.json` — persisted OAuth clients and access tokens
 - `/data/artifacts/` — versioned file storage; top-level symlinks point to latest version
 - `/data/artifacts/_meta.json` — artifact ↔ conversation bidirectional link metadata
-- `/data/conversations/` — full conversation text from ZIP imports and Claude Code session imports ({uuid}.json + _index.json); Claude Code sessions carry `source: "claude-code"` (v3.54, `POST /api/import/claude-code`, accepts .jsonl or .zip)
+- `/data/conversations/` — full conversation text from ZIP imports, Claude Code session imports, and OpenWebUI chat exports ({uuid}.json + _index.json); Claude Code sessions carry `source: "claude-code"` (v3.54, `POST /api/import/claude-code`, accepts .jsonl or .zip); OpenWebUI sessions carry `source: "openwebui"` (v3.66, `POST /api/import/openwebui`, accepts .json)
 - `/data/annotations/` — append-only audit annotations per conversation ({uuid}.json, via `log_annotate`)
 - `/data/conv_artifacts/` — files extracted from conversation tool-use blocks
 - `/data/inbox/` — inbox messages (inbox_check / inbox_read / inbox_post)
@@ -49,7 +49,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 **Three layers in one file:**
 
-1. **REST API** (`/api/memory/*`) — CRUD for memory entries with Bearer token auth. Supports both `Authorization: Bearer <token>` header and legacy path-embedded token (`/api/<token>/memory/...`). Backup: `GET /api/export` (CoreMem + ExtMemory ZIP, v3.46) / `POST /api/import/backup` (restore with `mode=skip/overwrite`, `dry_run=true` preview; CoreMem restored as new stacked versions, oplog `restore` entries, index rebuild — v3.63, completes B1). admin.html Import tab has a backup download/restore UI (two-step dry-run preview → run, v3.64).
+1. **REST API** (`/api/memory/*`) — CRUD for memory entries with Bearer token auth. Supports both `Authorization: Bearer <token>` header and legacy path-embedded token (`/api/<token>/memory/...`). Backup: `GET /api/export` (CoreMem + ExtMemory ZIP, v3.46) / `POST /api/import/backup` (restore with `mode=skip/overwrite`, `dry_run=true` preview; CoreMem restored as new stacked versions, oplog `restore` entries, index rebuild — v3.63, completes B1). admin.html Import tab has a backup download/restore UI (two-step dry-run preview → run, v3.64). `POST /api/import/openwebui` imports OpenWebUI chat export JSON (v3.66).
 
 2. **OAuth 2.1 + Dynamic Client Registration** — enables Claude.ai to authenticate without a pre-shared API token. Endpoints: `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`. PKCE (S256 and plain) is required. Auth codes expire in 10 minutes; access tokens last 30 days and are persisted to `oauth_store.json`.
 

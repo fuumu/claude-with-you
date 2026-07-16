@@ -202,7 +202,14 @@
       padding: .4rem .55rem; font-size: .72rem; color: #7a8a9a;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .album-detail-img { max-width: 100%; max-height: 50vh; border-radius: 6px; margin-bottom: 1rem; }
+    .album-detail-img { max-width: 100%; max-height: 50vh; border-radius: 6px; margin-bottom: 1rem; cursor: pointer; transition: opacity .15s; }
+    .album-detail-img:hover { opacity: .85; }
+    .lightbox-overlay {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,.92); align-items: center; justify-content: center; cursor: zoom-out;
+    }
+    .lightbox-overlay.open { display: flex; }
+    .lightbox-overlay img { max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; }
     .album-edit-row { display: flex; gap: .5rem; margin-bottom: .5rem; align-items: center; }
     .album-edit-row label { font-size: .8rem; color: #7a8a9a; min-width: 70px; }
     .album-edit-row input {
@@ -683,6 +690,12 @@
     <input type="file" id="code-file-input" accept=".jsonl,.zip" multiple style="display:none" onchange="handleCodeFiles(this.files)">
     <button class="btn btn-secondary" onclick="document.getElementById('code-file-input').click()">ファイルを選択</button>
   </div>
+  <div class="drop-zone" id="owui-drop-zone" style="margin-top:1rem">
+    <div class="icon">🌐</div>
+    <p>OpenWebUI チャットエクスポート JSON をここにドロップ</p>
+    <input type="file" id="owui-file-input" accept=".json" style="display:none" onchange="handleOwuiFile(this.files[0])">
+    <button class="btn btn-secondary" onclick="document.getElementById('owui-file-input').click()">ファイルを選択</button>
+  </div>
   <div style="margin:.75rem 0 0;display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:#7a8a9a">
     <input type="checkbox" id="import-overwrite" style="accent-color:#7ec8e3;cursor:pointer">
     <label for="import-overwrite" style="cursor:pointer">上書きモード（既にインポート済みの会話も再処理する）</label>
@@ -859,6 +872,10 @@
       <button class="modal-scroll-btn close" onclick="closeModal()" title="閉じる">✕</button>
     </div>
   </div>
+</div>
+
+<div class="lightbox-overlay" id="lightbox" onclick="closeLightbox()">
+  <img id="lightbox-img" src="" alt="">
 </div>
 
 <script>
@@ -1386,6 +1403,45 @@ codeDropZone.addEventListener('drop', e => {
   codeDropZone.classList.remove('drag-over');
   handleCodeFiles(e.dataTransfer.files);
 });
+
+// OpenWebUI ドロップゾーン
+const owuiDropZone = document.getElementById('owui-drop-zone');
+owuiDropZone.addEventListener('dragover',  e => { e.preventDefault(); owuiDropZone.classList.add('drag-over'); });
+owuiDropZone.addEventListener('dragleave', () => owuiDropZone.classList.remove('drag-over'));
+owuiDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  owuiDropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleOwuiFile(file);
+});
+
+async function handleOwuiFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.json')) {
+    showResult('<span class="result-err">JSONファイルを選択してください</span>');
+    return;
+  }
+  showResult('<span class="spinner"></span>OpenWebUIログ取り込み中...');
+  const overwrite = document.getElementById('import-overwrite')?.checked ? 'true' : 'false';
+  const form = new FormData();
+  form.append('file', file);
+  form.append('overwrite', overwrite);
+  try {
+    const res = await apiFetch('/api/import/openwebui', { method: 'POST', body: form });
+    const d = await res.json();
+    if (res.ok) {
+      const cls = d.errors ? 'result-err' : 'result-ok';
+      showResult(`<span class="${cls}">✓ OpenWebUI: imported ${d.imported}件 / skipped ${d.skipped}件 / errors ${d.errors}件 / 紐づけ ${d.source_threads_linked || 0}件</span>`);
+      setTimeout(pollBatchStatus, 1500);
+    } else {
+      showResult(`<span class="result-err">エラー: ${esc(String(d.error || res.status))}</span>`);
+    }
+  } catch (e) {
+    if (e.message === '401') return;
+    showResult(`<span class="result-err">取り込み失敗: ${esc(e.message)}</span>`);
+    console.error('handleOwuiFile', e);
+  }
+  document.getElementById('owui-file-input').value = '';
+}
 
 // Claude Code セッションログ取り込み（.jsonl 複数可 / .zip → POST /api/import/claude-code）
 async function handleCodeFiles(files) {
@@ -2443,7 +2499,8 @@ function openAlbumDetail(idx) {
   const body = document.getElementById('modal-body');
   body.className = 'modal-body';
   body.innerHTML = `
-    <img src="${API}/api/album/${esc(m.id)}?token=${getToken()}" class="album-detail-img">
+    <img src="${API}/api/album/${esc(m.id)}?token=${getToken()}" class="album-detail-img"
+         onclick="openLightbox(this.src)" title="クリックで拡大表示">
     <div class="album-edit-row">
       <label>Comment</label>
       <input type="text" id="album-edit-comment" value="${esc(m.comment || '')}">
@@ -2608,10 +2665,9 @@ function openUploadDetail(idx) {
   if (uploadsIsImage(f)) {
     preview = `<img src="${downloadUrl}" style="max-width:100%;border-radius:6px;margin-bottom:.8rem">`;
   } else if (uploadsIsText(f)) {
-    preview = `<pre id="upload-preview" style="background:#f5f7fa;border:1px solid #dde3ea;border-radius:6px;padding:.6rem;font-size:.78rem;max-height:50vh;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-bottom:.8rem">読み込み中…</pre>`;
+    preview = `<pre id="upload-preview" style="background:#0d1117;border:1px solid #2a3a5a;border-radius:6px;padding:.6rem;font-size:.78rem;max-height:50vh;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-bottom:.8rem;color:#c8d8e8">読み込み中…</pre>`;
   }
   const body = `
-    <div style="margin-bottom:.5rem"><strong>${esc(f.filename)}</strong></div>
     <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.3rem">${esc(f.mimetype)} · ${sizeStr}</div>
     <div style="font-size:.82rem;color:#5a6a7a;margin-bottom:.5rem">${f.uploaded_at}</div>
     ${f.comment ? `<div style="margin-bottom:.5rem">${esc(f.comment)}</div>` : ''}
@@ -2621,10 +2677,13 @@ function openUploadDetail(idx) {
       <a href="${downloadUrl}" class="btn btn-secondary" style="text-decoration:none;font-size:.8rem" download>⬇ Download</a>
       <button class="btn" style="background:#e74c3c;color:#fff;font-size:.8rem" onclick="uploadsDelete('${f.id}')">🗑 Delete</button>
     </div>`;
-  setModalId(f.id);
   document.getElementById('modal-title').textContent = f.filename || f.id;
+  document.getElementById('modal-meta').textContent = `ID: ${f.id}`;
   document.getElementById('modal-body').innerHTML = body;
-  document.getElementById('modal-overlay').style.display = 'flex';
+  document.getElementById('modal-body').className = 'modal-body';
+  setModalId(f.id);
+  setModalLinks('');
+  openModal();
   if (uploadsIsText(f)) loadUploadPreview(f);
 }
 
@@ -2697,7 +2756,19 @@ function openModal() {
 }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLightbox() { document.getElementById('lightbox').classList.remove('open'); }
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('lightbox').classList.contains('open')) closeLightbox();
+    else closeModal();
+  }
+});
 
 // ── Util ──────────────────────────────────────────────────────────────
 function esc(s) {
