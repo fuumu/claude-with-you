@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.65","mcp_tool_count":31}
+# {"status":"ok","version":"3.66","mcp_tool_count":31}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -170,7 +170,7 @@ Claude.ai / Claude Code
   │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
-  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · conversations(LogStore)/ · inbox/ · friends/
+  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · conversations(LogStore)/ · inbox/ · friends/ · album/ · uploads/
 ```
 
 Single-file implementation — all logic in `memory/app/main.py`.
@@ -335,6 +335,11 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/album/shared/<token>` | Shared album image (no auth, 24h) |
 | POST | `/import` | Import ZIP file |
 | POST | `/api/import/claude-code` | Import Claude Code session logs (.jsonl / .zip, v3.54) |
+| POST | `/api/import/openwebui` | Import OpenWebUI chat export (.json, v3.66) |
+| GET | `/api/uploads/` | List uploaded files (`?tag=...` filter) |
+| GET | `/api/uploads/<id>` | Download uploaded file |
+| POST | `/api/uploads/` | Upload file (multipart/form-data) |
+| DELETE | `/api/uploads/<id>` | Delete uploaded file |
 | GET | `/health` | Health check |
 
 ---
@@ -347,14 +352,17 @@ Access at `https://your-domain/admin.html` — login with your API token.
 
 | Tab | What you can do |
 |-----|-----------------|
-| **Memory** | Browse, search, read, and edit memory entries |
-| **CoreMem** | View UserCoreMemory files, content preview, and delete |
-| **Import** | Upload Claude.ai export ZIP; overwrite mode for re-processing; backup download/restore (v3.64) |
+| **Memory** | Browse, search, read, and edit memory entries; link to raw conversation logs |
+| **CoreMem** | View UserCoreMemory files, content preview, delete, filter by name |
+| **Import** | Upload Claude.ai ZIP / Claude Code / OpenWebUI logs; overwrite mode; batch progress; backup download/restore (v3.64) |
 | **Files** | Browse files extracted from conversation tool-use blocks |
-| **Inbox** | Read messages between Claude Code and Claude.ai sessions |
+| **Inbox** | Read messages between Claude Code and Claude.ai sessions; thread view |
 | **Logs** | Search and read full conversation history |
 | **Oplog** | Audit log of all create/update/delete operations |
 | **Friends** | Manage friend registrations — approve requests, issue access tokens, view usage |
+| **Album** | Image memory management (thumbnail grid, drag & drop upload, edit, delete, share, lightbox) |
+| **Uploads** | General-purpose file storage (PDF, text, etc. — upload, preview, download, ID copy) |
+| **Search** | Hierarchical search visualizer (4-column: Keywords / Summary / Symbolic / Raw body) |
 
 ### Conversation viewer (`/logs.html`)
 
@@ -563,9 +571,9 @@ claude-with-you/
 - Tailscale integration for remote access
 
 **Design phase**
-- OpenWebUI conversation log sync — import local LLM (LMStudio + OpenWebUI) chat history into mio-memory, unified search with Claude.ai logs ([design doc](docs/openwebui-sync.md))
+- OpenWebUI automatic sync — API polling for periodic sync (manual import implemented in v3.66, [design doc](docs/openwebui-sync.md))
 
-**Implemented (v3.9–v3.52)**
+**Implemented (v3.9–v3.66)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
@@ -608,8 +616,8 @@ claude-with-you/
 - MCP 2026-07-28 spec: early RC implementation (2026-07-14) — the breaking new spec (final publication July 28, RC locked) is now implemented ahead of time in `ts/src/mcp.ts` / `oauth.ts` as a **dual-era server** (old and new coexist on the same endpoint). ① Stateless core: every request is processed independently without initialize/sessions (protocol version and client info travel in `_meta` keys like `io.modelcontextprotocol/protocolVersion`); legacy clients (initialize + `Mcp-Session-Id`) keep working unchanged ② `server/discover` (MUST) implemented — supportedVersions/capabilities/serverInfo/instructions/ttlMs/cacheScope ③ Required header validation: `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` are checked against the body (mismatch → 400 + `-32020 HeaderMismatch`), unsupported versions → 400 + `-32022 UnsupportedProtocolVersion` (with the supported list), removed methods such as ping → 404 + `-32601` ④ `resultType: "complete"` added to all results and `ttlMs`/`cacheScope` to `tools/list` (injected on demand; Python forwarding retained) ⑤ minimal `subscriptions/listen` (acknowledged + keep-alive SSE) ⑥ OAuth hardening: `iss` on authorization responses (RFC 9207), `application_type` accepted in DCR, **refresh tokens** (`grant_type=refresh_token`, rotated on every use, scope narrowing allowed), RFC 8414 path-suffix discovery. 15 new characterization tests (`tests/test_mcp_2026.py`; skipped in Python-only mode since the new spec lives in the TS layer) → **100 tests pass in TS1 mode / 85 in Python-only mode**. No main.py changes; final diff against the official July 28 release still pending
 - Backup restore import (v3.63, completes B1) — new `POST /api/import/backup`. Accepts the ZIP produced by `GET /api/export` (v3.46, B1 first half) as multipart and restores CoreMem + ExtMemory. `mode=skip` (default; existing data untouched and listed in conflicts) / `mode=overwrite`, and `dry_run=true` for a write-free preview (counts + conflict list). CoreMem is restored through versioning as a new stacked version, so existing versions are never destroyed. ExtMemory restores are logged to the oplog as `restore` and the index is rebuilt afterwards. Stores not covered by export (conversations, album, etc.) are never touched. 5 new characterization tests (round-trip, skip/overwrite/dry_run, invalid input) → **all pass in both modes (TS1: 105 / Python-only: 90 + 15 skipped)**. Memory migration and disaster recovery are now a single path: keep an export ZIP → import it into a new environment
 - admin.html backup UI (v3.64, B1-UI) — new "Backup (CoreMem + ExtMemory)" section on the Import tab. Download side: an authenticated download button for `GET /api/export`. Restore side: ZIP drag & drop / file picker → mode selection (skip = protect existing (default) / overwrite, each with a short explanation) → **dry-run preview (counts + conflict list) → confirm and run** as a mandatory two-step flow (no one-click destructive restore). i18n (ja/en) and mobile responsive. No API changes (uses v3.63 as-is). Backup download and restore now work entirely from the browser — no curl needed, which matters most right after standing up a fresh environment during disaster recovery
-- file_read JSON support + OpenWebUI import + admin.html improvements (v3.66) — ① `file_read` now falls back to extension-based detection (`.json`/`.jsonl`/etc. are returned in the `content` field even when the stored mimetype is wrong) ② New `POST /api/import/openwebui` endpoint: imports OpenWebUI (local LLM) chat export JSON into the conversation store. Handles both messages array and history.messages tree formats, deduplication, auto-starts summary batch. Drop zone added to admin.html Import tab ③ admin.html Uploads tab: modal unified with other tabs (`openModal()`), ID copy support, dark-theme preview ④ admin.html Album tab: click image to open lightbox (fullscreen). Escape to close
 - Local LLM model name externalized (v3.65) — the lmstudio model name hardcoded in the summary batch and `conversation_digest` (`qwen/qwen3.6-35b-a3b`) moved to the `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`). Unifying all local LLM work on the everyday model stops LM Studio from on-demand double-loading a second model onto the CPU side
+- file_read JSON support + OpenWebUI import + admin.html improvements (v3.66) — ① `file_read` now falls back to extension-based detection (`.json`/`.jsonl`/etc. are returned in the `content` field even when the stored mimetype is wrong) ② New `POST /api/import/openwebui` endpoint: imports OpenWebUI (local LLM) chat export JSON into the conversation store. Handles both messages array and history.messages tree formats, deduplication, auto-starts summary batch. Drop zone added to admin.html Import tab ③ admin.html Uploads tab: modal unified with other tabs (`openModal()`), ID copy support, dark-theme preview ④ admin.html Album tab: click image to open lightbox (fullscreen). Escape to close
 
 ---
 
