@@ -2971,18 +2971,21 @@ def _convert_openwebui_chat(chat_obj):
             updated_at = str(ts_val)
 
     messages = []
-    raw_msgs = chat_data.get('messages')
-    if not raw_msgs and chat_data.get('history', {}).get('messages'):
-        hist = chat_data['history']['messages']
-        current_id = chat_data['history'].get('currentId')
+    raw_msgs = None
+    hist_tree = chat_data.get('history', {}).get('messages')
+    if hist_tree and isinstance(hist_tree, dict) and len(hist_tree) > 0:
         chain = []
         visited = set()
-        for mid, mdata in hist.items():
+        for mid, mdata in hist_tree.items():
             if mid not in visited:
-                chain.append(mdata)
+                entry = dict(mdata)
+                entry.setdefault('id', mid)
+                chain.append(entry)
                 visited.add(mid)
         chain.sort(key=lambda m: m.get('timestamp', 0) if isinstance(m.get('timestamp'), (int, float)) else 0)
         raw_msgs = chain
+    if not raw_msgs:
+        raw_msgs = chat_data.get('messages') or []
 
     if not raw_msgs:
         return None
@@ -2992,11 +2995,42 @@ def _convert_openwebui_chat(chat_obj):
 
     for m in raw_msgs:
         role = m.get('role', '')
-        content_raw = m.get('content', '')
         if role not in ('user', 'assistant', 'system'):
             continue
-        if not content_raw and role != 'system':
+
+        content_raw = m.get('content', '')
+        text = ''
+        tool_calls = []
+
+        if role == 'assistant' and not content_raw:
+            outputs = m.get('output') or m.get('outputs') or []
+            if not isinstance(outputs, list):
+                outputs = [outputs]
+            text_parts = []
+            for out_item in outputs:
+                if not isinstance(out_item, dict):
+                    continue
+                out_type = out_item.get('type', '')
+                if out_type == 'message':
+                    for c in (out_item.get('content') or []):
+                        if isinstance(c, dict) and c.get('type') == 'output_text':
+                            t = c.get('text', '')
+                            if t:
+                                text_parts.append(t)
+                        elif isinstance(c, dict) and c.get('text'):
+                            text_parts.append(c['text'])
+                elif out_type == 'function_call':
+                    tc = {'name': out_item.get('name', ''), 'status': out_item.get('status', '')}
+                    if out_item.get('arguments'):
+                        tc['arguments'] = out_item['arguments'][:200]
+                    tool_calls.append(tc)
+            text = '\n\n'.join(text_parts)
+        else:
+            text = content_raw if isinstance(content_raw, str) else json.dumps(content_raw, ensure_ascii=False)
+
+        if not text and role != 'system' and not tool_calls:
             continue
+
         ts = ''
         if m.get('timestamp'):
             ts_val = m['timestamp']
@@ -3009,17 +3043,22 @@ def _convert_openwebui_chat(chat_obj):
         if ts:
             updated_at = ts
 
-        text = content_raw if isinstance(content_raw, str) else json.dumps(content_raw, ensure_ascii=False)
         sender = 'human' if role == 'user' else 'assistant'
         blocks = [{'type': 'text', 'text': text}]
-        messages.append({
+        if tool_calls:
+            blocks.append({'type': 'tool_calls', 'tool_calls': tool_calls})
+        msg_entry = {
             'uuid': m.get('id', ''),
             'sender': sender,
             'text': text,
             'content': blocks,
             'created_at': ts,
             'updated_at': ts,
-        })
+        }
+        m_model = m.get('model') or m.get('modelName') or ''
+        if m_model:
+            msg_entry['model'] = m_model
+        messages.append(msg_entry)
 
     if not messages:
         return None
