@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { DATA_ROOT } from './data.js';
-import { jstIsoFromMs } from './write.js';
+import { appendOplog, jstIsoFromMs } from './write.js';
 
 const ARTIFACTS_DIR = path.join(DATA_ROOT, 'artifacts');
 const CONV_ARTIFACTS_DIR = path.join(DATA_ROOT, 'conv_artifacts');
@@ -318,7 +318,9 @@ export async function handleCoremem(
       sendJson(res, 400, { error: 'Bad Request', code: 400 });
       return true;
     }
-    sendJson(res, 201, artifactsSave(name, String(data.content ?? '')));
+    const result = artifactsSave(name, String(data.content ?? ''));
+    appendOplog('coremem_save', name, null, { name, version: result.version });
+    sendJson(res, 201, result);
     return true;
   }
 
@@ -328,6 +330,7 @@ export async function handleCoremem(
       return true;
     }
     if (artifactsDelete(name)) {
+      appendOplog('coremem_delete', name, { name }, null);
       sendJson(res, 200, { deleted: name });
     } else {
       sendJson(res, 404, { error: 'not found' });

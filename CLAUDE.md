@@ -27,7 +27,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 - `/data/memory/*.json` — individual memory entries (one file per entry)
 - `/data/index.json` — rebuilt index (id, title, tags, importance, created_at)
-- `/data/oplog.json` — append-only operation log
+- `/data/oplog.json` — append-only operation log (ExtMemory CRUD, CoreMem save/delete/rename, Album save/update/delete, Uploads upload/delete, conversation rating changes)
 - `/data/oauth_store.json` — persisted OAuth clients and access tokens
 - `/data/artifacts/` — versioned file storage; top-level symlinks point to latest version
 - `/data/artifacts/_meta.json` — artifact ↔ conversation bidirectional link metadata

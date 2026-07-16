@@ -464,7 +464,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.66'
+VERSION = '3.67'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -2385,6 +2385,7 @@ def api_conversation_rating(conv_uuid):
                 m['rating'] = rating
     _save_conv_index(index)
     _log_info(f'conversation rating: {conv_uuid} -> {rating}')
+    append_oplog('conv_rating', conv_uuid, None, {'uuid': conv_uuid, 'rating': rating})
     return jsonify({'uuid': conv_uuid, 'rating': rating if rating != 'safe' else None})
 
 
@@ -4015,6 +4016,7 @@ def _album_save(url=None, file_path=None, comment='', tags=None, _from_html=Fals
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     _log_info(f'album_save: {album_id} ({img.size[0]}x{img.size[1]}, {len(img_bytes)} bytes)')
+    append_oplog('album_save', album_id, None, {'id': album_id, 'comment': comment, 'tags': tags or []})
     return meta
 
 def _album_read_mcp(album_id):
@@ -4135,12 +4137,14 @@ def api_album_update(album_id):
     with open(meta_path) as f:
         meta = json.load(f)
     data = request.get_json(silent=True) or {}
+    before = dict(meta)
     if 'comment' in data:
         meta['comment'] = data['comment']
     if 'tags' in data:
         meta['tags'] = data['tags'] or []
     with open(meta_path, 'w') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
+    append_oplog('album_update', album_id, {'id': album_id, 'comment': before.get('comment'), 'tags': before.get('tags')}, {'id': album_id, 'comment': meta.get('comment'), 'tags': meta.get('tags')})
     return jsonify(meta)
 
 @app.route('/api/album/<album_id>', methods=['DELETE'])
@@ -4158,6 +4162,7 @@ def api_album_delete(album_id):
         os.remove(img_path)
     os.remove(meta_path)
     _log_info(f'album_delete: {album_id}')
+    append_oplog('album_delete', album_id, {'id': album_id}, None)
     return jsonify({'status': 'deleted', 'id': album_id})
 
 @app.route('/api/album/<album_id>/share', methods=['POST'])
@@ -4250,6 +4255,7 @@ def _upload_save(url=None, file_path=None, filename=None, comment='', tags=None)
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     _log_info(f'upload_save: {upload_id} ({safe_filename}, {len(data)} bytes)')
+    append_oplog('file_upload', upload_id, None, {'id': upload_id, 'filename': safe_filename, 'size': len(data)})
     return {"id": upload_id, "filename": safe_filename, "mimetype": detected_mime, "size": len(data)}
 
 
@@ -4325,6 +4331,7 @@ def _upload_delete(upload_id):
         os.remove(file_path)
     os.remove(meta_path)
     _log_info(f'upload_delete: {upload_id}')
+    append_oplog('file_delete', upload_id, {'id': upload_id}, None)
     return {"deleted": upload_id}
 
 
@@ -4394,6 +4401,7 @@ def api_uploads_upload():
         json.dump(meta, f2, ensure_ascii=False, indent=2)
 
     _log_info(f'upload (REST): {upload_id} ({safe_filename}, {size} bytes)')
+    append_oplog('file_upload', upload_id, None, {'id': upload_id, 'filename': safe_filename, 'size': size})
     return jsonify(meta), 201
 
 @app.route('/api/uploads/<upload_id>', methods=['DELETE'])
@@ -4851,7 +4859,9 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": "name is required"}
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
-        return _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=arguments.get("mode", "overwrite"))
+        result = _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=arguments.get("mode", "overwrite"))
+        append_oplog('coremem_save', n, None, {'name': n, 'version': result.get('version')})
+        return result
 
     elif name == "CoreMem_read":
         n = arguments.get("name", "")
@@ -4907,6 +4917,7 @@ def _handle_tool_call_raw(name, arguments):
                 if existing:
                     _link_or_copy_latest(existing[-1], dst_sym)
             _log_info(f'CoreMem_rename via MCP: {src} → {dst}')
+            append_oplog('coremem_rename', src, {'name': src}, {'name': dst})
             return {"renamed": True, "src": src, "dst": dst, "server_time": now_jst()}
 
         # delete モード（従来通り）
@@ -4924,6 +4935,7 @@ def _handle_tool_call_raw(name, arguments):
         if os.path.isdir(versions_dir):
             shutil.rmtree(versions_dir)
         _log_info(f'CoreMem_delete via MCP: {n}')
+        append_oplog('coremem_delete', n, {'name': n}, None)
         return {"deleted": n, "server_time": now_jst()}
 
     elif name == "conversation_index":
@@ -5278,6 +5290,7 @@ def _handle_tool_call_raw(name, arguments):
             os.remove(img_path)
         os.remove(meta_path)
         _log_info(f'album_delete (MCP): {aid}')
+        append_oplog('album_delete', aid, {'id': aid}, None)
         return {"status": "deleted", "id": aid}
 
     elif name == "file_upload":

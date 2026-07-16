@@ -81,8 +81,8 @@ export function rebuildIndex(): void {
 export function appendOplog(
   operation: string,
   entryId: string,
-  before: MemoryEntry | null,
-  after: MemoryEntry,
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
 ): void {
   let oplog: unknown[] = [];
   try {
