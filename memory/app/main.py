@@ -3,6 +3,26 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.70 (2026-07-17) - レーティング可視化（発注③）＋inbox小改修2件
+    - バグ修正: レーティングバッチが safe 判定済みログを毎周再判定していた
+      （safe は rating フィールドを残さない設計のため対象選定をすり抜けていた。
+      rating_source / rating_skip_reason も見るよう修正。1周目total533→2周目474の原因）
+    - rating_skip_reason 新設: 判定不能ログ（empty=メッセージなし / no_text=抽出テキストなし /
+      parse_error=JSONパース不能）に理由を記録し、以後のバッチ対象から恒久除外（force で再試行）
+    - バッチstatus拡張: skip_reasons 内訳・error_uuids・index_counts
+      （safe/mature/adult/unrated/unjudgeable の全体分布）
+    - pending 定義整理: rating / rating_source / rating_skip_reason のいずれも無い件数
+      （= 次回バッチの対象件数 total と一致）
+    - MCP conversation_index / conversation_search: 各アイテムに rating（safe判定済みは
+      明示的に "safe"・未判定は null）・rating_source を常に含める
+    - PATCH rating（手動上書き）で rating_skip_reason をクリア
+    - index rebuild / 再インポートで rating_reason / rating_source / rating_judged_at /
+      rating_model / rating_skip_reason を保全（従来 rebuild で rating ごと消えていた）
+    - logs.html: 会話一覧に rating バッジ＋rating フィルタ＋ヘッダに手動上書きUI
+    - inbox 期間常駐（TTL）: inbox_post に expires_at / ttl_days 追加。期限内は persistent
+      同様に inbox_check で本文つき常駐・既読化しない。期限切れはチェック時に既読アーカイブへ
+      自動降格。persistent とは排他。inbox_update で期限変更・解除可
+    - inbox 未読戻し: inbox_update に read（false で既読→未読の書き戻し）追加
   v3.69 (2026-07-17) - 伏せ字モード: adult生ログの文単位マスク閲覧
     - 文番号リスト方式: Python側で決定的文分割→LLMにマスク対象文番号のみ出力させる
     - conversation_read 三択分岐: include_raw→原文 / redact=true→承認済み伏せ字 /
@@ -481,7 +501,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.69'
+VERSION = '3.70'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -529,6 +549,7 @@ _rating_batch_status = {
     'running': False, 'total': 0, 'processed': 0,
     'errors': 0, 'skipped': 0, 'started_at': None,
     'finished_at': None, 'backend': None,
+    'skip_reasons': {}, 'error_uuids': [],
 }
 
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
@@ -1037,13 +1058,18 @@ def api_conversations_index_rebuild():
             uid = conv.get('uuid') or conv.get('id', '')
             if not uid:
                 uid = fname[:-5]
-            new_index.append({
+            meta = {
                 'uuid':          uid,
                 'title':         conv.get('name') or conv.get('title') or uid[:8],
                 'created_at':    conv.get('created_at', ''),
                 'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
                 'message_count': len(conv.get('chat_messages') or []),
-            })
+            }
+            # rating 系メタは会話ファイルから引き継ぐ（v3.70: 従来は rebuild で消えていた）
+            for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason'):
+                if conv.get(k):
+                    meta[k] = conv[k]
+            new_index.append(meta)
             rebuilt += 1
     new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     _save_conv_index(new_index)
@@ -1637,8 +1663,17 @@ def _load_inbox_messages(to=None, unread_only=False):
             msg = json.load(f)
         if to and msg.get('to') != to:
             continue
-        # persistent メッセージは常に含める（既読でもunread_onlyで表示）
-        if unread_only and msg.get('read') and not msg.get('persistent'):
+        # 期間常駐の期限切れはチェック時に既読アーカイブへ自動降格（v3.70）
+        if (msg.get('expires_at') and not msg.get('persistent')
+                and not msg.get('read') and not _inbox_timed_active(msg)):
+            msg['read'] = True
+            try:
+                with open(os.path.join(dir_, fname), 'w', encoding='utf-8') as wf:
+                    json.dump(msg, wf, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        # 常駐（persistent / 期限内の期間常駐）は常に含める（既読でもunread_onlyで表示）
+        if unread_only and msg.get('read') and not _inbox_standing(msg):
             continue
         msgs.append(msg)
     return msgs
@@ -1669,6 +1704,38 @@ def _norm_inbox_models(msg):
     msg.setdefault('reply_to_id', None)
     return msg
 
+def _resolve_expires_at(data):
+    """expires_at / ttl_days 入力を ISO 文字列に正規化する（v3.70）。(value, error) を返す"""
+    expires_at = data.get('expires_at')
+    ttl_days = data.get('ttl_days')
+    if expires_at and ttl_days is not None:
+        return None, 'expires_at and ttl_days are exclusive'
+    if ttl_days is not None:
+        try:
+            return (datetime.now(JST) + timedelta(days=float(ttl_days))).isoformat(), None
+        except (TypeError, ValueError):
+            return None, 'ttl_days must be a number'
+    if expires_at:
+        if _parse_iso_ts(expires_at) is None:
+            return None, 'expires_at must be ISO 8601'
+        return str(expires_at), None
+    return None, None
+
+
+def _inbox_timed_active(msg):
+    """期間常駐（expires_at つき）が期限内かどうか（persistent は対象外）"""
+    exp = msg.get('expires_at')
+    if not exp or msg.get('persistent'):
+        return False
+    dt = _parse_iso_ts(exp)
+    return bool(dt and dt > datetime.now(JST))
+
+
+def _inbox_standing(msg):
+    """常駐扱いか（persistent または 期限内の期間常駐, v3.70）"""
+    return bool(msg.get('persistent')) or _inbox_timed_active(msg)
+
+
 def _inbox_model_match(stored, query):
     """stored（配列 or None）が query 文字列と OR 一致するか"""
     if stored is None:
@@ -1678,7 +1745,8 @@ def _inbox_model_match(stored, query):
     return query in stored
 
 def _post_inbox_message(to, title, body, from_='code', persistent=False,
-                        from_model=None, to_model=None, reply_to_id=None):
+                        from_model=None, to_model=None, reply_to_id=None,
+                        expires_at=None):
     dir_ = _inbox_dir(to)
     os.makedirs(dir_, exist_ok=True)
     now   = now_jst()
@@ -1687,7 +1755,8 @@ def _post_inbox_message(to, title, body, from_='code', persistent=False,
            "from_model": _norm_model_field(from_model),
            "to_model": _norm_model_field(to_model),
            "reply_to_id": reply_to_id or None,
-           "created_at": now, "read": False, "persistent": persistent}
+           "created_at": now, "read": False, "persistent": persistent,
+           "expires_at": expires_at or None}
     with open(os.path.join(dir_, f'{msg_id}.json'), 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
     return msg
@@ -1698,8 +1767,8 @@ def _mark_inbox_read(msg_id, peek=False):
         return None
     with open(path, encoding='utf-8') as f:
         msg = json.load(f)
-    # persistent メッセージは既読にしない。peek=True は既読フラグを変更しない（v3.60）
-    if not peek and not msg.get('persistent'):
+    # 常駐（persistent / 期限内の期間常駐）は既読にしない。peek=True は既読フラグを変更しない
+    if not peek and not _inbox_standing(msg):
         msg['read'] = True
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(msg, f, ensure_ascii=False, indent=2)
@@ -1773,11 +1842,18 @@ def api_inbox_post():
     body  = data.get('body', '')
     if not to or not title:
         return jsonify({"error": "to and title are required"}), 400
+    persistent = bool(data.get('persistent', False))
+    expires_at, exp_err = _resolve_expires_at(data)
+    if exp_err:
+        return jsonify({"error": exp_err}), 400
+    if persistent and expires_at:
+        return jsonify({"error": "persistent and expires_at/ttl_days are exclusive"}), 400
     msg = _post_inbox_message(to=to, title=title, body=body,
                               from_=data.get('from', 'code'),
-                              persistent=bool(data.get('persistent', False)),
+                              persistent=persistent,
                               from_model=data.get('from_model'),
-                              to_model=data.get('to_model'))
+                              to_model=data.get('to_model'),
+                              expires_at=expires_at)
     return jsonify(msg), 201
 
 @app.route('/api/inbox/<msg_id>/read', methods=['PATCH'])
@@ -1824,9 +1900,21 @@ def api_inbox_update(msg_id):
     data = request.get_json() or {}
     with open(path, encoding='utf-8') as f:
         msg = json.load(f)
+    if 'expires_at' in data or 'ttl_days' in data:
+        expires_at, exp_err = _resolve_expires_at(data)
+        if exp_err:
+            return jsonify({"error": exp_err}), 400
+        msg['expires_at'] = expires_at  # None で期限解除
+        if expires_at:
+            msg['persistent'] = False   # 排他: 期限付きは persistent にしない
+            msg['read'] = False         # 降格済みでも常駐に復帰させる
     for key in ('persistent', 'title', 'body'):
         if key in data:
             msg[key] = data[key]
+    if msg.get('persistent') and msg.get('expires_at'):
+        msg['expires_at'] = None        # 排他: persistent 指定が優先
+    if 'read' in data:
+        msg['read'] = bool(data['read'])
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
     return jsonify(_norm_inbox_models(msg))
@@ -2406,6 +2494,7 @@ def api_conversation_rating(conv_uuid):
     conv['rating_reason'] = reason
     conv['rating_source'] = source
     conv['rating_judged_at'] = now_jst()
+    conv.pop('rating_skip_reason', None)
     with open(fpath, 'w', encoding='utf-8') as f:
         json.dump(conv, f, ensure_ascii=False, indent=2)
     index = _load_conv_index()
@@ -2417,6 +2506,7 @@ def api_conversation_rating(conv_uuid):
                 m['rating'] = rating
             m['rating_reason'] = reason
             m['rating_source'] = source
+            m.pop('rating_skip_reason', None)
     _save_conv_index(index)
     _log_info(f'conversation rating: {conv_uuid} -> {rating} (source={source})')
     append_oplog('conv_rating', conv_uuid, None,
@@ -2461,6 +2551,16 @@ def _save_conv_index(index):
     with open(_conv_index_path(), 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
 
+def _conv_rating_view(entry):
+    """インデックスエントリに明示的な rating を付けて返す（v3.70・MCP応答用）。
+    rating: 'safe'/'mature'/'adult'、未判定は None（rating_skip_reason があれば判定不能）"""
+    out = dict(entry)
+    if not out.get('rating'):
+        out['rating'] = 'safe' if out.get('rating_source') else None
+    out.setdefault('rating_source', None)
+    return out
+
+
 def _save_conversations(conversations):
     """conversations.jsonの各会話を個別ファイルに保存し、インデックスを更新する"""
     os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
@@ -2472,13 +2572,15 @@ def _save_conversations(conversations):
         if not uid:
             continue
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
-        # 再インポート時、既存ファイルに rating が設定済みなら引き継ぐ（M-LOCAL-7・v3.56）
+        # 再インポート時、既存ファイルの rating 系メタを引き継ぐ（v3.56、v3.70 で reason/source 等も対象に）
         if 'rating' not in conv and os.path.exists(fpath):
             try:
                 with open(fpath, encoding='utf-8') as ef:
-                    old_rating = json.load(ef).get('rating')
-                if old_rating:
-                    conv['rating'] = old_rating
+                    old = json.load(ef)
+                for k in ('rating', 'rating_reason', 'rating_source',
+                          'rating_judged_at', 'rating_model', 'rating_skip_reason'):
+                    if old.get(k):
+                        conv[k] = old[k]
             except Exception:
                 pass
         with open(fpath, 'w', encoding='utf-8') as f:
@@ -2491,8 +2593,9 @@ def _save_conversations(conversations):
             'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
             'message_count': msg_count,
         }
-        if conv.get('rating'):
-            meta['rating'] = conv['rating']
+        for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason'):
+            if conv.get(k):
+                meta[k] = conv[k]
         if uid in existing_uuids:
             index = [m if m['uuid'] != uid else meta for m in index]
         else:
@@ -3675,6 +3778,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
     _rating_batch_status.update({
         'running': True, 'processed': 0, 'errors': 0, 'skipped': 0,
         'started_at': now_jst(), 'finished_at': None, 'backend': backend,
+        'skip_reasons': {}, 'error_uuids': [],
     })
     try:
         import anthropic as _anthropic
@@ -3692,12 +3796,15 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
             uuid = entry.get('uuid', '')
             if not uuid:
                 continue
-            has_rating = entry.get('rating') is not None
-            source = entry.get('rating_source')
-            if has_rating and not force:
-                continue
-            if has_rating and force and source == 'manual':
-                continue
+            # 判定済み（safe は rating を持たないが rating_source が付く）と
+            # 判定不能（rating_skip_reason）は対象外。force は manual 以外を再判定
+            if force:
+                if entry.get('rating_source') == 'manual':
+                    continue
+            else:
+                if (entry.get('rating') is not None or entry.get('rating_source')
+                        or entry.get('rating_skip_reason')):
+                    continue
             targets.append(entry)
 
         _rating_batch_status['total'] = len(targets)
@@ -3705,35 +3812,54 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
 
         chunk_size = 30
 
+        def _count_skip(reason):
+            _rating_batch_status['skipped'] += 1
+            sr = _rating_batch_status['skip_reasons']
+            sr[reason] = sr.get(reason, 0) + 1
+
+        def _perma_skip(entry, reason, conv=None, conv_path=None):
+            """判定不能ログに rating_skip_reason を記録し、以後の対象から恒久除外する"""
+            _count_skip(reason)
+            entry['rating_skip_reason'] = reason
+            if conv is not None and conv_path:
+                conv['rating_skip_reason'] = reason
+                try:
+                    with open(conv_path, 'w', encoding='utf-8') as wf:
+                        json.dump(conv, wf, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+
         for entry in targets:
             uuid = entry.get('uuid', '')
             conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
             if not os.path.exists(conv_path):
                 _rating_batch_status['errors'] += 1
+                _rating_batch_status['error_uuids'].append(uuid)
+                _log_error(f'rating batch: file missing {uuid}')
                 continue
             try:
                 with open(conv_path, encoding='utf-8') as f:
                     conv = json.load(f)
             except Exception:
-                _rating_batch_status['errors'] += 1
+                _perma_skip(entry, 'parse_error')
                 continue
 
-            if not force and conv.get('rating') is not None:
-                _rating_batch_status['skipped'] += 1
+            if not force and (conv.get('rating') is not None or conv.get('rating_source')):
+                _count_skip('already_rated')
                 continue
             if force and conv.get('rating_source') == 'manual':
-                _rating_batch_status['skipped'] += 1
+                _count_skip('manual_protected')
                 continue
 
             messages = conv.get('chat_messages', [])
             if not messages:
-                _rating_batch_status['skipped'] += 1
+                _perma_skip(entry, 'empty', conv, conv_path)
                 continue
 
             try:
                 turns = _extract_conv_text_for_rating(messages)
                 if not turns:
-                    _rating_batch_status['skipped'] += 1
+                    _perma_skip(entry, 'no_text', conv, conv_path)
                     continue
 
                 chunks = [turns[i:i + chunk_size] for i in range(0, len(turns), chunk_size)]
@@ -3754,6 +3880,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
                 conv['rating_source'] = 'auto'
                 conv['rating_judged_at'] = now_jst()
                 conv['rating_model'] = model
+                conv.pop('rating_skip_reason', None)
                 if best_rating == 'safe':
                     conv.pop('rating', None)
 
@@ -3768,6 +3895,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
                             m['rating'] = best_rating
                         m['rating_reason'] = best_reason
                         m['rating_source'] = 'auto'
+                        m.pop('rating_skip_reason', None)
                         break
 
                 _rating_batch_status['processed'] += 1
@@ -3777,6 +3905,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
             except Exception as e:
                 _log_error(f'rating batch error {uuid}: {e}')
                 _rating_batch_status['errors'] += 1
+                _rating_batch_status['error_uuids'].append(uuid)
 
         _save_conv_index(index)
     except Exception as e:
@@ -3789,10 +3918,34 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
 
 
 def _count_pending_ratings():
-    """未判定の会話ログ件数を返す"""
+    """未判定の会話ログ件数（= 次回バッチの対象件数）を返す。
+    判定済み（rating / rating_source あり）と判定不能（rating_skip_reason あり）は含まない"""
     try:
         index = _load_conv_index()
-        return sum(1 for e in index if e.get('rating') is None and e.get('rating_source') is None)
+        return sum(1 for e in index
+                   if e.get('rating') is None and e.get('rating_source') is None
+                   and not e.get('rating_skip_reason'))
+    except Exception:
+        return None
+
+
+def _rating_index_counts():
+    """会話インデックス全体のレーティング分布を返す（v3.70）。
+    safe = 判定済みで rating なし / unrated = 未判定 / unjudgeable = 判定不能（skip理由つき）"""
+    counts = {'safe': 0, 'mature': 0, 'adult': 0, 'unrated': 0, 'unjudgeable': 0, 'total': 0}
+    try:
+        for e in _load_conv_index():
+            counts['total'] += 1
+            r = e.get('rating')
+            if r in ('mature', 'adult'):
+                counts[r] += 1
+            elif e.get('rating_source'):
+                counts['safe'] += 1
+            elif e.get('rating_skip_reason'):
+                counts['unjudgeable'] += 1
+            else:
+                counts['unrated'] += 1
+        return counts
     except Exception:
         return None
 
@@ -4267,7 +4420,8 @@ def api_batch_start():
 @require_auth
 def api_rating_batch_status():
     pending = _count_pending_ratings()
-    return jsonify({**_rating_batch_status, 'pending': pending})
+    return jsonify({**_rating_batch_status, 'pending': pending,
+                    'index_counts': _rating_index_counts()})
 
 
 @app.route('/api/rating-batch/start', methods=['POST'])
@@ -5165,7 +5319,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_index",
-        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。キーワード全文検索はconversation_search、中身の取得はconversation_read",
+        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。各アイテムに rating（safe/mature/adult・未判定は null）と rating_source（auto/manual）を含む（v3.70）。キーワード全文検索はconversation_search、中身の取得はconversation_read",
         "inputSchema": {"type": "object", "properties": {
             "search": {"type": "string",  "description": "タイトルに対する部分一致フィルタ（省略可）"},
             "limit":  {"type": "integer", "description": "最大取得件数（デフォルト50、最大500）"},
@@ -5174,7 +5328,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_search",
-        "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数）を返す",
+        "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数・rating・rating_source）を返す（rating は v3.70 から明示。未判定は null）",
         "inputSchema": {"type": "object", "properties": {
             "q":         {"type": "string",  "description": "検索キーワード（省略可）"},
             "date_from": {"type": "string",  "description": "検索開始日（ISO 8601形式 例: 2026-06-01）"},
@@ -5232,7 +5386,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_check",
-        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージは persistent[] に本文ごと全件含まれるため inbox_read 不要。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す。各メッセージに from_model/to_model（なければ null）が付く。v3.57: limit/days/from_model/to_model フィルタ追加",
+        "description": "インボックスの未読件数とIDリストを返す（軽量）。常駐メッセージ（persistent および期限内の期間常駐）は persistent[] に本文ごと全件含まれるため inbox_read 不要（期間常駐は expires_at で区別）。非常駐の未読は non_persistent_unread_ids を inbox_read で読む。include_read=trueで既読メッセージも含めて返す。各メッセージに from_model/to_model（なければ null）が付く。v3.57: limit/days/from_model/to_model フィルタ追加",
         "inputSchema": {"type": "object", "properties": {
             "to": {"type": "string", "description": "宛先フィルタ（'chat' または 'code'）。省略時は全件"},
             "include_read": {"type": "boolean", "description": "trueの場合、既読メッセージも含める。レスポンスにmessages[]（id+read+title）が追加される。デフォルト: false"},
@@ -5252,13 +5406,15 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_post",
-        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）。from_model/to_model で送信元・宛先のモデル名を明示できる（任意・文字列 or 配列）",
+        "description": "インボックスにメッセージを送る（チャット宛の報告・伝言に使う）。from_model/to_model で送信元・宛先のモデル名を明示できる（任意・文字列 or 配列）。expires_at / ttl_days で期間常駐（期限内は persistent 同様に毎回本文つきで返り既読化されない・期限後は自動アーカイブ, v3.70）",
         "inputSchema": {"type": "object", "properties": {
             "to":         {"type": "string", "description": "宛先（'chat' / 'code' / 'friend:{token}' — 特定の友人向け）"},
             "title":      {"type": "string", "description": "件名"},
             "body":       {"type": "string", "description": "本文"},
             "from":       {"type": "string", "description": "送信元チャネル（'chat' / 'code'。省略時は 'code'）。チャットセッションから送る場合は 'chat' を指定"},
-            "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）"},
+            "persistent": {"type": "boolean", "description": "true にすると既読にならない常駐メッセージになる（起動時の定常メモ等に使う）。expires_at/ttl_days とは排他"},
+            "expires_at": {"type": "string", "description": "期間常駐の期限（ISO 8601 例: 2026-07-21T00:00:00+09:00）。期限内は persistent 同様の常駐扱い、期限後はチェック時に既読アーカイブへ自動降格（v3.70）"},
+            "ttl_days":   {"type": "number", "description": "期間常駐の日数指定（投函時刻から換算）。expires_at とはどちらか一方"},
             "from_model":  {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}], "description": "送信元モデル名（文字列 or 配列。例: \"claude-opus-4-6\" or [\"claude-opus-4-6\", \"しずく\"]）"},
             "to_model":    {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}], "description": "宛先モデル名（文字列 or 配列）。特定のモデルに宛てたい場合に使う"},
             "reply_to_id": {"type": "string", "description": "返信先のメッセージID（発注に対する完了報告を紐づける用途）。省略可"}
@@ -5266,12 +5422,15 @@ _MCP_TOOLS = [
     },
     {
         "name": "inbox_update",
-        "description": "インボックスの既存メッセージを部分更新する（常駐フラグ変更・件名・本文）。指定フィールドのみ更新",
+        "description": "インボックスの既存メッセージを部分更新する（常駐フラグ・件名・本文・期間常駐の期限・既読フラグ）。指定フィールドのみ更新（v3.70: expires_at/ttl_days/read 追加）",
         "inputSchema": {"type": "object", "properties": {
             "id":         {"type": "string", "description": "更新対象のメッセージID"},
             "persistent": {"type": "boolean", "description": "常駐フラグ変更（true→false で常駐解除）"},
             "title":      {"type": "string", "description": "件名の変更"},
-            "body":       {"type": "string", "description": "本文の変更"}
+            "body":       {"type": "string", "description": "本文の変更"},
+            "expires_at": {"type": ["string", "null"], "description": "期間常駐の期限変更（ISO 8601）。null で期限解除（通常メッセージ化）"},
+            "ttl_days":   {"type": "number", "description": "期限を今から N 日後に再設定"},
+            "read":       {"type": "boolean", "description": "既読フラグの書き戻し（false で既読→未読に戻す。次の個体に未読で渡す用途, v3.70）"}
         }, "required": ["id"]}
     },
     {
@@ -5292,7 +5451,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "batch_run_rating",
-        "description": "未判定の会話ログにレーティング（safe/mature/adult）を自動付与するバッチを起動する。status_only=trueで進捗確認のみ",
+        "description": "未判定の会話ログにレーティング（safe/mature/adult）を自動付与するバッチを起動する。status_only=trueで進捗確認のみ（pending=次回対象件数・index_counts=全体分布・skip_reasons=判定不能の内訳・error_uuids）。判定不能ログ（empty/no_text/parse_error）は rating_skip_reason が付き恒久スキップ、force=true で再試行（v3.70）",
         "inputSchema": {"type": "object", "properties": {
             "backend":     {"type": "string", "description": "'lmstudio' または 'anthropic'（省略時は自動選択）"},
             "force":       {"type": "boolean", "description": "auto判定済みも再判定する（manual判定は触らない）。デフォルト: false"},
@@ -5602,7 +5761,7 @@ def _handle_tool_call_raw(name, arguments):
             index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
         total = len(index)
-        items = index[offset:offset + limit]
+        items = [_conv_rating_view(e) for e in index[offset:offset + limit]]
         return {"total": total, "offset": offset, "limit": limit, "items": items, "server_time": now_jst()}
 
     elif name == "conversation_search":
@@ -5618,7 +5777,7 @@ def _handle_tool_call_raw(name, arguments):
         if date_to:
             index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= date_to + 'T23:59:59']
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
-        return index[:limit]
+        return [_conv_rating_view(e) for e in index[:limit]]
 
     elif name == "conversation_share":
         uid   = arguments.get("uuid", "")
@@ -5830,7 +5989,7 @@ def _handle_tool_call_raw(name, arguments):
             filtered = []
             for m in msgs:
                 _norm_inbox_models(m)
-                is_persistent = m.get('persistent')
+                is_persistent = _inbox_standing(m)
                 if cutoff and not is_persistent:
                     if (m.get('created_at') or '') < cutoff:
                         continue
@@ -5844,8 +6003,8 @@ def _handle_tool_call_raw(name, arguments):
             msgs = filtered
         # v3.57: limit
         inbox_limit = arguments.get("limit")
-        persistent_msgs = [m for m in msgs if m.get('persistent')]
-        non_persistent  = [m for m in msgs if not m.get('persistent')]
+        persistent_msgs = [m for m in msgs if _inbox_standing(m)]
+        non_persistent  = [m for m in msgs if not _inbox_standing(m)]
         if inbox_limit is not None:
             try:
                 inbox_limit = int(inbox_limit)
@@ -5854,22 +6013,24 @@ def _handle_tool_call_raw(name, arguments):
                 pass
         msgs = persistent_msgs + non_persistent
         result = {"count": len(msgs), "ids": [m['id'] for m in msgs]}
-        non_persistent_unread = [m for m in msgs if not m.get('persistent') and not m.get('read')]
+        non_persistent_unread = [m for m in msgs if not _inbox_standing(m) and not m.get('read')]
         result["non_persistent_unread_count"] = len(non_persistent_unread)
         result["non_persistent_unread_ids"]   = [m['id'] for m in non_persistent_unread]
         result["persistent"] = [
             {"id": m['id'], "title": m.get('title', ''), "body": m.get('body', ''),
              "created_at": m.get('created_at', ''),
-             "from_model": m.get('from_model'), "to_model": m.get('to_model')}
-            for m in msgs if m.get('persistent')
+             "from_model": m.get('from_model'), "to_model": m.get('to_model'),
+             "expires_at": m.get('expires_at')}
+            for m in msgs if _inbox_standing(m)
         ]
         if include_read:
-            unread_count = sum(1 for m in msgs if not m.get('read') or m.get('persistent'))
+            unread_count = sum(1 for m in msgs if not m.get('read') or _inbox_standing(m))
             result["unread_count"] = unread_count
             result["messages"] = [
                 {"id": m['id'], "read": bool(m.get('read')), "persistent": bool(m.get('persistent')),
                  "title": m.get('title', ''), "from": m.get('from', ''), "to": m.get('to', ''),
-                 "from_model": m.get('from_model'), "to_model": m.get('to_model')}
+                 "from_model": m.get('from_model'), "to_model": m.get('to_model'),
+                 "expires_at": m.get('expires_at')}
                 for m in msgs
             ]
         return result
@@ -5888,16 +6049,22 @@ def _handle_tool_call_raw(name, arguments):
         if not to or not title:
             return {"error": "to and title are required"}
         persistent  = bool(arguments.get("persistent", False))
+        expires_at, exp_err = _resolve_expires_at(arguments)
+        if exp_err:
+            return {"error": exp_err}
+        if persistent and expires_at:
+            return {"error": "persistent and expires_at/ttl_days are exclusive"}
         reply_to_id = arguments.get("reply_to_id") or None
         msg = _post_inbox_message(to=to, title=title, body=body,
                                   from_=arguments.get("from", "code"),
                                   persistent=persistent,
                                   from_model=arguments.get("from_model"),
                                   to_model=arguments.get("to_model"),
-                                  reply_to_id=reply_to_id)
+                                  reply_to_id=reply_to_id,
+                                  expires_at=expires_at)
         return {"id": msg['id'], "created_at": msg['created_at'], "persistent": persistent,
                 "from_model": msg.get('from_model'), "to_model": msg.get('to_model'),
-                "reply_to_id": msg.get('reply_to_id')}
+                "reply_to_id": msg.get('reply_to_id'), "expires_at": msg.get('expires_at')}
 
     elif name == "inbox_update":
         msg_id = arguments.get("id", "")
@@ -5908,9 +6075,21 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": f"message not found: {msg_id}"}
         with open(path, encoding='utf-8') as f:
             msg = json.load(f)
+        if 'expires_at' in arguments or 'ttl_days' in arguments:
+            expires_at, exp_err = _resolve_expires_at(arguments)
+            if exp_err:
+                return {"error": exp_err}
+            msg['expires_at'] = expires_at  # None で期限解除
+            if expires_at:
+                msg['persistent'] = False   # 排他: 期限付きは persistent にしない
+                msg['read'] = False         # 降格済みでも常駐に復帰させる
         for key in ('persistent', 'title', 'body'):
             if key in arguments:
                 msg[key] = arguments[key]
+        if msg.get('persistent') and msg.get('expires_at'):
+            msg['expires_at'] = None        # 排他: persistent 指定が優先
+        if 'read' in arguments:
+            msg['read'] = bool(arguments['read'])
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(msg, f, ensure_ascii=False, indent=2)
         return _norm_inbox_models(msg)
@@ -5939,7 +6118,8 @@ def _handle_tool_call_raw(name, arguments):
     elif name == "batch_run_rating":
         if arguments.get("status_only"):
             pending = _count_pending_ratings()
-            return {**_rating_batch_status, "pending": pending, "server_time": now_jst()}
+            return {**_rating_batch_status, "pending": pending,
+                    "index_counts": _rating_index_counts(), "server_time": now_jst()}
         ok, info = _start_rating_batch(
             backend=arguments.get("backend") or None,
             force=bool(arguments.get("force", False)),

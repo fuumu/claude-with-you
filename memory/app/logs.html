@@ -70,6 +70,17 @@
     .qa-item .qa-mark { color: #484f58; font-size: .7rem; flex-shrink: 0; }
     .fav-filter-row { display: flex; align-items: center; gap: .35rem; font-size: .72rem; color: #adbac7; cursor: pointer; }
     .fav-filter-row input { cursor: pointer; }
+    /* v3.70: rating バッジ */
+    .rating-badge { font-size: .6rem; padding: .02rem .28rem; border-radius: 3px; white-space: nowrap; border: 1px solid; flex-shrink: 0; }
+    .rating-safe        { color: #3fb950; border-color: #3fb95055; background: #3fb95012; }
+    .rating-mature      { color: #d29922; border-color: #d2992255; background: #d2992212; }
+    .rating-adult       { color: #f85149; border-color: #f8514955; background: #f8514912; }
+    .rating-unrated     { color: #6e7681; border-color: #30363d; }
+    .rating-unjudgeable { color: #a371f7; border-color: #a371f755; background: #a371f712; }
+    .rating-select {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 5px;
+      color: #c9d1d9; font-size: .72rem; padding: .24rem .4rem; flex-shrink: 0;
+    }
 
     /* Right pane */
     .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -368,6 +379,17 @@
           <label class="fav-filter-row"><input type="checkbox" id="body-search" onchange="applyFilters()"> <span data-i18n="bodysearch">📄 本文も検索</span></label>
         </div>
         <div class="filter-row">
+          <label data-i18n="rating.filter">レーティング</label>
+          <select id="rating-filter" onchange="renderList()" style="flex:1">
+            <option value="" data-i18n="rating.all">すべて</option>
+            <option value="safe">safe</option>
+            <option value="mature">mature</option>
+            <option value="adult">adult</option>
+            <option value="unrated" data-i18n="rating.unrated">未判定</option>
+            <option value="unjudgeable" data-i18n="rating.unjudgeable">判定不能</option>
+          </select>
+        </div>
+        <div class="filter-row">
           <label>From</label>
           <input type="date" id="date-from" onchange="applyFilters()" style="flex:1">
           <label style="margin-left:.25rem">To</label>
@@ -403,7 +425,14 @@
       <div class="conv-header-info">
         <div class="conv-header-title" id="conv-header-title"></div>
         <div class="conv-header-meta" id="conv-header-meta"></div>
+        <div class="conv-header-meta" id="conv-rating-meta" style="display:none"></div>
       </div>
+      <select id="rating-select" class="rating-select" onchange="saveRating()" title="レーティング手動上書き（選択で即保存・rating_source=manual）">
+        <option value="">🏷 rating</option>
+        <option value="safe">safe</option>
+        <option value="mature">mature</option>
+        <option value="adult">adult</option>
+      </select>
       <button class="toggle-btn" onclick="copyConvId()" title="この会話のIDをコピー（澪に渡せます）">📋 ID</button>
       <button class="toggle-btn" id="share-btn" onclick="shareConv()" title="24時間有効な共有リンクを生成" data-i18n="btn.share">🔗 共有</button>
       <button class="toggle-btn" id="thinking-toggle" onclick="toggleThinking()" data-i18n="thinking.show">🧠 思考を表示</button>
@@ -577,6 +606,8 @@ function renderList() {
   const favs = loadFavs();
   let items = filteredConvs;
   if (showFavOnly) items = items.filter(c => favs[c.uuid]);
+  const rf = document.getElementById('rating-filter');
+  if (rf && rf.value) items = items.filter(c => ratingState(c) === rf.value);
 
   count.textContent = items.length ? `${items.length} 件${showFavOnly ? '（☆）' : ''}` : '';
 
@@ -596,7 +627,7 @@ function renderList() {
           <button class="fav-star${on ? ' on' : ''}" title="お気に入り" onclick="toggleFav('${esc(c.uuid)}', event)">${on ? '★' : '☆'}</button>
           <span class="conv-title">${esc(c.title || c.name || '（無題）')}</span>
         </div>
-        <div class="conv-meta"><span>${date}</span><span>${msgCount}件</span></div>
+        <div class="conv-meta"><span>${date}　${ratingBadge(c)}</span><span>${msgCount}件</span></div>
       </div>`;
   }).join('');
 }
@@ -659,6 +690,8 @@ function clearRecent() {
 function closeConv() {
   activeUuid = null;
   document.getElementById('conv-header').style.display = 'none';
+  const rm = document.getElementById('conv-rating-meta');
+  if (rm) rm.style.display = 'none';
   document.getElementById('summary-panel').style.display = 'none';
   document.getElementById('messages-wrap').innerHTML =
     `<div class="empty-state"><span class="icon">💬</span><span class="hint">${t('empty.select')}</span></div>`;
@@ -755,6 +788,7 @@ async function selectConv(uuid) {
   const updated = (conv.updated_at || '').slice(0, 16).replace('T', ' ');
   const created = (conv.created_at || '').slice(0, 16).replace('T', ' ');
   document.getElementById('conv-header-meta').textContent = `作成: ${created}　更新: ${updated}`;
+  updateRatingHeader(conv);
 
   recordRecent(uuid, conv.name || '');  // L1: 最近開いた会話に記録
   loadSummaryPanel(conv);               // L1-b: 2層要約パネル
@@ -769,6 +803,72 @@ async function selectConv(uuid) {
   document.getElementById('msg-scroll-btns').classList.add('visible');
   loadRelated(conv);
   loadConvFiles(uuid);
+}
+
+// ── v3.70: rating バッジ・フィルタ・手動上書き ─────────────────────────
+// safe 判定済みは rating フィールドを持たず rating_source が付く（サーバ仕様）
+function ratingState(c) {
+  if (c.rating === 'mature' || c.rating === 'adult') return c.rating;
+  if (c.rating === 'safe' || c.rating_source) return 'safe';
+  if (c.rating_skip_reason) return 'unjudgeable';
+  return 'unrated';
+}
+
+function ratingBadge(c) {
+  const st = ratingState(c);
+  const label = st === 'unrated' ? (_lang === 'en' ? 'unrated' : '未判定')
+              : st === 'unjudgeable' ? 'skip' : st;
+  const tip = [];
+  if (c.rating_source) tip.push(c.rating_source === 'manual' ? 'manual' : 'auto');
+  if (c.rating_reason) tip.push(c.rating_reason);
+  if (c.rating_skip_reason) tip.push('skip: ' + c.rating_skip_reason);
+  const mark = c.rating_source === 'manual' ? '✎' : '';
+  return `<span class="rating-badge rating-${st}" title="${esc(tip.join(' / '))}">${esc(label)}${mark}</span>`;
+}
+
+function updateRatingHeader(conv) {
+  const meta = document.getElementById('conv-rating-meta');
+  const sel  = document.getElementById('rating-select');
+  if (!meta || !sel) return;
+  const st = ratingState(conv);
+  sel.value = (st === 'mature' || st === 'adult') ? st
+            : (st === 'safe' && conv.rating_source) ? 'safe' : '';
+  const bits = [ratingBadge(conv)];
+  if (conv.rating_source) {
+    bits.push(esc(conv.rating_source === 'manual'
+      ? (_lang === 'en' ? 'manual' : '手動判定')
+      : (_lang === 'en' ? 'auto' : '自動判定') + (conv.rating_model ? '・' + conv.rating_model : '')));
+  }
+  if (conv.rating_reason) bits.push(esc(conv.rating_reason));
+  if (conv.rating_skip_reason) bits.push(esc((_lang === 'en' ? 'unjudgeable: ' : '判定不能: ') + conv.rating_skip_reason));
+  meta.style.display = '';
+  meta.innerHTML = bits.join('　');
+}
+
+async function saveRating() {
+  const sel = document.getElementById('rating-select');
+  const val = sel ? sel.value : '';
+  if (!activeUuid || !val) return;
+  try {
+    const res = await apiFetch('/api/conversations/' + encodeURIComponent(activeUuid) + '/rating', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating: val })
+    });
+    if (!res.ok) { showToast('rating 保存失敗 (HTTP ' + res.status + ')'); return; }
+    // キャッシュ・一覧メタへ反映（safe はフィールド削除・manual 扱い）
+    const apply = (o) => {
+      if (!o) return;
+      if (val === 'safe') delete o.rating; else o.rating = val;
+      o.rating_source = 'manual';
+      delete o.rating_skip_reason;
+    };
+    apply(convCache.get(activeUuid));
+    apply(filteredConvs.find(c => c.uuid === activeUuid));
+    renderList();
+    updateRatingHeader(convCache.get(activeUuid) || {});
+    showToast('rating: ' + val + ' (manual)');
+  } catch(e) { if (e.message !== '401') showToast('通信エラー'); }
 }
 
 function copyConvId() {
@@ -1168,6 +1268,10 @@ const I18N = {
   'fontsize':        { ja: '文字サイズ', en: 'Font size' },
   'favonly':         { ja: '☆ お気に入りのみ表示', en: '☆ Favorites only' },
   'bodysearch':      { ja: '📄 本文も検索', en: '📄 Search in body' },
+  'rating.filter':   { ja: 'レーティング', en: 'Rating' },
+  'rating.all':      { ja: 'すべて', en: 'All' },
+  'rating.unrated':  { ja: '未判定', en: 'Unrated' },
+  'rating.unjudgeable': { ja: '判定不能', en: 'Unjudgeable' },
   'btn.share':       { ja: '🔗 共有', en: '🔗 Share' },
   'thinking.show':   { ja: '🧠 思考を表示', en: '🧠 Show thinking' },
   'thinking.hide':   { ja: '🧠 思考を非表示', en: '🧠 Hide thinking' },

@@ -161,13 +161,13 @@ python -m venv .venv
 
 | グループ | パス | 契約の要点 |
 |---|---|---|
-| conversations | `/api/conversations/*` | 検索（`q`/`from`/`to`/`limit`/`body_search`・updated_at 降順）/ index（`search`/`limit`≤500/`offset`・`{total,offset,limit,items}`）/ rebuild（`{rebuilt}`）/ `<uuid>` 取得（404）/ annotations（空なら `[]`）/ share POST（`{token,url,expires_at}`・`expires_in` 指定可）/ view GET（認証不要・不正 404・期限切れ 410）/ rating PATCH（safe/mature/adult 以外は 400） |
+| conversations | `/api/conversations/*` | 検索（`q`/`from`/`to`/`limit`/`body_search`・updated_at 降順）/ index（`search`/`limit`≤500/`offset`・`{total,offset,limit,items}`）/ rebuild（`{rebuilt}`）/ `<uuid>` 取得（404）/ annotations（空なら `[]`）/ share POST（`{token,url,expires_at}`・`expires_in` 指定可）/ view GET（認証不要・不正 404・期限切れ 410）/ rating PATCH（safe/mature/adult 以外は 400・`rating_skip_reason` クリア）/ rebuild は rating 系メタ（reason/source/skip_reason）を保全（v3.70） |
 | coremem | `/api/coremem*` | 一覧 `[{name,version,updated_at}]` / POST `{content}`→201 `{name,version,version_str}`（版番号は連番）/ `?version=N` で旧版 / DELETE は全版削除 `{deleted}`（対象なし 404）/ manifest マージ返却。`?raw=true` で素通し |
-| inbox | `/api/inbox*` | GET一覧 / POST / PATCH read・unread / PATCH 部分更新 / DELETE |
+| inbox | `/api/inbox*` | GET一覧 / POST（`expires_at`/`ttl_days` 期間常駐・persistent と排他 400・期限切れはチェック時既読降格, v3.70）/ PATCH read・unread / PATCH 部分更新（`expires_at`/`ttl_days`/`read` 受付, v3.70）/ DELETE |
 | album | `/api/album/*` | 一覧 / 画像 / upload / PATCH メタ / DELETE / share（共有画像は認証不要） |
 | uploads | `/api/uploads/*` | 一覧 / ダウンロード / POST（201・タグはカンマ・読点・空白区切り）/ DELETE（404 if missing） |
 | batch | `/api/batch/status` `/api/batch/start` | 要約バッチ: 状態 dict / バックグラウンド起動 |
-| rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict / バックグラウンド起動（v3.68） |
+| rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict（`pending`=次回対象件数・`index_counts` 分布・`skip_reasons`・`error_uuids`, v3.70）/ バックグラウンド起動（v3.68） |
 | redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | 伏せ字ログ: 生成・取得・承認・差し戻し・ステータス一覧（v3.69） |
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
 | friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |

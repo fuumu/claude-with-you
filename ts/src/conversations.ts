@@ -174,7 +174,7 @@ function handleRebuild(res: http.ServerResponse): void {
     }
     let uid = String(conv.uuid || conv.id || '');
     if (!uid) uid = fname.slice(0, -5);
-    newIndex.push({
+    const meta: ConvMeta = {
       uuid: uid,
       title: String(conv.name || conv.title || uid.slice(0, 8)),
       created_at: 'created_at' in conv ? (conv.created_at as string) : '',
@@ -185,7 +185,12 @@ function handleRebuild(res: http.ServerResponse): void {
             ? (conv.created_at as string)
             : '',
       message_count: Array.isArray(conv.chat_messages) ? conv.chat_messages.length : 0,
-    });
+    };
+    // rating 系メタは会話ファイルから引き継ぐ（v3.70: 従来は rebuild で消えていた）
+    for (const k of ['rating', 'rating_reason', 'rating_source', 'rating_skip_reason']) {
+      if (conv[k]) meta[k] = conv[k];
+    }
+    newIndex.push(meta);
     rebuilt += 1;
   }
   sortDescByUpdated(newIndex);
@@ -278,6 +283,7 @@ async function handleRating(
   conv.rating_reason = reason;
   conv.rating_source = source;
   conv.rating_judged_at = judgedAt;
+  delete conv.rating_skip_reason;
   writeJson(fpath, conv);
   // _index.json のメタにも反映
   const index = loadConvIndex();
@@ -290,6 +296,7 @@ async function handleRating(
       }
       m.rating_reason = reason;
       m.rating_source = source;
+      delete m.rating_skip_reason;
     }
   }
   saveConvIndex(index);

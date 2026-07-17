@@ -233,8 +233,8 @@ Browse, share, digest, and annotate past conversations imported from Claude.ai e
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `conversation_index` | List conversation titles in descending date order with pagination — for browsing when UUID is unknown (v3.34); REST: `GET /api/conversations/index`, rebuild: `POST /api/conversations/index/rebuild` | `search`, `limit`, `offset` |
-| `conversation_search` | Search conversation titles by keyword and date range | `q`, `limit` |
+| `conversation_index` | List conversation titles in descending date order with pagination — for browsing when UUID is unknown (v3.34); items carry `rating`/`rating_source` (v3.70); REST: `GET /api/conversations/index`, rebuild: `POST /api/conversations/index/rebuild` | `search`, `limit`, `offset` |
+| `conversation_search` | Search conversation titles by keyword and date range; items carry `rating` (judged-safe = explicit `"safe"`, unrated = null) and `rating_source` (v3.70) | `q`, `limit` |
 | `conversation_read` | Read full conversation text; `include_thinking=true` includes thinking blocks (v3.20); `thinking_limit` caps each block (default 1500, ≤0 unlimited); `include_annotations=true` shows annotations inline with `[No.X]` message numbers (v3.22); `include_body=false` returns annotations only without message body (v3.33); `turn_offset`/`turn_limit` slice by message — negative offset = from end (first 4 = `turn_limit=4`, last 4 = `turn_offset=-4`) (v3.47) | `uuid`, `include_thinking`, `thinking_limit`, `include_annotations`, `include_body`, `turn_offset`, `turn_limit` |
 | `conversation_share` | Generate 24h shareable URL (`/share.html?token=` — standalone read-only viewer, v3.23) | `uuid` |
 | `conversation_digest` | Generate/retrieve a conversation digest via local LLM (LMStudio); chunks into 20-turn segments, digests each, then integrates; `safe_mode=true` for policy-safe abstract expressions; cached at `/data/conversations/{uuid}_digest.json`; REST: `POST /api/conversations/<uuid>/digest` (v3.53) | `uuid`, `force`, `safe_mode` |
@@ -257,7 +257,7 @@ Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 |------|-------------|----------|
 | `inbox_check` | Get unread count + IDs; `persistent[]` includes standing messages with full bodies (v3.20, no `inbox_read` needed), plus `non_persistent_unread_count`/`_ids`; `include_read=true` adds `messages[]` metadata | `to`, `include_read` |
 | `inbox_read` | Fetch a message and mark as read; `peek=true` reads without marking as read (to inspect messages addressed to other agents, v3.60) | `id`, `peek` |
-| `inbox_post` | Send a message; `from_model`/`to_model` optionally tag sender/recipient model (v3.27) | `to`, `title`, `body`, `persistent`, `from_model`, `to_model` |
+| `inbox_post` | Send a message; `from_model`/`to_model` optionally tag sender/recipient model (v3.27); `expires_at`/`ttl_days` create a timed standing message — persistent-like until the deadline, auto-archived after (v3.70) | `to`, `title`, `body`, `persistent`, `from_model`, `to_model`, `expires_at`, `ttl_days` |
 
 `persistent=true` creates a standing message that is never marked as read — useful for reminders that should appear every session.
 
@@ -275,7 +275,7 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 | Tool | Description | Key args |
 |------|-------------|----------|
 | `batch_run_summary_layers` | Start the summary-layer batch for raw entries (layer 2 summary + layer 3 symbolic compression); `status_only=true` returns progress + pending raw count | `backend`, `force`, `status_only` |
-| `batch_run_rating` | Start the rating batch to auto-assign `rating` (safe/mature/adult) + `rating_reason` to unrated conversation logs; `status_only=true` returns progress + pending count (v3.68) | `backend`, `force`, `status_only` |
+| `batch_run_rating` | Start the rating batch to auto-assign `rating` (safe/mature/adult) + `rating_reason` to unrated conversation logs; `status_only=true` returns progress, `pending` (next-run targets), `index_counts` distribution, `skip_reasons`/`error_uuids` (v3.68/v3.70); unjudgeable logs get `rating_skip_reason` and are skipped permanently unless `force=true` | `backend`, `force`, `status_only` |
 
 `backend` defaults to `anthropic` when `ANTHROPIC_API_KEY` is set, otherwise `lmstudio` (local LLM). The same batch auto-starts after each ZIP import. The rating batch also runs nightly for unrated conversations.
 
@@ -314,7 +314,9 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/conversations/<uuid>` | Get conversation |
 | GET | `/api/conversations/<uuid>/annotations` | List a conversation's annotations (read-only, v3.42) |
 | POST | `/api/conversations/<uuid>/digest` | Generate/retrieve conversation digest (`?force=true&safe_mode=true`, v3.53) |
-| PATCH | `/api/conversations/<uuid>/rating` | Set conversation rating (safe/mature/adult, v3.56) |
+| PATCH | `/api/conversations/<uuid>/rating` | Set conversation rating (safe/mature/adult, v3.56; accepts reason/source v3.68; clears skip_reason v3.70) |
+| GET | `/api/rating-batch/status` | Rating batch status (incl. pending, index_counts, skip_reasons, v3.68/v3.70) |
+| POST | `/api/rating-batch/start` | Start the rating batch (v3.68) |
 | GET | `/api/inbox` | List inbox messages |
 | POST | `/api/inbox` | Post a message |
 | PATCH | `/api/inbox/<id>/read` | Mark as read |
@@ -574,7 +576,7 @@ claude-with-you/
 **Design phase**
 - OpenWebUI automatic sync — API polling for periodic sync (manual import implemented in v3.66, [design doc](docs/openwebui-sync.md))
 
-**Implemented (v3.9–v3.69)**
+**Implemented (v3.9–v3.70)**
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)
@@ -620,6 +622,7 @@ claude-with-you/
 - Local LLM model name externalized (v3.65) — the lmstudio model name hardcoded in the summary batch and `conversation_digest` (`qwen/qwen3.6-35b-a3b`) moved to the `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`). Unifying all local LLM work on the everyday model stops LM Studio from on-demand double-loading a second model onto the CPU side
 - Redact mode: sentence-level masking for adult conversation logs (v3.69) — sentence-number-list method: Python deterministically splits text into sentences, LLM outputs only the sentence IDs to mask, Python mechanically replaces those sentences with ●●● (zero risk of LLM altering the original text). `conversation_read` three-way branching: `include_raw=true` → original / `redact=true` → approved redacted version / default → redacted if available, otherwise safe digest. REST endpoints for generate, get, approve, reject, and status listing. admin.html Redact tab with Generate→Preview→Approve/Reject approval workflow. Cache `{uuid}_redacted.json` (invalidated on body hash change)
 - Safe check: conversation log auto-rating batch (v3.68) — new `batch_run_rating` MCP tool (tool count 31→32). Auto-assigns `rating` (safe/mature/adult) + `rating_reason` (one-line justification) to all unrated conversation logs using the local LLM. Prompt derived from `rating_policy.md`, long conversations are chunk-split with highest rating winning (adult > mature > safe). Additional metadata: `rating_source` (manual/auto), `rating_judged_at`, `rating_model`. Existing manual ratings (no `rating_source`) are treated as `manual` and never overwritten even with `force=true`. REST `GET /api/rating-batch/status`, `POST /api/rating-batch/start`. `PATCH /api/conversations/<uuid>/rating` extended to accept `rating_reason` and `rating_source`. Nightly scheduler integration (runs after summary batch). Thinking blocks excluded from judgment
+- Rating visibility + two inbox mini-features (v3.70) — work order #3. ① Batch bug fix: conversations already judged safe (no `rating` field, only `rating_source`) were re-judged on every batch run ② unjudgeable logs now get a `rating_skip_reason` (empty = no messages / no_text = no extractable text / parse_error = broken JSON) and are permanently excluded from future runs (`force=true` retries them) ③ batch status extended: `skip_reasons` breakdown, `error_uuids`, `index_counts` (overall safe/mature/adult/unrated/unjudgeable distribution); `pending` redefined as "targets of the next run" ④ MCP `conversation_index` / `conversation_search` items now always carry `rating` (judged-safe is an explicit `"safe"`, unrated is null) and `rating_source` — the Claude-side window into judgments ⑤ logs.html: rating badges in the conversation list (color-coded, reason tooltip, ✎ mark for manual), a rating filter (incl. unrated/unjudgeable), and a manual-override selector in the header (via PATCH, rating_source=manual) ⑥ index rebuild and re-imports preserve rating metadata (reason/source/judged_at/model/skip_reason; rebuild used to drop ratings entirely) ⑦ inbox timed standing messages (TTL): `inbox_post` accepts `expires_at` / `ttl_days`; while valid they behave like persistent messages (full body in `inbox_check`, never marked read), after expiry they auto-demote to the read archive at check time (no cron); exclusive with persistent; `inbox_update` can change/clear the deadline ⑧ inbox unread restore: `inbox_update` accepts `read` (false writes a read message back to unread)
 - Oplog coverage expansion (v3.67) — CoreMem (save/delete/rename), Album (save/update/delete), Uploads (upload/delete), and conversation rating changes (conv_rating) are now recorded in the oplog. Previously only ExtMemory operations (create/update/delete/import/restore) were tracked. The TS layer (`coremem.ts`) also records CoreMem save/delete via REST. New operation-type badge colors added to admin.html (coremem_save: teal, album_save: orange, file_upload: dark grey, conv_rating: purple, etc.)
 - file_read JSON support + OpenWebUI import + admin.html improvements (v3.66) — ① `file_read` now falls back to extension-based detection (`.json`/`.jsonl`/etc. are returned in the `content` field even when the stored mimetype is wrong) ② New `POST /api/import/openwebui` endpoint: imports OpenWebUI (local LLM) chat export JSON into the conversation store. Handles both messages array and history.messages tree formats, deduplication, auto-starts summary batch. Drop zone added to admin.html Import tab ③ admin.html Uploads tab: modal unified with other tabs (`openModal()`), ID copy support, dark-theme preview ④ admin.html Album tab: click image to open lightbox (fullscreen). Escape to close
 

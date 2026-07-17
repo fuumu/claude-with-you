@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
 import { DATA_ROOT } from './data.js';
-import { nowJst } from './write.js';
+import { jstIsoFromMs, nowJst } from './write.js';
 
 const INBOX_DIR = path.join(DATA_ROOT, 'inbox');
 
@@ -25,6 +25,7 @@ interface InboxMessage {
   created_at?: string;
   read?: boolean;
   persistent?: boolean;
+  expires_at?: string | null;
   [key: string]: unknown;
 }
 
@@ -86,6 +87,40 @@ function normInboxModels(msg: InboxMessage): InboxMessage {
   return msg;
 }
 
+/** _resolve_expires_at: expires_at / ttl_days 入力を ISO 文字列に正規化（v3.70） */
+function resolveExpiresAt(data: Record<string, unknown>): { value: string | null; error: string | null } {
+  const expiresAt = data.expires_at;
+  const ttlDays = data.ttl_days;
+  if (expiresAt && ttlDays !== undefined && ttlDays !== null) {
+    return { value: null, error: 'expires_at and ttl_days are exclusive' };
+  }
+  if (ttlDays !== undefined && ttlDays !== null) {
+    const n = Number(ttlDays);
+    if (!Number.isFinite(n)) return { value: null, error: 'ttl_days must be a number' };
+    return { value: jstIsoFromMs(Date.now() + n * 86400_000), error: null };
+  }
+  if (expiresAt) {
+    if (Number.isNaN(Date.parse(String(expiresAt)))) {
+      return { value: null, error: 'expires_at must be ISO 8601' };
+    }
+    return { value: String(expiresAt), error: null };
+  }
+  return { value: null, error: null };
+}
+
+/** _inbox_timed_active: 期間常駐が期限内か（persistent は対象外） */
+function inboxTimedActive(msg: InboxMessage): boolean {
+  const exp = msg.expires_at;
+  if (!exp || msg.persistent) return false;
+  const t = Date.parse(String(exp));
+  return Number.isFinite(t) && t > Date.now();
+}
+
+/** _inbox_standing: 常駐扱いか（persistent または 期限内の期間常駐, v3.70） */
+function inboxStanding(msg: InboxMessage): boolean {
+  return Boolean(msg.persistent) || inboxTimedActive(msg);
+}
+
 function loadInboxMessages(to?: string | null, unreadOnly = false): InboxMessage[] {
   const dir = inboxDir(to);
   fs.mkdirSync(dir, { recursive: true });
@@ -99,14 +134,23 @@ function loadInboxMessages(to?: string | null, unreadOnly = false): InboxMessage
       continue;
     }
     if (to && msg.to !== to) continue;
-    if (unreadOnly && msg.read && !msg.persistent) continue;
+    // 期間常駐の期限切れはチェック時に既読アーカイブへ自動降格（v3.70）
+    if (msg.expires_at && !msg.persistent && !msg.read && !inboxTimedActive(msg)) {
+      msg.read = true;
+      try {
+        writeMsg(path.join(dir, fname), msg);
+      } catch {
+        /* 書けなくても一覧は返す */
+      }
+    }
+    if (unreadOnly && msg.read && !inboxStanding(msg)) continue;
     msgs.push(msg);
   }
   return msgs;
 }
 
 /** _post_inbox_message と同一の ID 採番・メッセージ形状 */
-function postInboxMessage(data: Record<string, unknown>): InboxMessage {
+function postInboxMessage(data: Record<string, unknown>, expiresAt: string | null = null): InboxMessage {
   const to = String(data.to);
   const dir = inboxDir(to);
   fs.mkdirSync(dir, { recursive: true });
@@ -125,6 +169,7 @@ function postInboxMessage(data: Record<string, unknown>): InboxMessage {
     created_at: now,
     read: false,
     persistent: Boolean(data.persistent ?? false),
+    expires_at: expiresAt ?? null,
   };
   writeMsg(path.join(dir, `${msgId}.json`), msg);
   return msg;
@@ -178,7 +223,16 @@ export async function handleInbox(
         sendJson(res, 400, { error: 'to and title are required' });
         return true;
       }
-      sendJson(res, 201, postInboxMessage(data));
+      const exp = resolveExpiresAt(data);
+      if (exp.error) {
+        sendJson(res, 400, { error: exp.error });
+        return true;
+      }
+      if (Boolean(data.persistent ?? false) && exp.value) {
+        sendJson(res, 400, { error: 'persistent and expires_at/ttl_days are exclusive' });
+        return true;
+      }
+      sendJson(res, 201, postInboxMessage(data, exp.value));
       return true;
     }
     return false;
@@ -197,7 +251,7 @@ export async function handleInbox(
       return true;
     }
     const msg = readMsg(file);
-    if (!msg.persistent) {
+    if (!inboxStanding(msg)) {
       msg.read = true;
       writeMsg(file, msg);
     }
@@ -258,9 +312,23 @@ export async function handleInbox(
       data = {};
     }
     const msg = readMsg(file);
+    if ('expires_at' in data || 'ttl_days' in data) {
+      const exp = resolveExpiresAt(data);
+      if (exp.error) {
+        sendJson(res, 400, { error: exp.error });
+        return true;
+      }
+      msg.expires_at = exp.value; // null で期限解除
+      if (exp.value) {
+        msg.persistent = false; // 排他: 期限付きは persistent にしない
+        msg.read = false; // 降格済みでも常駐に復帰させる
+      }
+    }
     for (const key of ['persistent', 'title', 'body']) {
       if (key in data) msg[key] = data[key];
     }
+    if (msg.persistent && msg.expires_at) msg.expires_at = null; // 排他: persistent 優先
+    if ('read' in data) msg.read = Boolean(data.read);
     writeMsg(file, msg);
     sendJson(res, 200, normInboxModels(msg));
     return true;

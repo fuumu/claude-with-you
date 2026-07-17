@@ -169,13 +169,13 @@ response shapes pinned by tests.
 
 | Group | Path | Essentials |
 |---|---|---|
-| conversations | `/api/conversations/*` | search (`q`/`from`/`to`/`limit`/`body_search`, updated_at desc) / index (`search`/`limit`≤500/`offset`, `{total,offset,limit,items}`) / rebuild (`{rebuilt}`) / `<uuid>` fetch (404) / annotations (`[]` when none) / share POST (`{token,url,expires_at}`, `expires_in` accepted) / view GET (no auth; bad token 404, expired 410) / rating PATCH (400 unless safe/mature/adult) |
+| conversations | `/api/conversations/*` | search (`q`/`from`/`to`/`limit`/`body_search`, updated_at desc) / index (`search`/`limit`≤500/`offset`, `{total,offset,limit,items}`) / rebuild (`{rebuilt}`) / `<uuid>` fetch (404) / annotations (`[]` when none) / share POST (`{token,url,expires_at}`, `expires_in` accepted) / view GET (no auth; bad token 404, expired 410) / rating PATCH (400 unless safe/mature/adult; clears `rating_skip_reason`) / rebuild preserves rating metadata (reason/source/skip_reason, v3.70) |
 | coremem | `/api/coremem*` | list `[{name,version,updated_at}]` / POST `{content}` → 201 `{name,version,version_str}` (sequential versions) / `?version=N` reads old version / DELETE removes all versions `{deleted}` (404 if missing) / manifest-merged; `?raw=true` bypasses |
-| inbox | `/api/inbox*` | GET list / POST / PATCH read・unread / PATCH partial update / DELETE |
+| inbox | `/api/inbox*` | GET list / POST (`expires_at`/`ttl_days` timed standing, exclusive with persistent → 400; expired ones demote to read at check time, v3.70) / PATCH read・unread / PATCH partial update (accepts `expires_at`/`ttl_days`/`read`, v3.70) / DELETE |
 | album | `/api/album/*` | list / image / upload / PATCH meta / DELETE / share (shared image needs no auth) |
 | uploads | `/api/uploads/*` | list / download / POST (201; tags split on commas, Japanese commas, whitespace) / DELETE (404 if missing) |
 | batch | `/api/batch/status` `/api/batch/start` | Summary batch: status dict / background start |
-| rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict / background start (v3.68) |
+| rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict (`pending` = next-run targets, `index_counts` distribution, `skip_reasons`, `error_uuids`, v3.70) / background start (v3.68) |
 | redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | Redact: generate, get, approve, reject, status list (v3.69) |
 | import-status | `/api/import-status` | Last ZIP import record |
 | friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
