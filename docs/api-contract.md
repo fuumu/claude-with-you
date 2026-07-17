@@ -174,7 +174,8 @@ response shapes pinned by tests.
 | inbox | `/api/inbox*` | GET list / POST / PATCH read・unread / PATCH partial update / DELETE |
 | album | `/api/album/*` | list / image / upload / PATCH meta / DELETE / share (shared image needs no auth) |
 | uploads | `/api/uploads/*` | list / download / POST (201; tags split on commas, Japanese commas, whitespace) / DELETE (404 if missing) |
-| batch | `/api/batch/status` `/api/batch/start` | status dict / background start |
+| batch | `/api/batch/status` `/api/batch/start` | Summary batch: status dict / background start |
+| rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict / background start (v3.68) |
 | import-status | `/api/import-status` | Last ZIP import record |
 | friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
 

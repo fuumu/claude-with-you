@@ -149,3 +149,42 @@ def test_rest_conversations_require_auth(server, make_conv_zip):
     assert anon.get(server.base_url + '/api/conversations/').status_code == 401
     assert anon.get(server.base_url + '/api/conversations/index').status_code == 401
     assert anon.post(server.base_url + '/api/conversations/index/rebuild').status_code == 401
+
+
+def test_rest_conversation_rating_extended(server, make_conv_zip):
+    """PATCH rating with rating_reason and rating_source (v3.68)"""
+    conv = make_conversation(title='ratingテスト')
+    _import_zip(server, make_conv_zip, [conv], name='rating_ext.zip')
+
+    r = server.patch(f"/api/conversations/{conv['uuid']}/rating",
+                     json={'rating': 'mature', 'rating_reason': '恋愛的な会話',
+                           'rating_source': 'manual'})
+    assert r.status_code == 200
+    d = r.json()
+    assert d['rating'] == 'mature'
+    assert d['rating_reason'] == '恋愛的な会話'
+    assert d['rating_source'] == 'manual'
+
+    conv_data = server.get(f'/api/conversations/{conv["uuid"]}').json()
+    assert conv_data.get('rating') == 'mature'
+    assert conv_data.get('rating_reason') == '恋愛的な会話'
+    assert conv_data.get('rating_source') == 'manual'
+    assert 'rating_judged_at' in conv_data
+
+
+def test_rest_rating_batch_status(server):
+    """GET /api/rating-batch/status returns status dict (v3.68)"""
+    r = server.get('/api/rating-batch/status')
+    assert r.status_code == 200
+    d = r.json()
+    assert 'running' in d
+    assert 'pending' in d
+    assert d['running'] is False
+
+
+def test_rest_rating_batch_mcp_status_only(server):
+    """batch_run_rating MCP tool with status_only (v3.68)"""
+    res = server.tool('batch_run_rating', {'status_only': True})
+    assert 'pending' in res
+    assert 'running' in res
+    assert res['running'] is False

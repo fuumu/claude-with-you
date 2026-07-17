@@ -597,10 +597,11 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Artifacts | 4 | CoreMem_save, CoreMem_read, CoreMem_list, CoreMem_delete |
 | Conversations | 5 | conversation_index, conversation_search, conversation_share, conversation_read, log_annotate |
 | Inbox | 5 | inbox_check, inbox_read, inbox_post, inbox_update, inbox_delete |
-| Batch | 1 | batch_run_summary_layers |
+| Batch | 2 | batch_run_summary_layers, batch_run_rating |
 | Album | 5 | album_save, album_read, album_list, album_share, album_delete |
 | Digest | 1 | conversation_digest |
-| **Regular session total** | **27** | |
+| Files | 4 | file_upload, file_read, file_list, file_delete |
+| **Regular session total** | **32** | |
 | **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
 ※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 19 tools are unavailable there.

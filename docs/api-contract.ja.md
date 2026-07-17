@@ -166,7 +166,8 @@ python -m venv .venv
 | inbox | `/api/inbox*` | GET一覧 / POST / PATCH read・unread / PATCH 部分更新 / DELETE |
 | album | `/api/album/*` | 一覧 / 画像 / upload / PATCH メタ / DELETE / share（共有画像は認証不要） |
 | uploads | `/api/uploads/*` | 一覧 / ダウンロード / POST（201・タグはカンマ・読点・空白区切り）/ DELETE（404 if missing） |
-| batch | `/api/batch/status` `/api/batch/start` | 状態 dict / バックグラウンド起動 |
+| batch | `/api/batch/status` `/api/batch/start` | 要約バッチ: 状態 dict / バックグラウンド起動 |
+| rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict / バックグラウンド起動（v3.68） |
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
 | friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |
 

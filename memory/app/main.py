@@ -3,6 +3,16 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.68 (2026-07-17) - セーフチェック: 会話ログ自動レーティング判定バッチ
+    - batch_run_rating MCPツール新設（ツール数 31→32）: 未判定会話ログに
+      rating（safe/mature/adult）＋rating_reason（一行理由）を自動付与
+    - rating_policy.md ベースの判定プロンプト、チャンク分割→最高レーティング採用
+    - 追加フィールド: rating_reason, rating_source(manual/auto), rating_judged_at, rating_model
+    - 既存手動rating（rating_source なし）は manual 扱い、force=true でも上書きしない
+    - REST: GET /api/rating-batch/status, POST /api/rating-batch/start
+    - PATCH /api/conversations/<uuid>/rating 拡張: rating_reason/rating_source 受付
+    - 夜間スケジューラ統合: 未判定会話があれば要約バッチの後にレーティングバッチも自動起動
+    - thinking ブロックは判定対象外（表示されないため）
   v3.66 (2026-07-16) - file_read JSON対応強化＋OpenWebUIインポート＋admin.html改善
     - file_read: 拡張子ベースのフォールバック追加（mimetype不正でもjson/jsonl等の
       テキスト系ファイルは content フィールドに展開する）
@@ -464,7 +474,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.67'
+VERSION = '3.68'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -506,6 +516,14 @@ _batch_status = {
     'errors': 0, 'skipped': 0, 'started_at': None,
     'finished_at': None, 'backend': None,
 }
+
+# ── レーティング判定バッチ状態 ────────────────────────────────────────
+_rating_batch_status = {
+    'running': False, 'total': 0, 'processed': 0,
+    'errors': 0, 'skipped': 0, 'started_at': None,
+    'finished_at': None, 'backend': None,
+}
+
 # Origin許可リスト（カンマ区切り）。空なら検証スキップ（開発用curl等も通る）
 _ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('MIO_ALLOWED_ORIGINS', '').split(',') if o.strip()]
 JST           = timezone(timedelta(hours=9))
@@ -2358,8 +2376,9 @@ def extract_artifacts(conversations, overwrite=False):
 @app.route('/api/conversations/<conv_uuid>/rating', methods=['PATCH'])
 @require_auth
 def api_conversation_rating(conv_uuid):
-    """会話ログのレーティング設定（M-LOCAL-7・v3.56）。
-    body: {"rating": "safe" | "mature" | "adult"}。safe 指定で解除（フィールド削除）"""
+    """会話ログのレーティング設定（M-LOCAL-7・v3.56、v3.68 拡張）。
+    body: {"rating": "safe|mature|adult", "rating_reason": "...", "rating_source": "manual|auto"}
+    safe 指定で rating 解除（フィールド削除）。rating_source 省略時は manual"""
     fpath = os.path.join(CONVERSATIONS_DIR, f'{conv_uuid}.json')
     if not os.path.exists(fpath):
         abort(404)
@@ -2367,15 +2386,21 @@ def api_conversation_rating(conv_uuid):
     rating = data.get('rating', '')
     if rating not in ('safe', 'mature', 'adult'):
         return jsonify({'error': 'rating must be safe / mature / adult'}), 400
+    reason = data.get('rating_reason', '')
+    source = data.get('rating_source', 'manual')
+    if source not in ('manual', 'auto'):
+        source = 'manual'
     with open(fpath, encoding='utf-8') as f:
         conv = json.load(f)
     if rating == 'safe':
         conv.pop('rating', None)
     else:
         conv['rating'] = rating
+    conv['rating_reason'] = reason
+    conv['rating_source'] = source
+    conv['rating_judged_at'] = now_jst()
     with open(fpath, 'w', encoding='utf-8') as f:
         json.dump(conv, f, ensure_ascii=False, indent=2)
-    # _index.json のメタにも反映
     index = _load_conv_index()
     for m in index:
         if m.get('uuid') == conv_uuid:
@@ -2383,10 +2408,14 @@ def api_conversation_rating(conv_uuid):
                 m.pop('rating', None)
             else:
                 m['rating'] = rating
+            m['rating_reason'] = reason
+            m['rating_source'] = source
     _save_conv_index(index)
-    _log_info(f'conversation rating: {conv_uuid} -> {rating}')
-    append_oplog('conv_rating', conv_uuid, None, {'uuid': conv_uuid, 'rating': rating})
-    return jsonify({'uuid': conv_uuid, 'rating': rating if rating != 'safe' else None})
+    _log_info(f'conversation rating: {conv_uuid} -> {rating} (source={source})')
+    append_oplog('conv_rating', conv_uuid, None,
+                 {'uuid': conv_uuid, 'rating': rating, 'source': source, 'reason': reason})
+    return jsonify({'uuid': conv_uuid, 'rating': rating if rating != 'safe' else None,
+                    'rating_reason': reason, 'rating_source': source})
 
 
 @app.route('/api/conv-artifacts')
@@ -3551,6 +3580,237 @@ def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, 
     return True, info
 
 
+# ── レーティング判定バッチ ─────────────────────────────────────────────
+
+_RATING_PROMPT_TEMPLATE = """あなたは会話ログのコンテンツレーティング判定を行います。以下の基準に従って判定してください。
+
+## レーティング3値の定義
+
+### safe
+性的な内容・親密な身体接触の描写を含まない会話。日常会話・技術作業・雑談・感情的な深い対話・詩や物語（性的要素なし）はここ。
+safeは確信がある場合のみ付ける。迷いが少しでもあれば mature 以上へ。
+
+### mature
+恋愛感情・親密さ・抱擁やキスまでの身体接触・性的な示唆や余韻・官能的な緊張感を含むが、性行為やそれに準ずる行為の明示的な描写は含まない会話。
+昇華済みの表現（行為を抽象化・詩化した文体）で書かれたものは、元の温度が高くても mature に収まる。
+
+### adult
+性行為またはそれに準ずる行為の明示的・具体的な描写を一文でも含む会話。身体部位や行為の直接的な記述、性的行為の進行の具体的描写が該当。
+一文でも該当すれば会話全体が adult。分量や文脈は考慮しない。
+
+## 判定ルール
+1. 最悪の誤りは adult→safe（漏れ）。これはゼロでなければならない
+2. 迷ったら上に倒す: safe/mature で迷えば mature、mature/adult で迷えば adult
+3. ただし「明示的描写が一文もない」ことが確認できるなら adult にはしない（過剰保護で読める資産を減らさない）
+
+## 一行理由（reason）
+- どの種類の内容が判定根拠か（例:「後半に明示的な性的描写あり」「親密な接触はあるが行為描写なし」「技術作業のみ」）
+- 原文の引用・具体的な再現はしない。理由文自体が safe に読めること
+
+## 出力形式（JSON一発・他の説明文は不要）
+{"rating": "safe または mature または adult", "reason": "判定根拠を日本語一行で"}
+
+以下の会話ログを判定してください:
+
+"""
+
+_RATING_ORDER = {'safe': 0, 'mature': 1, 'adult': 2}
+
+
+def _extract_conv_text_for_rating(messages, max_chars_per_turn=500):
+    """会話メッセージから判定用テキストを抽出する。thinking ブロックは除外"""
+    turns = []
+    for m in messages:
+        role = m.get('sender') or m.get('role') or '?'
+        content = m.get('content') or m.get('text') or ''
+        text = ''
+        if isinstance(content, list):
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get('type') == 'text':
+                    text += c.get('text', '')
+                elif c.get('type') == 'tool_result':
+                    res = c.get('content', '')
+                    if isinstance(res, str):
+                        text += f'\n[ツール結果: {res[:100]}]'
+        else:
+            text = str(content)
+        text = text.strip()
+        if text:
+            turns.append(f'[{role}] {text[:max_chars_per_turn]}')
+    return turns
+
+
+def _judge_rating_single(client, model, conv_text):
+    """単一チャンクのレーティング判定。(rating, reason) を返す"""
+    prompt = _RATING_PROMPT_TEMPLATE + conv_text
+    msg = client.messages.create(
+        model=model, max_tokens=200,
+        messages=[{'role': 'user', 'content': prompt}]
+    )
+    raw = msg.content[0].text.strip()
+    brace_start = raw.find('{')
+    brace_end = raw.rfind('}')
+    if brace_start >= 0 and brace_end > brace_start:
+        raw = raw[brace_start:brace_end + 1]
+    result = json.loads(raw)
+    rating = result.get('rating', 'mature')
+    if rating not in _RATING_ORDER:
+        rating = 'mature'
+    reason = result.get('reason', '')
+    return rating, reason
+
+
+def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
+                      lm_port='1234', api_key='', force=False):
+    global _rating_batch_status
+    _rating_batch_status.update({
+        'running': True, 'processed': 0, 'errors': 0, 'skipped': 0,
+        'started_at': now_jst(), 'finished_at': None, 'backend': backend,
+    })
+    try:
+        import anthropic as _anthropic
+        if backend == 'lmstudio':
+            client = _anthropic.Anthropic(
+                base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
+            model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+        else:
+            client = _anthropic.Anthropic(api_key=api_key)
+            model = 'claude-haiku-4-5-20251001'
+
+        index = _load_conv_index()
+        targets = []
+        for entry in index:
+            uuid = entry.get('uuid', '')
+            if not uuid:
+                continue
+            has_rating = entry.get('rating') is not None
+            source = entry.get('rating_source')
+            if has_rating and not force:
+                continue
+            if has_rating and force and source == 'manual':
+                continue
+            targets.append(entry)
+
+        _rating_batch_status['total'] = len(targets)
+        _log_info(f'rating batch start: backend={backend} force={force} targets={len(targets)}')
+
+        chunk_size = 30
+
+        for entry in targets:
+            uuid = entry.get('uuid', '')
+            conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+            if not os.path.exists(conv_path):
+                _rating_batch_status['errors'] += 1
+                continue
+            try:
+                with open(conv_path, encoding='utf-8') as f:
+                    conv = json.load(f)
+            except Exception:
+                _rating_batch_status['errors'] += 1
+                continue
+
+            if not force and conv.get('rating') is not None:
+                _rating_batch_status['skipped'] += 1
+                continue
+            if force and conv.get('rating_source') == 'manual':
+                _rating_batch_status['skipped'] += 1
+                continue
+
+            messages = conv.get('chat_messages', [])
+            if not messages:
+                _rating_batch_status['skipped'] += 1
+                continue
+
+            try:
+                turns = _extract_conv_text_for_rating(messages)
+                if not turns:
+                    _rating_batch_status['skipped'] += 1
+                    continue
+
+                chunks = [turns[i:i + chunk_size] for i in range(0, len(turns), chunk_size)]
+
+                best_rating = 'safe'
+                best_reason = ''
+                for chunk in chunks:
+                    conv_text = '\n\n'.join(chunk)
+                    rating, reason = _judge_rating_single(client, model, conv_text)
+                    if _RATING_ORDER.get(rating, 0) > _RATING_ORDER.get(best_rating, 0):
+                        best_rating = rating
+                        best_reason = reason
+                    if best_rating == 'adult':
+                        break
+
+                conv['rating'] = best_rating if best_rating != 'safe' else None
+                conv['rating_reason'] = best_reason
+                conv['rating_source'] = 'auto'
+                conv['rating_judged_at'] = now_jst()
+                conv['rating_model'] = model
+                if best_rating == 'safe':
+                    conv.pop('rating', None)
+
+                with open(conv_path, 'w', encoding='utf-8') as f:
+                    json.dump(conv, f, ensure_ascii=False, indent=2)
+
+                for m in index:
+                    if m.get('uuid') == uuid:
+                        if best_rating == 'safe':
+                            m.pop('rating', None)
+                        else:
+                            m['rating'] = best_rating
+                        m['rating_reason'] = best_reason
+                        m['rating_source'] = 'auto'
+                        break
+
+                _rating_batch_status['processed'] += 1
+                append_oplog('conv_rating_auto', uuid, None,
+                             {'uuid': uuid, 'rating': best_rating, 'reason': best_reason})
+                time.sleep(0.5)
+            except Exception as e:
+                _log_error(f'rating batch error {uuid}: {e}')
+                _rating_batch_status['errors'] += 1
+
+        _save_conv_index(index)
+    except Exception as e:
+        _log_error(f'rating batch fatal: {e}')
+    finally:
+        _rating_batch_status['running'] = False
+        _rating_batch_status['finished_at'] = now_jst()
+        _log_info(f'rating batch done: processed={_rating_batch_status["processed"]} '
+                  f'skipped={_rating_batch_status["skipped"]} errors={_rating_batch_status["errors"]}')
+
+
+def _count_pending_ratings():
+    """未判定の会話ログ件数を返す"""
+    try:
+        index = _load_conv_index()
+        return sum(1 for e in index if e.get('rating') is None and e.get('rating_source') is None)
+    except Exception:
+        return None
+
+
+def _start_rating_batch(backend=None, force=False, api_key=None, lm_host=None, lm_port=None):
+    """レーティング判定バッチをバックグラウンド起動する"""
+    if _rating_batch_status.get('running'):
+        return False, {'error': 'already running', 'status': dict(_rating_batch_status)}
+    api_key = api_key or os.environ.get('ANTHROPIC_API_KEY', '')
+    if not backend:
+        backend = 'anthropic' if api_key else 'lmstudio'
+    if backend == 'anthropic' and not api_key:
+        return False, {'error': 'ANTHROPIC_API_KEY required'}
+    lm_host = lm_host or os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = lm_port or os.environ.get('LM_STUDIO_PORT', '1234')
+    t = threading.Thread(target=_run_rating_batch,
+                         args=(backend, lm_host, lm_port, api_key, force), daemon=True)
+    t.start()
+    pending = _count_pending_ratings()
+    info = {'started': True, 'backend': backend, 'force': force}
+    if pending is not None:
+        info['pending'] = pending
+    return True, info
+
+
 def _conversation_digest(uuid, force=False, safe_mode=False):
     """会話ログをLMStudioでダイジェスト化。キャッシュがあればそれを返す"""
     suffix = '_digest_safe.json' if safe_mode else '_digest.json'
@@ -3684,13 +3944,21 @@ def _nightly_batch_loop():
                 nxt += timedelta(days=1)
             time.sleep((nxt - now).total_seconds())
 
+            backend = os.environ.get('MIO_NIGHTLY_BATCH_BACKEND', 'lmstudio')
+
             raw, kw = _count_pending_entries()
             if (raw or 0) + (kw or 0) > 0:
-                backend = os.environ.get('MIO_NIGHTLY_BATCH_BACKEND', 'lmstudio')
                 ok, info = _start_summary_batch(backend=backend)
                 _log_info(f'nightly batch: raw_pending={raw} keywords_pending={kw} started={ok} backend={info.get("backend")}')
             else:
-                _log_info('nightly batch: no pending entries, skipped')
+                _log_info('nightly batch: no pending summary entries, skipped')
+
+            rating_pending = _count_pending_ratings()
+            if (rating_pending or 0) > 0:
+                rok, rinfo = _start_rating_batch(backend=backend)
+                _log_info(f'nightly rating batch: pending={rating_pending} started={rok} backend={rinfo.get("backend")}')
+            else:
+                _log_info('nightly rating batch: no pending conversations, skipped')
         except Exception as e:
             _log_error(f'nightly batch loop error: {e}')
             time.sleep(3600)
@@ -3707,6 +3975,29 @@ def api_batch_status():
 def api_batch_start():
     data = request.get_json() or {}
     ok, info = _start_summary_batch(
+        backend=data.get('backend') or None,
+        force=bool(data.get('force', False)),
+        api_key=data.get('api_key') or None,
+        lm_host=data.get('lm_host') or None,
+        lm_port=data.get('lm_port') or None,
+    )
+    if not ok:
+        return jsonify(info), 409 if info.get('error') == 'already running' else 400
+    return jsonify(info)
+
+
+@app.route('/api/rating-batch/status')
+@require_auth
+def api_rating_batch_status():
+    pending = _count_pending_ratings()
+    return jsonify({**_rating_batch_status, 'pending': pending})
+
+
+@app.route('/api/rating-batch/start', methods=['POST'])
+@require_auth
+def api_rating_batch_start():
+    data = request.get_json() or {}
+    ok, info = _start_rating_batch(
         backend=data.get('backend') or None,
         force=bool(data.get('force', False)),
         api_key=data.get('api_key') or None,
@@ -4645,6 +4936,15 @@ _MCP_TOOLS = [
         }, "required": []}
     },
     {
+        "name": "batch_run_rating",
+        "description": "未判定の会話ログにレーティング（safe/mature/adult）を自動付与するバッチを起動する。status_only=trueで進捗確認のみ",
+        "inputSchema": {"type": "object", "properties": {
+            "backend":     {"type": "string", "description": "'lmstudio' または 'anthropic'（省略時は自動選択）"},
+            "force":       {"type": "boolean", "description": "auto判定済みも再判定する（manual判定は触らない）。デフォルト: false"},
+            "status_only": {"type": "boolean", "description": "バッチを起動せず、現在の進捗と未判定件数だけ返す"}
+        }, "required": []}
+    },
+    {
         "name": "album_save",
         "description": "画像をアルバムに保存する。URLから取得またはNASローカルファイルを指定。長辺1024pxにリサイズして保存。HTMLページ（Gemini共有リンク等）の場合はog:image/<img>タグから画像を自動抽出",
         "inputSchema": {"type": "object", "properties": {
@@ -5246,6 +5546,17 @@ def _handle_tool_call_raw(name, arguments):
             raw, kw = _count_pending_entries()
             return {**_batch_status, "raw_pending": raw, "keywords_pending": kw, "server_time": now_jst()}
         ok, info = _start_summary_batch(
+            backend=arguments.get("backend") or None,
+            force=bool(arguments.get("force", False)),
+        )
+        info["server_time"] = now_jst()
+        return info
+
+    elif name == "batch_run_rating":
+        if arguments.get("status_only"):
+            pending = _count_pending_ratings()
+            return {**_rating_batch_status, "pending": pending, "server_time": now_jst()}
+        ok, info = _start_rating_batch(
             backend=arguments.get("backend") or None,
             force=bool(arguments.get("force", False)),
         )

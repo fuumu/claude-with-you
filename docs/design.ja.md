@@ -598,10 +598,11 @@ conversation_share(uuid: str)
 | アーティファクト | 4 | CoreMem_save, CoreMem_read, CoreMem_list, CoreMem_delete |
 | 会話 | 5 | conversation_index, conversation_search, conversation_share, conversation_read, log_annotate |
 | インボックス | 5 | inbox_check, inbox_read, inbox_post, inbox_update, inbox_delete |
-| バッチ | 1 | batch_run_summary_layers |
+| バッチ | 2 | batch_run_summary_layers, batch_run_rating |
 | アルバム | 5 | album_save, album_read, album_list, album_share, album_delete |
 | ダイジェスト | 1 | conversation_digest |
-| **通常セッション合計** | **27** | |
+| ファイル | 4 | file_upload, file_read, file_list, file_delete |
+| **通常セッション合計** | **32** | |
 | **友達セッション** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
 ※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の18ツールは使用不可。

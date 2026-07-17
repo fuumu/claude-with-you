@@ -18,14 +18,14 @@ def test_tools_list_31_tools(server):
     res = server.mcp('tools/list')
     tools = res['result']['tools']
     names = {t['name'] for t in tools}
-    assert len(tools) == 31, f'expected 31 tools, got {len(tools)}'
+    assert len(tools) == 32, f'expected 32 tools, got {len(tools)}'
     for expected in ('memory_read_index', 'memory_read', 'memory_write', 'memory_upsert',
                      'memory_search', 'memory_share',
                      'CoreMem_save', 'CoreMem_read', 'CoreMem_list', 'CoreMem_delete',
                      'conversation_index', 'conversation_search', 'conversation_read',
                      'conversation_share', 'conversation_digest', 'log_annotate',
                      'inbox_check', 'inbox_read', 'inbox_post', 'inbox_update', 'inbox_delete',
-                     'batch_run_summary_layers',
+                     'batch_run_summary_layers', 'batch_run_rating',
                      'album_save', 'album_read', 'album_list', 'album_share', 'album_delete',
                      'file_upload', 'file_read', 'file_list', 'file_delete'):
         assert expected in names, expected
