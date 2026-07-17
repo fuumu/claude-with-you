@@ -264,6 +264,10 @@ async function handleRating(
     sendJson(res, 400, { error: 'rating must be safe / mature / adult' });
     return;
   }
+  const reason = String(data.rating_reason ?? '');
+  let source = String(data.rating_source ?? 'manual');
+  if (source !== 'manual' && source !== 'auto') source = 'manual';
+  const judgedAt = jstIsoFromMs(Date.now());
   const fpath = convPath(uuid);
   const conv = JSON.parse(fs.readFileSync(fpath, 'utf-8'));
   if (rating === 'safe') {
@@ -271,6 +275,9 @@ async function handleRating(
   } else {
     conv.rating = rating;
   }
+  conv.rating_reason = reason;
+  conv.rating_source = source;
+  conv.rating_judged_at = judgedAt;
   writeJson(fpath, conv);
   // _index.json のメタにも反映
   const index = loadConvIndex();
@@ -281,10 +288,13 @@ async function handleRating(
       } else {
         m.rating = rating;
       }
+      m.rating_reason = reason;
+      m.rating_source = source;
     }
   }
   saveConvIndex(index);
-  sendJson(res, 200, { uuid, rating: rating !== 'safe' ? rating : null });
+  sendJson(res, 200, { uuid, rating: rating !== 'safe' ? rating : null,
+    rating_reason: reason, rating_source: source });
 }
 
 /**
@@ -343,7 +353,7 @@ export async function handleConversations(
       };
     } else if (rating && method === 'PATCH') {
       route = { handle: () => handleRating(req, res, decodeURIComponent(rating[1])) };
-    } else if (single && method === 'GET' && single[1] !== 'index' && single[1] !== 'view') {
+    } else if (single && method === 'GET' && single[1] !== 'index' && single[1] !== 'view' && single[1] !== 'redact-status') {
       route = {
         handle: () => {
           const uuid = decodeURIComponent(single[1]);
