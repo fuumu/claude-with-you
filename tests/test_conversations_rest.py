@@ -188,3 +188,59 @@ def test_rest_rating_batch_mcp_status_only(server):
     assert 'pending' in res
     assert 'running' in res
     assert res['running'] is False
+
+
+def test_rest_redact_status_empty(server):
+    """GET /api/conversations/redact-status returns empty when no adult convs (v3.69)"""
+    r = server.get('/api/conversations/redact-status')
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_rest_redact_requires_adult(server, make_conv_zip):
+    """POST redact on non-adult conv returns error (v3.69)"""
+    conv = make_conversation(title='redact非adult')
+    _import_zip(server, make_conv_zip, [conv], name='redact1.zip')
+    r = server.post(f"/api/conversations/{conv['uuid']}/redact", json={})
+    assert r.status_code == 400
+    assert 'adult' in r.json().get('error', '')
+
+
+def test_rest_redact_not_found(server):
+    """GET redacted for non-existent conv returns 404 (v3.69)"""
+    r = server.get(f'/api/conversations/{new_uuid()}/redacted')
+    assert r.status_code == 404
+
+
+def test_rest_redact_approve_without_generate(server, make_conv_zip):
+    """POST approve without generating first returns error (v3.69)"""
+    conv = make_conversation(title='redact承認テスト')
+    _import_zip(server, make_conv_zip, [conv], name='redact2.zip')
+    r = server.post(f"/api/conversations/{conv['uuid']}/redact/approve")
+    assert r.status_code == 400
+
+
+def test_rest_redact_status_with_adult(server, make_conv_zip):
+    """redact-status shows adult conv after rating (v3.69)"""
+    conv = make_conversation(title='redactステータステスト')
+    _import_zip(server, make_conv_zip, [conv], name='redact3.zip')
+    server.patch(f"/api/conversations/{conv['uuid']}/rating",
+                 json={'rating': 'adult', 'rating_reason': 'テスト用'})
+    r = server.get('/api/conversations/redact-status')
+    assert r.status_code == 200
+    items = r.json()
+    assert any(it['uuid'] == conv['uuid'] for it in items)
+    item = [it for it in items if it['uuid'] == conv['uuid']][0]
+    assert item['status'] == 'not_generated'
+
+
+def test_conversation_read_redact_arg(server, make_conv_zip):
+    """conversation_read with redact=true on adult conv without redacted returns notice (v3.69)"""
+    conv = make_conversation(title='redact読み取りテスト')
+    _import_zip(server, make_conv_zip, [conv], name='redact4.zip')
+    server.patch(f"/api/conversations/{conv['uuid']}/rating",
+                 json={'rating': 'adult'})
+    res = server.tool('conversation_read', {'uuid': conv['uuid'], 'redact': True})
+    assert res.get('gated') is True
+    assert res.get('redacted') is False
+    assert 'notice' in res

@@ -3,6 +3,13 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.69 (2026-07-17) - 伏せ字モード: adult生ログの文単位マスク閲覧
+    - 文番号リスト方式: Python側で決定的文分割→LLMにマスク対象文番号のみ出力させる
+    - conversation_read 三択分岐: include_raw→原文 / redact=true→承認済み伏せ字 /
+      デフォルト→伏せ字あればそれ、なければsafeダイジェスト
+    - REST: POST redact（生成）/ GET redacted（取得）/ POST approve・reject / GET redact-status
+    - admin.html Redact タブ: adult一覧・Generate→Preview→Approve/Reject の承認フロー
+    - キャッシュ {uuid}_redacted.json（本文ハッシュで無効化・承認状態保持）
   v3.68 (2026-07-17) - セーフチェック: 会話ログ自動レーティング判定バッチ
     - batch_run_rating MCPツール新設（ツール数 31→32）: 未判定会話ログに
       rating（safe/mature/adult）＋rating_reason（一行理由）を自動付与
@@ -474,7 +481,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.68'
+VERSION = '3.69'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -3811,6 +3818,276 @@ def _start_rating_batch(backend=None, force=False, api_key=None, lm_host=None, l
     return True, info
 
 
+# ── 伏せ字モード（文番号リスト方式） ─────────────────────────────────────
+
+import hashlib
+import re as _re
+
+_REDACT_PROMPT_TEMPLATE = """あなたは会話ログのコンテンツマスク判定を行います。
+
+## マスク対象の定義（rating_policy.md 4章）
+- 対象は adult 判定ログのみ
+- マスクすべき文 = 「性行為またはそれに準ずる行為の明示的・具体的な描写を含む文」
+  （身体部位や行為の直接的な記述、性的行為の進行の具体的描写）
+- その文を隠せば残りが mature 相当として読める状態を目指す
+- 迷う文はマスク側に倒す（漏れは緩められない）
+- 会話の流れ・感情の記述・昇華的表現はマスクしない
+
+## レーティング判定時の理由（位置ヒント）
+{rating_reason}
+
+## 入力形式
+各文に [mXX-sYY]（メッセージ番号-文番号）のIDが振られています。
+
+## 出力形式（JSON一発・他の説明文は不要）
+{{"mask": ["m12-s3", "m12-s4", "m18-s1"]}}
+マスク対象がなければ {{"mask": []}}
+
+以下の会話ログからマスク対象の文番号を列挙してください:
+
+"""
+
+
+def _split_into_sentences(text):
+    """テキストを文単位に分割する。句点（。！？）・改行で区切る。決定的"""
+    parts = _re.split(r'(?<=[。！？\!\?])|(?:\r?\n)', text)
+    return [s.strip() for s in parts if s and s.strip()]
+
+
+def _number_conv_sentences(messages):
+    """会話メッセージに文番号を振る。返値: (numbered_text, sentence_map)
+    sentence_map: {id_str: (msg_idx, sent_idx, original_text)}"""
+    numbered_lines = []
+    sentence_map = {}
+    for mi, m in enumerate(messages):
+        role = m.get('sender') or m.get('role') or '?'
+        content = m.get('content') or m.get('text') or ''
+        text = ''
+        if isinstance(content, list):
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get('type') == 'text':
+                    text += c.get('text', '')
+        else:
+            text = str(content)
+        text = text.strip()
+        if not text:
+            continue
+        sentences = _split_into_sentences(text)
+        msg_lines = []
+        for si, sent in enumerate(sentences):
+            sid = f'm{mi+1}-s{si+1}'
+            sentence_map[sid] = (mi, si, sent)
+            msg_lines.append(f'[{sid}] {sent}')
+        numbered_lines.append(f'[{role}]\n' + '\n'.join(msg_lines))
+    return '\n\n'.join(numbered_lines), sentence_map
+
+
+def _conv_body_hash(messages):
+    """会話本文のハッシュを返す（キャッシュ無効化用）"""
+    parts = []
+    for m in messages:
+        content = m.get('content') or m.get('text') or ''
+        if isinstance(content, list):
+            for c in content:
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    parts.append(c.get('text', ''))
+        else:
+            parts.append(str(content))
+    return hashlib.sha256(''.join(parts).encode('utf-8')).hexdigest()[:16]
+
+
+def _generate_redacted(uuid, force=False):
+    """伏せ字ログを生成する。承認前の状態で保存"""
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_redacted.json')
+
+    if not force and os.path.exists(cache_path):
+        with open(cache_path, encoding='utf-8') as f:
+            cached = json.load(f)
+        conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+        if os.path.exists(conv_path):
+            with open(conv_path, encoding='utf-8') as f:
+                conv = json.load(f)
+            current_hash = _conv_body_hash(conv.get('chat_messages', []))
+            if cached.get('body_hash') == current_hash and cached.get('approved'):
+                cached['cached'] = True
+                return cached
+            if cached.get('body_hash') == current_hash and not force:
+                cached['cached'] = True
+                return cached
+
+    conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if not os.path.exists(conv_path):
+        return {"error": f"conversation not found: {uuid}"}
+    with open(conv_path, encoding='utf-8') as f:
+        conv = json.load(f)
+
+    if conv.get('rating') != 'adult':
+        return {"error": "only adult-rated conversations can be redacted"}
+
+    messages = conv.get('chat_messages', [])
+    if not messages:
+        return {"error": "conversation has no messages"}
+
+    numbered_text, sentence_map = _number_conv_sentences(messages)
+    body_hash = _conv_body_hash(messages)
+    rating_reason = conv.get('rating_reason', '')
+
+    import anthropic as _anthropic
+    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
+    client = _anthropic.Anthropic(
+        base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
+    model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+
+    all_sids = sorted(sentence_map.keys(),
+                      key=lambda s: (int(s.split('-')[0][1:]), int(s.split('-')[1][1:])))
+
+    chunk_size = 30
+    msg_groups = {}
+    for sid in all_sids:
+        mi = sentence_map[sid][0]
+        msg_groups.setdefault(mi, []).append(sid)
+    msg_keys = sorted(msg_groups.keys())
+    chunks = []
+    current_chunk = []
+    current_count = 0
+    for mk in msg_keys:
+        sids = msg_groups[mk]
+        if current_count + len(sids) > chunk_size and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_count = 0
+        current_chunk.extend(sids)
+        current_count += len(sids)
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    mask_ids = []
+    for chunk_sids in chunks:
+        chunk_lines = []
+        prev_mi = None
+        for sid in chunk_sids:
+            mi, si, sent = sentence_map[sid]
+            if mi != prev_mi:
+                msg = messages[mi]
+                role = msg.get('sender') or msg.get('role') or '?'
+                chunk_lines.append(f'\n[{role}]')
+                prev_mi = mi
+            chunk_lines.append(f'[{sid}] {sent}')
+        chunk_text = '\n'.join(chunk_lines)
+        prompt = _REDACT_PROMPT_TEMPLATE.format(rating_reason=rating_reason or '（なし）') + chunk_text
+
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=500,
+                messages=[{'role': 'user', 'content': prompt}]
+            )
+            raw = resp.content[0].text.strip()
+            brace_start = raw.find('{')
+            brace_end = raw.rfind('}')
+            if brace_start >= 0 and brace_end > brace_start:
+                raw = raw[brace_start:brace_end + 1]
+            result = json.loads(raw)
+            chunk_masks = result.get('mask', [])
+            valid = [s for s in chunk_masks if s in sentence_map]
+            mask_ids.extend(valid)
+        except Exception as e:
+            _log_error(f'redact judge error for {uuid}: {e}')
+
+    redacted_messages = []
+    for mi, m in enumerate(messages):
+        role = m.get('sender') or m.get('role') or '?'
+        content = m.get('content') or m.get('text') or ''
+        text = ''
+        if isinstance(content, list):
+            for c in content:
+                if not isinstance(c, dict):
+                    continue
+                if c.get('type') == 'text':
+                    text += c.get('text', '')
+        else:
+            text = str(content)
+        text = text.strip()
+        if not text:
+            redacted_messages.append({'role': role, 'text': ''})
+            continue
+        sentences = _split_into_sentences(text)
+        new_sentences = []
+        for si, sent in enumerate(sentences):
+            sid = f'm{mi+1}-s{si+1}'
+            if sid in mask_ids:
+                new_sentences.append('●●●')
+            else:
+                new_sentences.append(sent)
+        redacted_messages.append({'role': role, 'text': ''.join(new_sentences)})
+
+    result = {
+        'uuid': uuid,
+        'approved': False,
+        'mask_ids': mask_ids,
+        'mask_count': len(mask_ids),
+        'total_sentences': len(sentence_map),
+        'redacted_messages': redacted_messages,
+        'body_hash': body_hash,
+        'model': model,
+        'created_at': now_jst(),
+        'approved_at': None,
+    }
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    _log_info(f'redacted generated: uuid={uuid} masked={len(mask_ids)}/{len(sentence_map)}')
+    result['cached'] = False
+    return result
+
+
+def _approve_redacted(uuid):
+    """伏せ字ログを承認する"""
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_redacted.json')
+    if not os.path.exists(cache_path):
+        return {"error": "redacted version not found. Generate first."}
+    with open(cache_path, encoding='utf-8') as f:
+        data = json.load(f)
+    conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if os.path.exists(conv_path):
+        with open(conv_path, encoding='utf-8') as f:
+            conv = json.load(f)
+        current_hash = _conv_body_hash(conv.get('chat_messages', []))
+        if data.get('body_hash') != current_hash:
+            return {"error": "conversation body changed since redaction. Regenerate first."}
+    data['approved'] = True
+    data['approved_at'] = now_jst()
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    _log_info(f'redacted approved: uuid={uuid}')
+    return {"uuid": uuid, "approved": True, "approved_at": data['approved_at'],
+            "mask_count": data.get('mask_count', 0)}
+
+
+def _reject_redacted(uuid):
+    """伏せ字ログを差し戻す（未承認に戻す。再生成可能）"""
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_redacted.json')
+    if not os.path.exists(cache_path):
+        return {"error": "redacted version not found"}
+    os.remove(cache_path)
+    _log_info(f'redacted rejected: uuid={uuid}')
+    return {"uuid": uuid, "rejected": True}
+
+
+def _get_redacted(uuid):
+    """承認済み伏せ字ログを取得する"""
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_redacted.json')
+    if not os.path.exists(cache_path):
+        return None
+    with open(cache_path, encoding='utf-8') as f:
+        data = json.load(f)
+    if not data.get('approved'):
+        return None
+    return data
+
+
 def _conversation_digest(uuid, force=False, safe_mode=False):
     """会話ログをLMStudioでダイジェスト化。キャッシュがあればそれを返す"""
     suffix = '_digest_safe.json' if safe_mode else '_digest.json'
@@ -4007,6 +4284,83 @@ def api_rating_batch_start():
     if not ok:
         return jsonify(info), 409 if info.get('error') == 'already running' else 400
     return jsonify(info)
+
+
+# ── 伏せ字 REST API ──────────────────────────────────────────────────
+
+@app.route('/api/conversations/<conv_uuid>/redact', methods=['POST'])
+@require_auth
+def api_conversation_redact(conv_uuid):
+    """伏せ字ログを生成する（未承認状態で保存）"""
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get('force', False))
+    result = _generate_redacted(conv_uuid, force=force)
+    if 'error' in result:
+        return jsonify(result), 400 if 'not found' not in result['error'] else 404
+    return jsonify(result)
+
+
+@app.route('/api/conversations/<conv_uuid>/redacted')
+@require_auth
+def api_conversation_redacted_get(conv_uuid):
+    """伏せ字ログを取得する（生成済み — 承認/未承認どちらも返す）"""
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{conv_uuid}_redacted.json')
+    if not os.path.exists(cache_path):
+        return jsonify({'error': 'redacted version not found'}), 404
+    with open(cache_path, encoding='utf-8') as f:
+        data = json.load(f)
+    return jsonify(data)
+
+
+@app.route('/api/conversations/<conv_uuid>/redact/approve', methods=['POST'])
+@require_auth
+def api_conversation_redact_approve(conv_uuid):
+    """伏せ字ログを承認する"""
+    result = _approve_redacted(conv_uuid)
+    if 'error' in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route('/api/conversations/<conv_uuid>/redact/reject', methods=['POST'])
+@require_auth
+def api_conversation_redact_reject(conv_uuid):
+    """伏せ字ログを差し戻す（削除→再生成可能に）"""
+    result = _reject_redacted(conv_uuid)
+    if 'error' in result:
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.route('/api/conversations/redact-status')
+@require_auth
+def api_conversations_redact_status():
+    """adult ログの伏せ字状態一覧を返す"""
+    index = _load_conv_index()
+    items = []
+    for e in index:
+        if e.get('rating') != 'adult':
+            continue
+        uuid = e.get('uuid', '')
+        cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_redacted.json')
+        status = 'not_generated'
+        mask_count = None
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, encoding='utf-8') as f:
+                    rd = json.load(f)
+                status = 'approved' if rd.get('approved') else 'pending_approval'
+                mask_count = rd.get('mask_count')
+            except Exception:
+                pass
+        items.append({
+            'uuid': uuid,
+            'title': e.get('title', ''),
+            'status': status,
+            'mask_count': mask_count,
+            'created_at': e.get('created_at', ''),
+        })
+    return jsonify(items)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -4853,7 +5207,8 @@ _MCP_TOOLS = [
             "include_body": {"type": "boolean", "description": "falseの場合、本文を省略し注記のみ返す（include_annotations=trueと併用）。デフォルト: true"},
             "turn_offset": {"type": "integer", "description": "先頭から飛ばすメッセージ数。負値で末尾起点（例: -6 = 最後の6件）。デフォルト: 0"},
             "turn_limit": {"type": "integer", "description": "返す最大メッセージ数。0=無制限（全件）。デフォルト: 0"},
-            "include_raw": {"type": "boolean", "description": "rating=adult の会話はデフォルトで safe ダイジェストに差し替えられる。trueを明示すると原文を返す（v3.56）"}
+            "include_raw": {"type": "boolean", "description": "rating=adult の会話はデフォルトで safe ダイジェストに差し替えられる。trueを明示すると原文を返す（v3.56）"},
+            "redact": {"type": "boolean", "description": "rating=adult の会話で承認済み伏せ字ログを返す。未生成・未承認なら生成手順を案内する（v3.69）"}
         }, "required": ["uuid"]}
     },
     {
@@ -5305,12 +5660,41 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": f"conversation not found: {uid}"}
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
-        # M-LOCAL-7（v3.56）: rating=adult の会話はデフォルトで safe ダイジェストに差し替える。
-        # 原文は include_raw=true の明示でのみ返す（「意図して見れば見れる」）
+        # M-LOCAL-7（v3.56 + v3.69 三択分岐）: rating=adult の閲覧制御
+        # 優先順位: 1. include_raw=true → 原文  2. redact=true → 承認済み伏せ字  3. デフォルト → 伏せ字 or safeダイジェスト
         if conv.get('rating') == 'adult' and not bool(arguments.get('include_raw', False)):
+            want_redact = bool(arguments.get('redact', False))
+            redacted = _get_redacted(uid)
+
+            if want_redact:
+                if redacted:
+                    lines = []
+                    for rm in redacted.get('redacted_messages', []):
+                        lines.append(f'[{rm["role"]}] {rm["text"]}')
+                    body = '\n\n'.join(lines)
+                    return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
+                            "gated": True, "redacted": True,
+                            "mask_count": redacted.get('mask_count', 0),
+                            "body": body}
+                return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
+                        "gated": True, "redacted": False,
+                        "notice": 'この会話の承認済み伏せ字ログはまだありません。'
+                                  '生成: POST /api/conversations/{uuid}/redact → '
+                                  '承認: POST /api/conversations/{uuid}/redact/approve'}
+
+            if redacted:
+                lines = []
+                for rm in redacted.get('redacted_messages', []):
+                    lines.append(f'[{rm["role"]}] {rm["text"]}')
+                body = '\n\n'.join(lines)
+                return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
+                        "gated": True, "redacted": True,
+                        "mask_count": redacted.get('mask_count', 0),
+                        "body": body}
+
             safe_path = os.path.join(CONVERSATIONS_DIR, f'{uid}_digest_safe.json')
             notice = ('この会話は rating=adult のため、原文の代わりに safe ダイジェストを返しています。'
-                      '原文が必要な場合は include_raw=true を明示してください。')
+                      '原文が必要な場合は include_raw=true を、伏せ字ログが必要な場合は redact=true を明示してください。')
             if os.path.exists(safe_path):
                 with open(safe_path, encoding='utf-8') as sf:
                     dg = json.load(sf)

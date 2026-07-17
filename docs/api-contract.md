@@ -176,6 +176,7 @@ response shapes pinned by tests.
 | uploads | `/api/uploads/*` | list / download / POST (201; tags split on commas, Japanese commas, whitespace) / DELETE (404 if missing) |
 | batch | `/api/batch/status` `/api/batch/start` | Summary batch: status dict / background start |
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict / background start (v3.68) |
+| redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | Redact: generate, get, approve, reject, status list (v3.69) |
 | import-status | `/api/import-status` | Last ZIP import record |
 | friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
 

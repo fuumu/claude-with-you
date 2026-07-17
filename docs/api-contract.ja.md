@@ -168,6 +168,7 @@ python -m venv .venv
 | uploads | `/api/uploads/*` | 一覧 / ダウンロード / POST（201・タグはカンマ・読点・空白区切り）/ DELETE（404 if missing） |
 | batch | `/api/batch/status` `/api/batch/start` | 要約バッチ: 状態 dict / バックグラウンド起動 |
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict / バックグラウンド起動（v3.68） |
+| redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | 伏せ字ログ: 生成・取得・承認・差し戻し・ステータス一覧（v3.69） |
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
 | friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |
 
