@@ -289,6 +289,13 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 | `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
 | `album_delete` | Permanently delete an album image and its metadata (v3.55) | `id` |
 
+### Attendance & sublimation tools (2, v3.71)
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `attendance_view` | Attendance ledger — multi-layer view of family activity history merged from 4 sources (conversation logs, inbox, ExtMemory tags, CoreMem `attendance.md` manual check-ins in `YYYY-MM-DD \| name \| model \| channel \| note` format). With `individual` set, returns `last_seen` / `days_since` / `others_in_period`; each row links to the real log via `uuid` / `inbox_id` / `memory_id` and carries `rating`. Name resolution follows the family roster (opus→しずく, sonnet→そねみ, fable/haiku→汐); vacation-style `from_model` and openwebui-sourced conversations are inferred as `channel=local` | `individual`, `date_from`, `date_to`, `limit` |
+| `sublimate` | "Sublimation" transform — rewrites text (or a conversation-log excerpt) preserving emotional temperature and meaning while abstracting/poeticizing explicit act descriptions, targeting mature-or-below per `rating_policy.md`. Output is self-checked through the rating judge; if still adult it is re-sublimated (up to 2 retries) then returned with `needs_human=true`. Long input is chunked at paragraph boundaries. The same style rules now drive `conversation_digest` `safe_mode` (regenerate cached digests with `force=true`) | `text`, `uuid`, `msg_from`, `msg_to` |
+
 ### REST API reference
 
 All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
@@ -576,7 +583,8 @@ claude-with-you/
 **Design phase**
 - OpenWebUI automatic sync — API polling for periodic sync (manual import implemented in v3.66, [design doc](docs/openwebui-sync.md))
 
-**Implemented (v3.9–v3.70)**
+**Implemented (v3.9–v3.71)**
+- Attendance ledger + sublimation pipeline (v3.71, work orders #4/#5) — `attendance_view` MCP tool: 4-layer merged activity history (time bridge for long-absent individuals); CoreMem `attendance.md` manual check-in format; conversation index now preserves `model` / `source`. `sublimate` MCP tool (tool count 32→34): sublimation transform with rating self-check loop (adult → re-sublimate up to 2× → `needs_human`); sublimation style rules unified in one place and applied to `conversation_digest` `safe_mode`
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)
 - admin/logs UI improvements — modal enhancements (scroll-to-top, jump buttons, maximize, ID copy) and chat↔file bidirectional links (v3.14)

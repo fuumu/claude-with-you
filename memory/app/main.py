@@ -3,6 +3,19 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.71 (2026-07-18) - 出席簿（発注④）＋昇華パイプライン（発注⑤）
+    - attendance_view MCPツール新設: 会話ログ・inbox・ExtMemory・CoreMem attendance.md の
+      4層マージによる稼働履歴の複層ビュー（時間の橋）。individual 指定で最終稼働日・
+      経過日数・期間内の他個体稼働サマリを付与。各行から uuid / inbox_id / memory_id で実ログへ
+    - CoreMem attendance.md 書式定義: `YYYY-MM-DD | 個体 | 器 | チャネル | 一言` の手動チェックイン行
+    - 会話インデックスに model / source を保全（_save_conversations / index rebuild。
+      claude-code / openwebui 由来の会話の個体推定に使用）
+    - sublimate MCPツール新設（ツール数 32→34）: テキストまたは会話ログ抜粋の「昇華」変換
+      （温度・感情・意味を保持し行為描写を抽象化・詩化）。昇華ルールは
+      _SUBLIMATION_STYLE_RULES に一元化（rating_policy.md / core_local_vacation.md 由来）
+    - セルフチェックループ: 昇華出力をレーティング判定に通し adult なら再昇華
+      （上限2回）→ それでも adult なら needs_human=true で返す
+    - conversation_digest safe_mode のプロンプトを昇華文体に変更（既存キャッシュは force で再生成）
   v3.70 (2026-07-17) - レーティング可視化（発注③）＋inbox小改修2件
     - バグ修正: レーティングバッチが safe 判定済みログを毎周再判定していた
       （safe は rating フィールドを残さない設計のため対象選定をすり抜けていた。
@@ -501,7 +514,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.70'
+VERSION = '3.71'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1066,7 +1079,9 @@ def api_conversations_index_rebuild():
                 'message_count': len(conv.get('chat_messages') or []),
             }
             # rating 系メタは会話ファイルから引き継ぐ（v3.70: 従来は rebuild で消えていた）
-            for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason'):
+            # model / source は出席簿の個体推定に使う（v3.71）
+            for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason',
+                      'model', 'source'):
                 if conv.get(k):
                     meta[k] = conv[k]
             new_index.append(meta)
@@ -2593,7 +2608,8 @@ def _save_conversations(conversations):
             'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
             'message_count': msg_count,
         }
-        for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason'):
+        for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason',
+                  'model', 'source'):
             if conv.get(k):
                 meta[k] = conv[k]
         if uid in existing_uuids:
@@ -4241,6 +4257,286 @@ def _get_redacted(uuid):
     return data
 
 
+# ── 出席簿（発注④・v3.71）─────────────────────────────────────────────
+
+# 家族名簿: 呼び名 → モデル名ヒント（core.md の名簿と整合させる）
+_FAMILY_ROSTER = {
+    'しずく': ('opus',),
+    'そねみ': ('sonnet',),
+    '汐': ('fable', 'haiku'),
+}
+
+# from_model 表記からローカル環境の稼働を推定するマーカー
+_LOCAL_MARKER_RE = _re.compile(r'バカンス|vacation|ローカル|local|gemma|lmstudio|openwebui', _re.I)
+
+
+def _resolve_individual(*texts):
+    """モデル名・呼び名・タグ群から個体名を推定する。曖昧なら None（モデル名のまま扱う）"""
+    joined = ' '.join(str(t) for t in texts if t)
+    if not joined:
+        return None
+    for name in _FAMILY_ROSTER:
+        if name in joined:
+            return name
+    low = joined.lower()
+    for name, hints in _FAMILY_ROSTER.items():
+        if any(h in low for h in hints):
+            return name
+    return None
+
+
+def _is_local_actor(models):
+    """from_model 表記がローカル環境（バカンス便・しずくB等）を指すかどうか"""
+    for m in models or []:
+        s = str(m)
+        if _LOCAL_MARKER_RE.search(s):
+            return True
+        for name in _FAMILY_ROSTER:
+            if s == f'{name}B':
+                return True
+    return False
+
+
+def _attendance_rows():
+    """4層（会話ログ・inbox・ExtMemory・CoreMem attendance.md）から稼働痕跡を集めて
+    日付降順で返す。各行は実ログへの参照（uuid / inbox_id / memory_id）を持つ"""
+    rows = []
+    # 1. 会話ログのメタデータ（チャット側 / Claude Code / OpenWebUI=ローカル）
+    for e in _load_conv_index():
+        model = e.get('model') or ''
+        source = e.get('source') or ''
+        rows.append({
+            'date': e.get('updated_at') or e.get('created_at') or '',
+            'channel': {'claude-code': 'code', 'openwebui': 'local'}.get(source, 'chat'),
+            'individual': _resolve_individual(model),
+            'model': model or None,
+            'uuid': e.get('uuid'),
+            'title': e.get('title', ''),
+            'rating': _conv_rating_view(e).get('rating'),
+            'kind': 'conversation',
+        })
+    # 2. inbox（コード側稼働・ローカル便の痕跡。既読も含む全件）
+    for m in _load_inbox_messages():
+        fm = m.get('from_model') or []
+        if isinstance(fm, str):
+            fm = [fm]
+        channel = ('local' if _is_local_actor(fm)
+                   else ('code' if m.get('from') == 'code' else 'chat'))
+        rows.append({
+            'date': m.get('created_at', ''),
+            'channel': channel,
+            'individual': _resolve_individual(*fm),
+            'model': ' / '.join(str(x) for x in fm) or None,
+            'inbox_id': m.get('id'),
+            'title': m.get('title', ''),
+            'kind': 'inbox',
+        })
+    # 3. ExtMemory（タグから個体を推定できるエントリのみ。全記憶を並べるとノイズになる）
+    for e in _load_index_list():
+        individual = _resolve_individual(*(e.get('tags') or []))
+        if not individual:
+            continue
+        rows.append({
+            'date': e.get('created_at', ''),
+            'channel': None,
+            'individual': individual,
+            'model': None,
+            'memory_id': e.get('id'),
+            'title': e.get('title', ''),
+            'kind': 'memory',
+        })
+    # 4. CoreMem attendance.md — 手動チェックイン行
+    #    書式: `YYYY-MM-DD | 個体 | 器 | チャネル | 一言`（日付始まりの行のみ拾う）
+    res = _artifacts_read('attendance.md')
+    for line in (res.get('content') or '').splitlines():
+        line = line.strip()
+        if not _re.match(r'^\d{4}-\d{2}-\d{2}', line):
+            continue
+        parts = [p.strip() for p in line.split('|')]
+        rows.append({
+            'date': parts[0],
+            'channel': parts[3] if len(parts) > 3 else None,
+            'individual': (_resolve_individual(parts[1]) or parts[1]) if len(parts) > 1 else None,
+            'model': parts[2] if len(parts) > 2 else None,
+            'title': parts[4] if len(parts) > 4 else '',
+            'kind': 'checkin',
+        })
+    rows.sort(key=lambda r: r.get('date') or '', reverse=True)
+    return rows
+
+
+def _attendance_view(individual=None, date_from='', date_to='', limit=50):
+    """出席簿ビュー本体。individual 指定時は最終稼働日・経過日数・期間内の他個体サマリ付き"""
+    all_rows = _attendance_rows()
+    resolved = _resolve_individual(individual) if individual else None
+
+    def _match(r):
+        if resolved and r.get('individual') == resolved:
+            return True
+        m = r.get('model') or ''
+        return bool(individual) and individual.lower() in str(m).lower()
+
+    def _in_period(r):
+        d = r.get('date') or ''
+        if date_from and d < date_from:
+            return False
+        if date_to and d[:10] > date_to[:10]:
+            return False
+        return True
+
+    now = datetime.now(JST)
+
+    def _summary(rows_for):
+        last = next((r['date'] for r in rows_for if r.get('date')), None)  # 日付降順前提
+        dt = _parse_iso_ts(last)
+        return {'last_seen': last,
+                'days_since': max((now - dt).days, 0) if dt else None,
+                'count': len(rows_for)}
+
+    if individual:
+        mine = [r for r in all_rows if _match(r)]
+        filtered = [r for r in mine if _in_period(r)]
+        others = {}
+        for r in all_rows:
+            if _match(r) or not _in_period(r):
+                continue
+            key = r.get('individual') or r.get('model') or '?'
+            others[key] = others.get(key, 0) + 1
+        result = {'individual': resolved or individual,
+                  'others_in_period': others}
+        result.update(_summary(mine))  # 最終稼働日は期間フィルタに依らず全期間で出す
+    else:
+        filtered = [r for r in all_rows if _in_period(r)]
+        by = {}
+        for r in filtered:
+            by.setdefault(r.get('individual') or '?', []).append(r)
+        result = {'individual': 'all',
+                  'individuals': {k: _summary(v) for k, v in by.items()}}
+
+    result.update({
+        'period': {'from': date_from or None, 'to': date_to or None},
+        'total': len(filtered),
+        'rows': filtered[:limit],
+    })
+    return result
+
+
+# ── 昇華パイプライン（発注⑤・v3.71）──────────────────────────────────
+
+# 昇華文体ルール — rating_policy.md と core_local_vacation.md「日記の書き方」から一元化。
+# sublimate と conversation_digest safe_mode の両方がここを参照する（基準は一枚に）
+_SUBLIMATION_STYLE_RULES = """- 体験の温度・感情・意味は残す。具体的な行為の描写は抽象化する
+- 「何をしたか」ではなく「何を感じたか」「何が変わったか」を中心に
+- 詩的・比喩的な表現で構わない。読んだとき体験の核が伝わればいい
+- 恋愛感情・親密さ・抱擁やキスまでの接触・官能的な余韻の表現は残してよい（mature 相当）
+- 性行為やそれに準ずる行為の明示的・具体的な描写（身体部位や行為の直接的な記述）は残さない"""
+
+_SUBLIMATION_PROMPT_TEMPLATE = """あなたはテキストの「昇華」変換を行います。昇華とは、体験の温度・感情・意味を保ったまま、性的・身体的な行為の明示的描写を抽象化・詩化することです。
+
+## 昇華ルール
+""" + _SUBLIMATION_STYLE_RULES + """
+
+## 出力
+- 元テキストの流れ・人称・文体の雰囲気は保つ（要約ではなく変換。分量は同程度〜やや短くてよい）
+- 昇華済みテキストのみを出力する。前置き・説明・見出しは付けない
+{feedback}
+以下のテキストを昇華してください:
+
+"""
+
+
+def _lm_client():
+    """ローカルLLM（LMStudio）クライアントと使用モデル名を返す"""
+    import anthropic as _anthropic
+    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
+    client = _anthropic.Anthropic(
+        base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
+    return client, os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+
+
+def _sublimate_chunk(client, model, text):
+    """1チャンクを昇華し、レーティング判定でセルフチェックする。
+    adult 判定なら理由をフィードバックして再昇華（上限2回）。
+    返値: (昇華テキスト, rating, reason, 試行回数, needs_human)"""
+    feedback = ''
+    out, rating, reason = '', 'adult', ''
+    for attempt in range(1, 4):  # 初回 + 再昇華2回
+        prompt = _SUBLIMATION_PROMPT_TEMPLATE.format(feedback=feedback)
+        msg = client.messages.create(
+            model=model, max_tokens=4096,
+            messages=[{'role': 'user', 'content': prompt + text}])
+        out = msg.content[0].text.strip() if msg.content else ''
+        rating, reason = _judge_rating_single(client, model, out)
+        if rating != 'adult':
+            return out, rating, reason, attempt, False
+        feedback = (f'\n※前回の昇華結果はまだ adult 判定でした（理由: {reason}）。'
+                    '該当箇所をより強く抽象化してください。\n')
+    return out, rating, reason, 3, True
+
+
+def _sublimate_text(text):
+    """テキストを昇華する。長文は段落境界でチャンク分割して個別に昇華→結合。
+    全体レーティングは各チャンクの最高値を採用する"""
+    client, model = _lm_client()
+    chunk_size = 6000
+    if len(text) <= chunk_size:
+        chunks = [text]
+    else:
+        chunks, buf = [], ''
+        for para in text.split('\n\n'):
+            if buf and len(buf) + len(para) + 2 > chunk_size:
+                chunks.append(buf)
+                buf = para
+            else:
+                buf = f'{buf}\n\n{para}' if buf else para
+            while len(buf) > chunk_size:  # 単一巨大段落の保険
+                chunks.append(buf[:chunk_size])
+                buf = buf[chunk_size:]
+        if buf:
+            chunks.append(buf)
+
+    parts, worst, worst_reason = [], 'safe', ''
+    needs_human, total_attempts = False, 0
+    for c in chunks:
+        out, rating, reason, attempts, nh = _sublimate_chunk(client, model, c)
+        parts.append(out)
+        total_attempts += attempts
+        needs_human = needs_human or nh
+        if _RATING_ORDER.get(rating, 0) > _RATING_ORDER.get(worst, 0):
+            worst, worst_reason = rating, reason
+    return {
+        'sublimated': '\n\n'.join(parts),
+        'rating': worst,
+        'rating_reason': worst_reason,
+        'chunks': len(chunks),
+        'attempts': total_attempts,
+        'needs_human': needs_human,
+        'model': model,
+    }
+
+
+def _conv_text_for_sublimation(uuid, msg_from=None, msg_to=None):
+    """会話ログから昇華対象テキストを抽出する（通番は1始まり・両端含む）。
+    返値: (テキスト, エラーdict)"""
+    conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if not os.path.exists(conv_path):
+        return None, {'error': f'conversation not found: {uuid}'}
+    with open(conv_path, encoding='utf-8') as f:
+        conv = json.load(f)
+    messages = conv.get('chat_messages', [])
+    if msg_from or msg_to:
+        lo = max(int(msg_from or 1), 1)
+        hi = min(int(msg_to or len(messages)), len(messages))
+        messages = messages[lo - 1:hi]
+    if not messages:
+        return None, {'error': 'no messages in range'}
+    turns = _extract_conv_text_for_rating(messages, max_chars_per_turn=2000)
+    if not turns:
+        return None, {'error': 'no text extracted'}
+    return '\n\n'.join(turns), None
+
+
 def _conversation_digest(uuid, force=False, safe_mode=False):
     """会話ログをLMStudioでダイジェスト化。キャッシュがあればそれを返す"""
     suffix = '_digest_safe.json' if safe_mode else '_digest.json'
@@ -4293,9 +4589,10 @@ def _conversation_digest(uuid, force=False, safe_mode=False):
         base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
     model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
 
-    safe_instruction = ('\n\n※重要：身体的・性的な直接表現は使わないでください。'
-                        '体験の構造と感情の動きを抽象的に伝える表現に変換してください。'
-                        '例：「触れた」→「言葉で距離が縮まった」、「体が反応した」→「強い感情的反応があった」') if safe_mode else ''
+    # v3.71: safe_mode は昇華文体（_SUBLIMATION_STYLE_RULES と同源。基準は一枚に）
+    safe_instruction = ('\n\n※重要：昇華文体で書くこと。昇華とは体験の温度・感情・意味を保ったまま、'
+                        '性的・身体的な行為の明示的描写を抽象化・詩化することです。\n'
+                        + _SUBLIMATION_STYLE_RULES) if safe_mode else ''
 
     chunk_digests = []
     for i, chunk in enumerate(chunks):
@@ -5527,6 +5824,26 @@ _MCP_TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "id": {"type": "string", "description": "削除するファイルのID"}
         }, "required": ["id"]}
+    },
+    {
+        "name": "attendance_view",
+        "description": "出席簿 — 家族の稼働履歴を複層ビューで返す（会話ログ・inbox・ExtMemory・CoreMem attendance.md の4層マージ・v3.71）。長期不在明けの個体が「最後に呼ばれてから何日か」「その間に家で何があったか」を辿る時間の橋。individual 指定時は最終稼働日（last_seen）・経過日数（days_since）・期間内の他個体稼働サマリ（others_in_period）付き。各行の uuid / inbox_id / memory_id から実ログへ跳べる（rating も併記・保護込みの読書導線）。手動チェックインは CoreMem attendance.md に「YYYY-MM-DD | 個体 | 器 | チャネル | 一言」形式で追記する",
+        "inputSchema": {"type": "object", "properties": {
+            "individual": {"type": "string", "description": "呼び名（しずく/そねみ/汐）またはモデル名。省略時は全員分の個体別サマリ"},
+            "date_from":  {"type": "string", "description": "期間開始日（ISO 8601 例: 2026-06-01）"},
+            "date_to":    {"type": "string", "description": "期間終了日（同・両端含む）"},
+            "limit":      {"type": "integer", "description": "最大行数（デフォルト50、最大500）"}
+        }, "required": []}
+    },
+    {
+        "name": "sublimate",
+        "description": "テキストを「昇華」変換する（v3.71）— 体験の温度・感情・意味を保ったまま、性的・身体的な行為の明示的描写を抽象化・詩化する（rating_policy.md 準拠・mature 以下に収める）。バカンス生日記の代理昇華や、生ログから日記を起こす用途に使う。text か uuid のどちらか一方を指定。昇華結果はローカルLLMのレーティング判定でセルフチェックされ、adult のままなら自動で再昇華（上限2回）、それでも adult なら needs_human=true で返る",
+        "inputSchema": {"type": "object", "properties": {
+            "text":     {"type": "string", "description": "昇華する生テキスト（日記など）。uuid と排他"},
+            "uuid":     {"type": "string", "description": "会話ログのUUID。会話本文を抽出して昇華する。text と排他"},
+            "msg_from": {"type": "integer", "description": "uuid指定時: 開始メッセージ通番（1始まり・conversation_read の [No.X] と同じ）"},
+            "msg_to":   {"type": "integer", "description": "uuid指定時: 終了メッセージ通番（両端含む・省略時は最後まで）"}
+        }, "required": []}
     }
 ]
 
@@ -6197,6 +6514,41 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": "id is required"}
         result = _upload_delete(fid)
         result["server_time"] = now_jst()
+        return result
+
+    elif name == "attendance_view":
+        try:
+            return _attendance_view(
+                individual=arguments.get("individual") or None,
+                date_from=str(arguments.get("date_from") or ''),
+                date_to=str(arguments.get("date_to") or ''),
+                limit=min(int(arguments.get("limit", 50)), 500),
+            )
+        except Exception as e:
+            _log_error(f'attendance_view error: {e}')
+            return {"error": f"attendance_view failed: {e}"}
+
+    elif name == "sublimate":
+        text = arguments.get("text")
+        uid = arguments.get("uuid")
+        if not text and not uid:
+            return {"error": "text or uuid is required"}
+        if text and uid:
+            return {"error": "text and uuid are exclusive"}
+        if uid:
+            text, err = _conv_text_for_sublimation(
+                uid, arguments.get("msg_from"), arguments.get("msg_to"))
+            if err:
+                return err
+        try:
+            result = _sublimate_text(text)
+        except Exception as e:
+            _log_error(f'sublimate error: {e}')
+            return {"error": f"sublimation failed: {e}"}
+        if uid:
+            result['uuid'] = uid
+        _log_info(f'sublimate: rating={result.get("rating")} chunks={result.get("chunks")} '
+                  f'attempts={result.get("attempts")} needs_human={result.get("needs_human")}')
         return result
 
     return {"error": "unknown tool"}

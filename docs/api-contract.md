@@ -93,7 +93,7 @@ command in `tests/conftest.py`.
 - No id (notification) → **202 Accepted** (empty body)
 - If `Accept` includes `text/event-stream`, the response is SSE (`event: message` + `data: <json>`); otherwise `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions` (includes the CoreMem_read("core.md") prompt) / issues `Mcp-Session-Id` header
-- `tools/list` → **31 tools** for regular sessions
+- `tools/list` → **34 tools** for regular sessions (v3.71)
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON string>"}`; image tools use `_mcp_content` (type:"image", base64)
 - `ping` → `{}`
 - Unknown method → JSON-RPC error `-32601`
@@ -112,7 +112,7 @@ The new-spec contract is pinned in `tests/test_mcp_2026.py` (skipped in Python-o
 - `subscriptions/listen` → SSE (`notifications/subscriptions/acknowledged` + keep-alive comments)
 - OAuth hardening: `iss` on the authorization redirect (RFC 9207) / `application_type` accepted in DCR (default `web`) / `grant_type=refresh_token` (issued, rotated on every use, reuse → `invalid_grant`, scope narrowing allowed) / `/.well-known/oauth-authorization-server/<suffix>` answered, `grant_types_supported` includes `refresh_token`
 
-## 5. MCP tools (31): response shapes (essentials)
+## 5. MCP tools (34): response shapes (essentials)
 
 For argument details see README.md / CoreMem `protocol_guide_detail.md`. Below are the
 response shapes pinned by tests.
@@ -140,6 +140,8 @@ response shapes pinned by tests.
 | `inbox_delete` | Physical delete |
 | `batch_run_summary_layers` | `status_only=true` → `{running,total,processed,errors,skipped,raw_pending,keywords_pending}` |
 | `album_*` / `file_*` | Same metadata shapes as REST; `album_read` returns MCP image content |
+| `attendance_view` | With `individual`: `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}`; without: `{individual:"all",individuals{},period,total,rows[]}`; rows are date-descending with `kind` (conversation/inbox/memory/checkin) + real-log refs (uuid/inbox_id/memory_id) (v3.71) |
+| `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`; exactly one of `text`/`uuid` required (both → `{error}` exclusive); unreachable LLM → `{error:"sublimation failed: ..."}` (v3.71) |
 
 ## 6. Import (includes the v3.60 contract)
 

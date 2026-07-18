@@ -90,7 +90,7 @@ python -m venv .venv
 - id なし（notification）→ **202 Accepted**（本文なし）
 - `Accept: text/event-stream` を含むと SSE 形式（`event: message` + `data: <json>`）で返る。含まなければ `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions`（CoreMem_read("core.md") の案内を含む）/ `Mcp-Session-Id` ヘッダ発行
-- `tools/list` → 通常セッションは **31本**
+- `tools/list` → 通常セッションは **34本**（v3.71）
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON文字列>"}`。画像系は `_mcp_content`（type:"image", base64）
 - `ping` → `{}`
 - 未知メソッド → JSON-RPC error `-32601`
@@ -109,7 +109,7 @@ python -m venv .venv
 - `subscriptions/listen` → SSE（`notifications/subscriptions/acknowledged` + keep-alive コメント）
 - OAuth 強化: 認可応答リダイレクトに `iss`（RFC 9207）／DCR で `application_type` 受理（既定 `web`）／`grant_type=refresh_token`（発行・使用ごとローテーション・再利用は `invalid_grant`・`scope` 縮小可）／`/.well-known/oauth-authorization-server/<suffix>` にも応答・`grant_types_supported` に `refresh_token`
 
-## 5. MCP ツール（31本）の返却形状（要点）
+## 5. MCP ツール（34本）の返却形状（要点）
 
 引数の詳細は README.ja.md / CoreMem `protocol_guide_detail.md` を参照。ここではテストで固定化した返却形状のみ列挙する。
 
@@ -136,6 +136,8 @@ python -m venv .venv
 | `inbox_delete` | 物理削除 |
 | `batch_run_summary_layers` | `status_only=true` → `{running,total,processed,errors,skipped,raw_pending,keywords_pending}` |
 | `album_*` / `file_*` | REST と同じメタデータ形状。`album_read` は MCP image content |
+| `attendance_view` | `individual` 指定時 `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}` / 省略時 `{individual:"all",individuals{},period,total,rows[]}`。rows は日付降順・`kind`（conversation/inbox/memory/checkin）＋実ログ参照（uuid/inbox_id/memory_id）付き（v3.71） |
+| `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`。`text`/`uuid` どちらか必須（両方は `{error}`・exclusive）。LLM 到達不能時は `{error:"sublimation failed: ..."}`（v3.71） |
 
 ## 6. インポート（v3.60 の契約を含む）
 

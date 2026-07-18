@@ -11,8 +11,8 @@
 
 | Item | Value |
 |------|-------|
-| mio-memory version | v3.61 |
-| MCP tool count | 31 (regular session) |
+| mio-memory version | v3.71 |
+| MCP tool count | 34 (regular session) |
 | Host / server | <e.g. NAS-name / 192.168.x.x> |
 | Data path | <e.g. /volume1/docker/mio/memory/data/> |
 | Public URL | <e.g. https://memory.example.com> |
@@ -22,7 +22,7 @@
 
 ---
 
-## MCP tool list (31, regular session)
+## MCP tool list (34, regular session)
 
 For each tool's purpose / arguments / cost, see **`protocol_guide.md`**.
 
@@ -30,9 +30,11 @@ For each tool's purpose / arguments / cost, see **`protocol_guide.md`**.
 - **UserCoreMemory (4)**: CoreMem_save / CoreMem_read / CoreMem_list / CoreMem_delete
 - **LogStore (6)**: conversation_index / conversation_search / conversation_read / conversation_share / conversation_digest / log_annotate
 - **inbox (5)**: inbox_check / inbox_read / inbox_post / inbox_update / inbox_delete
-- **batch (1)**: batch_run_summary_layers
+- **batch (2)**: batch_run_summary_layers / batch_run_rating
 - **Album (5)**: album_save / album_read / album_list / album_share / album_delete
 - **Uploads (4)**: file_upload / file_read / file_list / file_delete
+- **Attendance (1)**: attendance_view
+- **Sublimation (1)**: sublimate
 
 ※ Friend sessions (`/mcp?token=<friend_token>`) expose a separate set of 6 tools.
 

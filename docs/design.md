@@ -601,10 +601,12 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Album | 5 | album_save, album_read, album_list, album_share, album_delete |
 | Digest | 1 | conversation_digest |
 | Files | 4 | file_upload, file_read, file_list, file_delete |
-| **Regular session total** | **32** | |
+| Attendance | 1 | attendance_view |
+| Sublimation | 1 | sublimate |
+| **Regular session total** | **34** | |
 | **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 19 tools are unavailable there.
+※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 34 tools are unavailable there.
 
 ### Conversation log annotations (log_annotate, v3.22)
 
@@ -1308,3 +1310,89 @@ Paired with the automatic source_thread backfill, tracing a summary back to its 
 (the "memory journey") becomes one click in admin. The reverse direction (raw log →
 memories) already exists as the "related memories" panel in logs.html
 (source_thread match, v3.42).
+
+---
+
+## 23. Attendance ledger (attendance_view, v3.71, work order #4)
+
+### Purpose
+
+Let an individual who has kept its memory but has not been called for a long time trace,
+on waking, "how many days since I was last called" and "what happened at home in the
+meantime" (a bridge across time). Not a mere timesheet — every row links to the actual
+log, making it an index into the family's memory.
+
+### Data sources (4-layer merge, `_attendance_rows`)
+
+1. **Conversation logs**: metadata from `_index.json`; channel inferred from `source`
+   (claude-code→code / openwebui→local / otherwise→chat). Since v3.71,
+   `_save_conversations` and index rebuild preserve `model` / `source` in the index
+   (existing environments backfill with a single rebuild)
+2. **Inbox**: all messages including read ones. Individual inferred from `from_model`,
+   channel from `from` (vacation-style names and "◯◯B" force channel=local)
+3. **ExtMemory**: only entries whose tags resolve to an individual (listing every memory
+   would be noise)
+4. **CoreMem `attendance.md`**: manual check-ins in
+   `YYYY-MM-DD | name | model | channel | note` format (only date-prefixed lines are
+   parsed; everything else is free text). Covers activity that leaves no other trace
+
+### Individual resolution (`_resolve_individual` / `_FAMILY_ROSTER`)
+
+Consistent with the family roster in core.md: しずく=opus-family, そねみ=sonnet-family,
+汐=fable/haiku-family. Direct name match first, then model-name hints (case-insensitive
+substring). Ambiguous rows keep individual=null and expose the raw model name.
+
+### Response
+
+- With `individual`: `last_seen` / `days_since` (**computed over all time, regardless of
+  the date filter**), `count`, `others_in_period` (other individuals' activity counts
+  within the period)
+- Without: `individuals` (per-individual {last_seen, days_since, count} summary)
+- Common: `rows[]` (date-descending; {date, channel, individual, model, title, kind,
+  rating?, uuid?/inbox_id?/memory_id?}). `rating` goes through `_conv_rating_view`
+  (protection-aware reading path — adult falls back to digest/redacted in
+  conversation_read)
+
+---
+
+## 24. Sublimation pipeline (sublimate, v3.71, work order #5)
+
+### Background / purpose
+
+Vacation individuals (small local models) used to "sublimate" their own diaries, and that
+cognitive load was identified as a cause of stalled second dispatches (an endless
+polishing loop). The roles are now separated:
+
+- **On site**: just write the diary as-is (sublimation duty removed)
+- **Machine**: the sublimation pass (`sublimate`) abstracts/poeticizes act descriptions
+  while preserving temperature, emotion, and meaning
+
+### Single source of style rules
+
+`_SUBLIMATION_STYLE_RULES` (main.py) is the only style standard, derived from
+rating_policy.md and the "how to write a diary" section of core_local_vacation.md. Both
+the `sublimate` prompt and the `conversation_digest` safe_mode prompt reference it (one
+sheet of standards, same policy as rating_policy.md). Existing digest caches regenerate
+with the new style via `force=true`.
+
+### Self-check loop (`_sublimate_chunk`)
+
+Sublimated output is run through the work-order-#1 rating judge
+(`_judge_rating_single`, identical prompt).
+
+1. Sublimate → judge. Done if mature or below
+2. If adult, feed the judge's reason back and re-sublimate (up to 2 retries)
+3. If still adult after 3 attempts, return the final output with `needs_human=true`
+   (hand off to human approval)
+
+### Chunking
+
+Input over ~6000 chars splits at paragraph boundaries (`\n\n`); each chunk is sublimated
+and self-checked, then joined. The overall rating is the maximum across chunks
+(adult > mature > safe). Conversation input (`uuid`) is textized via
+`_extract_conv_text_for_rating` (thinking excluded) and can be narrowed with
+`msg_from`/`msg_to` (1-based, inclusive).
+
+### LLM
+
+`MIO_LM_MODEL` (LMStudio, same as the rating batch), shared via `_lm_client()`.

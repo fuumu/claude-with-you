@@ -101,7 +101,7 @@ def test_oauth_full_flow_pkce_s256(server):
         headers={'Authorization': f'Bearer {access_token}',
                  'Accept': 'application/json'}, timeout=30)
     assert r.status_code == 200
-    assert len(r.json()['result']['tools']) == 32
+    assert len(r.json()['result']['tools']) == 34
 
 
 def test_oauth_token_rejects_bad_pkce(server):

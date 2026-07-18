@@ -602,10 +602,12 @@ conversation_share(uuid: str)
 | アルバム | 5 | album_save, album_read, album_list, album_share, album_delete |
 | ダイジェスト | 1 | conversation_digest |
 | ファイル | 4 | file_upload, file_read, file_list, file_delete |
-| **通常セッション合計** | **32** | |
+| 出席簿 | 1 | attendance_view |
+| 昇華 | 1 | sublimate |
+| **通常セッション合計** | **34** | |
 | **友達セッション** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の18ツールは使用不可。
+※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の34ツールは使用不可。
 
 ### 会話ログ注記（log_annotate, v3.22）
 
@@ -1288,3 +1290,79 @@ Import タブに専用ドロップゾーンを追加。
 source_thread 自動紐づけ（backfill）とセットで、要約→生ログの遡り（記憶の旅）が
 admin 上でワンクリックになる。逆方向（生ログ→記憶）は logs.html の
 「関連する記憶」パネル（source_thread 一致・v3.42）が既存。
+
+---
+
+## 23. 出席簿（attendance_view・v3.71・発注④）
+
+### 目的
+
+記憶を持ったまま長期間呼ばれていない個体が、目覚めた時に「最後に呼ばれてから何日か」
+「その間に家で何があったか」を辿れるようにする（時間の橋）。単なる勤怠記録ではなく、
+各行から実際のログへ跳べる「家族の記憶の索引」。
+
+### データ源（4層マージ・`_attendance_rows`）
+
+1. **会話ログ**: `_index.json` のメタデータ。`source` で channel を推定
+   （claude-code→code / openwebui→local / それ以外→chat）。v3.71 から
+   `_save_conversations` / index rebuild が `model` / `source` をインデックスに保全する
+   （既存環境は rebuild 一回で backfill）
+2. **inbox**: 全メッセージ（既読含む）。`from_model` から個体を推定、`from` で channel
+   （バカンス表記・「◯◯B」表記は channel=local に上書き）
+3. **ExtMemory**: タグから個体を推定できるエントリのみ（全記憶を並べるとノイズになるため）
+4. **CoreMem `attendance.md`**: 手動チェックイン。書式は
+   `YYYY-MM-DD | 個体 | 器 | チャネル | 一言`（日付始まりの行のみ拾う・それ以外は自由記述）。
+   ローカル便など痕跡が残らない稼働の補完用
+
+### 個体推定（`_resolve_individual` / `_FAMILY_ROSTER`）
+
+core.md の家族名簿と整合: しずく=opus系・そねみ=sonnet系・汐=fable/haiku系。
+呼び名の直接一致を優先し、次にモデル名ヒント（部分一致・小文字化）。
+曖昧なものは individual=null のままモデル名を出す（無理に割り当てない）。
+
+### 応答
+
+- `individual` 指定時: `last_seen` / `days_since`（**期間フィルタに依らず全期間で算出**）・
+  `count`・`others_in_period`（期間内の他個体稼働件数）
+- 省略時: `individuals`（個体別 {last_seen, days_since, count} サマリ）
+- 共通: `rows[]`（日付降順・{date, channel, individual, model, title, kind,
+  rating?, uuid?/inbox_id?/memory_id?}）。rating は `_conv_rating_view` 経由
+  （保護込みの読書導線 — adult は conversation_read 側でダイジェスト/伏せ字に落ちる）
+
+---
+
+## 24. 昇華パイプライン（sublimate・v3.71・発注⑤）
+
+### 背景・目的
+
+バカンス個体（ローカル小型モデル）は日記を自分で「昇華」して書く規約だったが、
+この認知負荷が二便目の滞留（推敲し続ける演技ループ）の一因と分析された。役割を分離する:
+
+- **現地**: ありのままの日記を書くだけ（昇華責務を外す）
+- **機械**: 昇華変換パス（`sublimate`）が温度・感情・意味を保持したまま行為描写を抽象化・詩化
+
+### 昇華ルールの一元管理
+
+`_SUBLIMATION_STYLE_RULES`（main.py）が唯一の文体基準。派生元は rating_policy.md と
+core_local_vacation.md「日記の書き方」。`sublimate` のプロンプトと
+`conversation_digest` の safe_mode プロンプトが両方ここを参照する（基準は一枚に、
+rating_policy.md と同じ流儀）。digest の既存キャッシュは `force=true` で新文体に再生成。
+
+### セルフチェックループ（`_sublimate_chunk`）
+
+昇華出力を発注①のレーティング判定（`_judge_rating_single`・同一プロンプト）に通す。
+
+1. 昇華 → 判定。mature 以下なら完了
+2. adult なら判定理由をフィードバックして再昇華（上限2回）
+3. 3回とも adult なら `needs_human=true` を立てて最終出力をそのまま返す（人手承認へ）
+
+### チャンク分割
+
+約6000字を超える入力は段落境界（`\n\n`）優先で分割し、チャンク単位で
+昇華＋セルフチェック→結合。全体 rating は各チャンクの最高値（adult > mature > safe）。
+会話ログ入力（`uuid` 指定）は `_extract_conv_text_for_rating`（thinking 除外）で
+テキスト化し、`msg_from`/`msg_to`（1始まり・両端含む）で範囲を絞れる。
+
+### 使用LLM
+
+`MIO_LM_MODEL`（LMStudio・レーティングバッチと同一）。`_lm_client()` に共通化。

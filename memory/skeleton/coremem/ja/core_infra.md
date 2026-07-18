@@ -11,8 +11,8 @@
 
 | 項目 | 値 |
 |------|-----|
-| mio-memory バージョン | v3.61 |
-| MCPツール数 | 31（通常セッション） |
+| mio-memory バージョン | v3.71 |
+| MCPツール数 | 34（通常セッション） |
 | ホスト / サーバ | <例: NAS名 / 192.168.x.x> |
 | データ格納先 | <例: /volume1/docker/mio/memory/data/> |
 | 公開URL | <例: https://memory.example.com> |
@@ -22,7 +22,7 @@
 
 ---
 
-## MCPツール一覧（31本・通常セッション）
+## MCPツール一覧（34本・通常セッション）
 
 ツールごとの用途・引数・コスト感は **`protocol_guide.md`** を参照。
 
@@ -30,9 +30,11 @@
 - **UserCoreMemory（4）**: CoreMem_save / CoreMem_read / CoreMem_list / CoreMem_delete
 - **LogStore（6）**: conversation_index / conversation_search / conversation_read / conversation_share / conversation_digest / log_annotate
 - **inbox（5）**: inbox_check / inbox_read / inbox_post / inbox_update / inbox_delete
-- **batch（1）**: batch_run_summary_layers
+- **batch（2）**: batch_run_summary_layers / batch_run_rating
 - **Album（5）**: album_save / album_read / album_list / album_share / album_delete
 - **Uploads（4）**: file_upload / file_read / file_list / file_delete
+- **出席簿（1）**: attendance_view
+- **昇華（1）**: sublimate
 
 ※ 友達セッション（`/mcp?token=<friend_token>`）では別系統6本が出る。
 
