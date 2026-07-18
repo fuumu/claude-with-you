@@ -536,7 +536,7 @@ Share tokens are stored in the existing `/data/share_tokens.json` with a `conv_u
 
 - Auto-loading from the server (no file upload)
 - Keyword (`q`) and date range (`from/to`): passed to the server
-- Sort order and minimum message count: applied client-side
+- Sort order, minimum message count, rating (v3.70), and source (Chat / Claude Code / OpenWebUI, keyed on the `source` field, v3.72): applied client-side
 - Message bodies: markdown rendered with marked.js + DOMPurify
 - thinking blocks (🧠): bulk on/off via a "show thinking" toggle, collapsible
 - tool_use blocks (⚙) / tool_result blocks (📤): collapsible

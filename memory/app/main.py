@@ -3,6 +3,13 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変更履歴:
+  v3.72 (2026-07-18) - バグ修正: admin Redactタブ起動不能＋logs.html ソースフィルタ
+    - admin.html: Redactタブが参照していた未定義ヘルパー authHeaders() を定義
+      （Bearer認証ヘッダ生成。タブを開くだけで "Can't find variable: authHeaders" になっていた）
+    - admin.html: i18n辞書に redact.title / redact.desc を追加（生キー表示の解消）。
+      Reloadボタンを common.reload に統一。album.saveMeta / share / delete の辞書漏れも補完
+    - logs.html: ソースフィルタ追加（チャット / Claude Code / OpenWebUI。
+      会話インデックスの source フィールドでクライアント側絞り込み。v3.71のsource保全が前提）
   v3.71 (2026-07-18) - 出席簿（発注④）＋昇華パイプライン（発注⑤）
     - attendance_view MCPツール新設: 会話ログ・inbox・ExtMemory・CoreMem attendance.md の
       4層マージによる稼働履歴の複層ビュー（時間の橋）。individual 指定で最終稼働日・
@@ -514,7 +521,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.71'
+VERSION = '3.72'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック

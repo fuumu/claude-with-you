@@ -377,7 +377,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 ### Conversation viewer (`/logs.html`)
 
 - Auto-loads conversations from the server
-- Filter by keyword, date range, minimum message count
+- Filter by keyword, date range, minimum message count, rating (v3.70), and source (Chat / Claude Code / OpenWebUI, v3.72)
 - Renders markdown with `marked.js` + `DOMPurify`
 - Collapsible `thinking` / `tool_use` / `tool_result` blocks
 - Font size toggle (small / medium / large)
@@ -583,7 +583,8 @@ claude-with-you/
 **Design phase**
 - OpenWebUI automatic sync — API polling for periodic sync (manual import implemented in v3.66, [design doc](docs/openwebui-sync.md))
 
-**Implemented (v3.9–v3.71)**
+**Implemented (v3.9–v3.72)**
+- admin Redact tab startup bug fix + logs.html source filter (v3.72) — ① admin.html: defined the missing `authHeaders()` helper the Redact tab referenced (opening the tab raised `Can't find variable: authHeaders`, making list/generate/approve unusable) ② added `redact.title` / `redact.desc` to the i18n dictionary (headings showed raw keys), unified the Reload button on `common.reload`, and backfilled 3 missing album dictionary entries ③ logs.html: new source filter (Chat / Claude Code / OpenWebUI; client-side filtering on the conversation index `source` field, which v3.71 started preserving)
 - Attendance ledger + sublimation pipeline (v3.71, work orders #4/#5) — `attendance_view` MCP tool: 4-layer merged activity history (time bridge for long-absent individuals); CoreMem `attendance.md` manual check-in format; conversation index now preserves `model` / `source`. `sublimate` MCP tool (tool count 32→34): sublimation transform with rating self-check loop (adult → re-sublimate up to 2× → `needs_human`); sublimation style rules unified in one place and applied to `conversation_digest` `safe_mode`
 - Friend system — registration flow, email approval via SendGrid, friend-specific MCP sessions, per-friend memory (v3.9–v3.12)
 - `CoreMem_delete` tool, `DELETE /api/coremem/<name>`, logs.html Unicode display fix (v3.13)

@@ -859,9 +859,9 @@
 
 <!-- Redact tab -->
 <div class="tab-panel" id="tab-redact">
-  <h3 data-i18n="redact.title">Redact (adult log masking)</h3>
-  <p style="color:#888;font-size:.85rem" data-i18n="redact.desc">adult rating conversations: generate masked versions, preview and approve.</p>
-  <button onclick="loadRedactStatus()" style="margin-bottom:12px">Reload</button>
+  <h3 data-i18n="redact.title">伏せ字（adultログのマスク閲覧）</h3>
+  <p style="color:#888;font-size:.85rem" data-i18n="redact.desc">adultレーティングの会話ログから伏せ字版を生成し、プレビューして承認します。</p>
+  <button onclick="loadRedactStatus()" style="margin-bottom:12px" data-i18n="common.reload">再読み込み</button>
   <div id="redact-list" style="font-size:.9rem"></div>
   <div id="redact-preview" style="display:none;margin-top:16px;border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--card-bg)">
     <h4 id="redact-preview-title" style="margin:0 0 8px"></h4>
@@ -953,6 +953,10 @@ document.getElementById('token-input').addEventListener('keydown', e => {
 });
 
 // ── API ───────────────────────────────────────────────────────────────
+function authHeaders() {
+  return { 'Authorization': 'Bearer ' + getToken() };
+}
+
 async function apiFetch(path, options = {}) {
   const res = await fetch(API + path, {
     ...options,
@@ -1108,6 +1112,12 @@ const I18N = {
   'album.tags':        { ja: 'タグ（カンマ区切り）', en: 'Tags (comma-separated)' },
   'album.submit':      { ja: '保存', en: 'Save' },
   'album.drop':        { ja: '📷 ここにドロップして画像を追加', en: '📷 Drop images here to add' },
+  'album.saveMeta':    { ja: '保存', en: 'Save' },
+  'album.share':       { ja: '🔗 共有', en: '🔗 Share' },
+  'album.delete':      { ja: '削除', en: 'Delete' },
+  // Redact (v3.71)
+  'redact.title':      { ja: '伏せ字（adultログのマスク閲覧）', en: 'Redact (adult log masking)' },
+  'redact.desc':       { ja: 'adultレーティングの会話ログから伏せ字版を生成し、プレビューして承認します。', en: 'adult rating conversations: generate masked versions, preview and approve.' },
 };
 
 function t(key) { const e = I18N[key]; return e ? (e[_adminLang] || e.ja) : key; }

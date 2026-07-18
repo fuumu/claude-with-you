@@ -390,6 +390,15 @@
           </select>
         </div>
         <div class="filter-row">
+          <label data-i18n="source.filter">ソース</label>
+          <select id="source-filter" onchange="renderList()" style="flex:1">
+            <option value="" data-i18n="source.all">すべて</option>
+            <option value="chat" data-i18n="source.chat">チャット</option>
+            <option value="claude-code">Claude Code</option>
+            <option value="openwebui">OpenWebUI</option>
+          </select>
+        </div>
+        <div class="filter-row">
           <label>From</label>
           <input type="date" id="date-from" onchange="applyFilters()" style="flex:1">
           <label style="margin-left:.25rem">To</label>
@@ -608,6 +617,8 @@ function renderList() {
   if (showFavOnly) items = items.filter(c => favs[c.uuid]);
   const rf = document.getElementById('rating-filter');
   if (rf && rf.value) items = items.filter(c => ratingState(c) === rf.value);
+  const sf = document.getElementById('source-filter');
+  if (sf && sf.value) items = items.filter(c => (c.source || 'chat') === sf.value);
 
   count.textContent = items.length ? `${items.length} 件${showFavOnly ? '（☆）' : ''}` : '';
 
@@ -1272,6 +1283,9 @@ const I18N = {
   'rating.all':      { ja: 'すべて', en: 'All' },
   'rating.unrated':  { ja: '未判定', en: 'Unrated' },
   'rating.unjudgeable': { ja: '判定不能', en: 'Unjudgeable' },
+  'source.filter':   { ja: 'ソース', en: 'Source' },
+  'source.all':      { ja: 'すべて', en: 'All' },
+  'source.chat':     { ja: 'チャット', en: 'Chat' },
   'btn.share':       { ja: '🔗 共有', en: '🔗 Share' },
   'thinking.show':   { ja: '🧠 思考を表示', en: '🧠 Show thinking' },
   'thinking.hide':   { ja: '🧠 思考を非表示', en: '🧠 Hide thinking' },
