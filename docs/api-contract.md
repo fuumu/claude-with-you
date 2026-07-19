@@ -122,7 +122,7 @@ response shapes pinned by tests.
 | `memory_read_index` | list → `{data:[{id,title,tags,created_at,importance,keywords?,symbolic?,rating?,local_only?}]}`; `random=N` (clamped 1–5) |
 | `memory_read` | Full entry dict; unknown id → `{error}` |
 | `memory_write` | Created entry dict (assert `id`); accepts `rating`/`local_only` |
-| `memory_upsert` | Upsert by fixed id; created dict |
+| `memory_upsert` | Upsert by fixed id; created dict. Accepts `rating`/`local_only` (preserves existing values when omitted, v3.73) |
 | `memory_search` | `{results[], total, has_more}`; no body by default (`summary`+`symbolic`+`match_layer`); `full_body=true` for body; `include_conversations=true` adds `conversations[]`+`conversations_total` (v3.61) |
 | `memory_share` | `{token, url(admin.html?token=..&id=..), expires_at}` |
 | `CoreMem_save` | `{name, version, version_str}`; `mode="append"` appends with `<!-- APPEND datetime -->` separator |

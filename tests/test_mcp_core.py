@@ -117,6 +117,27 @@ def test_memory_upsert_overwrites_fixed_id(server):
     assert r['body'] == 'v2'
 
 
+def test_memory_upsert_preserves_rating_and_local_only(server):
+    """v3.73: upsert で rating / local_only 未指定時は既存値を温存する"""
+    w = server.tool('memory_write', {
+        'title': 'rating温存テスト', 'body': 'v1', 'tags': ['ts0'],
+        'rating': 'mature', 'local_only': True})
+    entry_id = w['id']
+    # upsert with no rating/local_only args — should preserve
+    d = server.tool('memory_upsert', {'id': entry_id, 'title': 'rating温存テスト改', 'body': 'v2'})
+    assert d.get('rating') == 'mature', f"rating lost: {d}"
+    assert d.get('local_only') is True, f"local_only lost: {d}"
+    r = server.tool('memory_read', {'id': entry_id})
+    assert r['rating'] == 'mature'
+    assert r['local_only'] is True
+    # upsert with explicit rating change
+    d2 = server.tool('memory_upsert', {'id': entry_id, 'title': 'rating温存テスト改2', 'body': 'v3', 'rating': 'adult'})
+    assert d2['rating'] == 'adult'
+    # upsert with local_only=false to clear it
+    d3 = server.tool('memory_upsert', {'id': entry_id, 'title': 'rating温存テスト改3', 'body': 'v4', 'local_only': False})
+    assert d3.get('local_only') is not True
+
+
 def test_memory_read_index_and_random(server):
     """memory_read_index のリスト返却は {'data': [...], server_time, server_version} にラップされる"""
     server.tool('memory_write', {'title': 'index確認用', 'body': 'x', 'tags': ['ts0']})

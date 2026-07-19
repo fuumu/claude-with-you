@@ -118,7 +118,7 @@ python -m venv .venv
 | `memory_read_index` | list → `{data:[{id,title,tags,created_at,importance,keywords?,symbolic?,rating?,local_only?}]}`。`random=N`（1〜5クランプ） |
 | `memory_read` | エントリ dict 全文。存在しない id は `{error}` |
 | `memory_write` | 作成エントリ dict（`id` 必須確認）。`rating`/`local_only` 受付 |
-| `memory_upsert` | 固定 id で上書き/新規。作成 dict |
+| `memory_upsert` | 固定 id で上書き/新規。作成 dict。`rating`/`local_only` 受付（省略時は既存値温存, v3.73） |
 | `memory_search` | `{results[], total, has_more}`。デフォルト body なし（`summary`+`symbolic`+`match_layer`）。`full_body=true` で body。`include_conversations=true` で `conversations[]`+`conversations_total`（v3.61） |
 | `memory_share` | `{token, url(admin.html?token=..&id=..), expires_at}` |
 | `CoreMem_save` | `{name, version, version_str}`。`mode="append"` は `<!-- APPEND datetime -->` 区切りで追記 |

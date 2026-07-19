@@ -1355,7 +1355,7 @@ substring). Ambiguous rows keep individual=null and expose the raw model name.
 
 ---
 
-## 24. Sublimation pipeline (sublimate, v3.71, work order #5)
+## 24. Sublimation pipeline (sublimate, v3.71, enhanced v3.73, work order #5)
 
 ### Background / purpose
 
@@ -1375,13 +1375,24 @@ the `sublimate` prompt and the `conversation_digest` safe_mode prompt reference 
 sheet of standards, same policy as rating_policy.md). Existing digest caches regenerate
 with the new style via `force=true`.
 
+v3.73 added an explicit forbidden-expression list (genital terms, act progression, bodily
+fluids, position/movement descriptions) and alternative-expression examples (wave, tide,
+melt, overlap, etc.). The sublimation prompt now includes a "top principle: must be
+mature or below" and a self-verification step before output.
+
 ### Self-check loop (`_sublimate_chunk`)
 
-Sublimated output is run through the work-order-#1 rating judge
-(`_judge_rating_single`, identical prompt).
+Sublimated output is run through the rating judge. v3.73 separates judgment into
+**strict mode**:
 
-1. Sublimate → judge. Done if mature or below
-2. If adult, feed the judge's reason back and re-sublimate (up to 2 retries)
+- `_judge_rating_single(strict=True)`: deterministic with temperature=0
+- Dedicated strict prefix for sublimated output ("this text is already sublimated;
+  judge strictly for residual explicit descriptions…")
+- Reduces "drift" where the same model is lenient on its own output
+
+Flow:
+1. Sublimate → strict judge. Done if mature or below
+2. If adult, feed specific findings back and re-sublimate (up to 2 retries)
 3. If still adult after 3 attempts, return the final output with `needs_human=true`
    (hand off to human approval)
 
@@ -1392,6 +1403,16 @@ and self-checked, then joined. The overall rating is the maximum across chunks
 (adult > mature > safe). Conversation input (`uuid`) is textized via
 `_extract_conv_text_for_rating` (thinking excluded) and can be narrowed with
 `msg_from`/`msg_to` (1-based, inclusive).
+
+### Orphan-job mitigation (v3.73)
+
+Prevents unbounded LLM processing when a client disconnects:
+
+- **Input size cap**: 60,000 chars (`_SUBLIMATE_MAX_INPUT_CHARS`). Exceeding returns an
+  immediate error recommending a narrower `msg_from`/`msg_to` range
+- **Processing timeout**: 180s (`_SUBLIMATE_TIMEOUT_SEC`). On timeout, returns processed
+  chunks as a partial result (`partial=true` / `chunks_completed` / `timeout_message`)
+- Per-chunk LLM timeout of 300s (`_lm_client()`) acts as an individual safety net
 
 ### LLM
 
