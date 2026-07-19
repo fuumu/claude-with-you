@@ -179,6 +179,7 @@ response shapes pinned by tests.
 | batch | `/api/batch/status` `/api/batch/start` | Summary batch: status dict / background start |
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict (`pending` = next-run targets, `index_counts` distribution, `skip_reasons`, `error_uuids`, v3.70) / background start (v3.68) |
 | redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | Redact: generate, get, approve, reject, status list (v3.69) |
+| attendance | `GET /api/attendance` | Attendance ledger: `?individual=&date_from=&date_to=&limit=` (same logic as MCP attendance_view, v3.74) |
 | import-status | `/api/import-status` | Last ZIP import record |
 | friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
 

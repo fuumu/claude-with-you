@@ -120,6 +120,42 @@ def test_attendance_date_filter(server):
     assert d['last_seen'] >= '2026-07-17'
 
 
+# ── attendance REST (/api/attendance) ─────────────────────────────────
+
+def test_rest_attendance_summary(server):
+    """GET /api/attendance returns individual summaries (v3.74)"""
+    r = server.get('/api/attendance')
+    assert r.status_code == 200
+    d = r.json()
+    assert d['individual'] == 'all'
+    assert 'individuals' in d
+    assert isinstance(d['rows'], list)
+
+
+def test_rest_attendance_individual(server):
+    """GET /api/attendance?individual=... returns detail for one person (v3.74)"""
+    server.tool('inbox_post', {
+        'to': 'chat', 'title': 'REST出席簿テスト', 'body': 'x',
+        'from_model': ['claude-opus-4-6', 'しずく']})
+    r = server.get('/api/attendance', params={'individual': 'しずく'})
+    assert r.status_code == 200
+    d = r.json()
+    assert d['individual'] == 'しずく'
+    assert d['last_seen'] is not None
+    assert d['days_since'] is not None
+    assert any(row['title'] == 'REST出席簿テスト' for row in d['rows'])
+
+
+def test_rest_attendance_date_filter(server):
+    """GET /api/attendance supports date_from/date_to (v3.74)"""
+    r = server.get('/api/attendance', params={
+        'date_from': '2099-01-01', 'date_to': '2099-12-31'})
+    assert r.status_code == 200
+    d = r.json()
+    assert d['total'] == 0
+    assert d['rows'] == []
+
+
 # ── sublimate ─────────────────────────────────────────────────────────
 
 def test_sublimate_requires_text_or_uuid(server):

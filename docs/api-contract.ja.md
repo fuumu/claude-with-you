@@ -171,6 +171,7 @@ python -m venv .venv
 | batch | `/api/batch/status` `/api/batch/start` | 要約バッチ: 状態 dict / バックグラウンド起動 |
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict（`pending`=次回対象件数・`index_counts` 分布・`skip_reasons`・`error_uuids`, v3.70）/ バックグラウンド起動（v3.68） |
 | redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | 伏せ字ログ: 生成・取得・承認・差し戻し・ステータス一覧（v3.69） |
+| attendance | `GET /api/attendance` | 出席簿: `?individual=&date_from=&date_to=&limit=`（MCP attendance_view と同一ロジック, v3.74） |
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
 | friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |
 

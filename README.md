@@ -350,6 +350,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/uploads/<id>` | Download uploaded file |
 | POST | `/api/uploads/` | Upload file (multipart/form-data) |
 | DELETE | `/api/uploads/<id>` | Delete uploaded file |
+| GET | `/api/attendance` | Attendance ledger (`?individual=&date_from=&date_to=&limit=`, v3.74) |
 | GET | `/health` | Health check |
 
 ---
@@ -373,6 +374,8 @@ Access at `https://your-domain/admin.html` — login with your API token.
 | **Album** | Image memory management (thumbnail grid, drag & drop upload, edit, delete, share, lightbox) |
 | **Uploads** | General-purpose file storage (PDF, text, etc. — upload, preview, download, ID copy) |
 | **Search** | Hierarchical search visualizer (4-column: Keywords / Summary / Symbolic / Raw body) |
+| **Redact** | Generate, preview and approve masked versions of adult-rated conversation logs (v3.69) |
+| **出席簿** | Family attendance ledger — individual summary cards → click for detail table with date filter and log links (v3.74) |
 
 ### Conversation viewer (`/logs.html`)
 
@@ -583,7 +586,8 @@ claude-with-you/
 **Design phase**
 - OpenWebUI automatic sync — API polling for periodic sync (manual import implemented in v3.66, [design doc](docs/openwebui-sync.md))
 
-**Implemented (v3.9–v3.73)**
+**Implemented (v3.9–v3.74)**
+- Admin attendance tab (v3.74) — new 出席簿 (Attendance) tab in admin.html. REST `GET /api/attendance` endpoint (reuses MCP `attendance_view` logic, no dual implementation). Individual summary cards (last-seen, days-since, count with color coding: ≤1 day green, ≥7 days red, in-between yellow) → click to expand detail table (datetime, kind, channel, rating, title, log links). Date range filter and same-period other-individual activity summary
 - memory_upsert rating preservation + sublimate hardening & orphan-job mitigation (v3.73) — ① `memory_upsert` now accepts `rating` / `local_only` args; when omitted, existing values are preserved (previously lost on overwrite) ② sublimate prompt: explicit forbidden-expression list (genital terms, act progression, bodily fluids), "must be mature or below" top-level principle, self-verification step ③ sublimate self-check: strict mode (temperature=0, dedicated strict prefix) separates generation from judgment so same-model drift is reduced ④ sublimate orphan-job mitigation: input cap 60K chars (immediate error if exceeded), processing timeout 180s (returns partial result with `partial=true` / `timeout_message`)
 - admin Redact tab startup bug fix + logs.html source filter (v3.72) — ① admin.html: defined the missing `authHeaders()` helper the Redact tab referenced (opening the tab raised `Can't find variable: authHeaders`, making list/generate/approve unusable) ② added `redact.title` / `redact.desc` to the i18n dictionary (headings showed raw keys), unified the Reload button on `common.reload`, and backfilled 3 missing album dictionary entries ③ logs.html: new source filter (Chat / Claude Code / OpenWebUI; client-side filtering on the conversation index `source` field, which v3.71 started preserving)
 - Attendance ledger + sublimation pipeline (v3.71, work orders #4/#5) — `attendance_view` MCP tool: 4-layer merged activity history (time bridge for long-absent individuals); CoreMem `attendance.md` manual check-in format; conversation index now preserves `model` / `source`. `sublimate` MCP tool (tool count 32→34): sublimation transform with rating self-check loop (adult → re-sublimate up to 2× → `needs_human`); sublimation style rules unified in one place and applied to `conversation_digest` `safe_mode`

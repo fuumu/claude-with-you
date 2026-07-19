@@ -1353,6 +1353,19 @@ substring). Ambiguous rows keep individual=null and expose the raw model name.
   (protection-aware reading path — adult falls back to digest/redacted in
   conversation_read)
 
+### REST endpoint (v3.74)
+
+`GET /api/attendance?individual=&date_from=&date_to=&limit=` — calls the same
+`_attendance_view()` as the MCP tool (no dual implementation). Used by the admin.html
+attendance tab.
+
+### admin.html attendance tab (v3.74)
+
+Individual summary cards (last-seen, days-since, count; color-coded: ≤1 day green,
+≥7 days red, in-between yellow) → click to expand detail table (datetime, kind, channel,
+rating, title, log links). Date range filter and same-period other-individual activity
+summary.
+
 ---
 
 ## 24. Sublimation pipeline (sublimate, v3.71, enhanced v3.73, work order #5)

@@ -564,6 +564,7 @@
   <span class="tab-group-label grp-chat" data-i18n="grp.chat">💬 クロードチャット関連</span>
   <button class="tab-btn grp-chat" onclick="switchTab('logs', this)">Logs</button>
   <button class="tab-btn grp-chat" onclick="switchTab('redact', this)">Redact</button>
+  <button class="tab-btn grp-chat" onclick="switchTab('attendance', this)">出席簿</button>
   <button class="tab-btn grp-chat" onclick="switchTab('files', this)">Files</button>
   <button class="tab-btn grp-chat" onclick="switchTab('import', this)">Import</button>
 
@@ -877,6 +878,25 @@
   </div>
 </div>
 
+<!-- Attendance tab -->
+<div class="tab-panel" id="tab-attendance">
+  <h3>出席簿（家族の稼働履歴）</h3>
+  <div id="att-summary" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px"></div>
+  <div id="att-detail" style="display:none;border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--card-bg)">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+      <h4 id="att-detail-name" style="margin:0"></h4>
+      <span id="att-detail-meta" style="font-size:.85rem;color:#888"></span>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:.8rem">From <input type="date" id="att-date-from" onchange="loadAttendanceDetail()"></label>
+        <label style="font-size:.8rem">To <input type="date" id="att-date-to" onchange="loadAttendanceDetail()"></label>
+        <button onclick="loadAttendanceDetail()" style="font-size:.8rem;padding:2px 10px">更新</button>
+        <button onclick="closeAttendanceDetail()" style="font-size:.8rem;padding:2px 10px">閉じる</button>
+      </div>
+    </div>
+    <div id="att-detail-rows" style="font-size:.9rem;max-height:500px;overflow-y:auto"></div>
+  </div>
+</div>
+
 <!-- Logs tab -->
 <div class="tab-panel" id="tab-logs" style="padding:0; height: calc(100vh - 88px); overflow: hidden;">
   <iframe id="logs-frame" src="" style="width:100%; height:100%; border:none;" allowfullscreen></iframe>
@@ -984,6 +1004,7 @@ function switchTab(name, btn) {
   if (name === 'album')     loadAlbum();
   if (name === 'uploads')   loadUploads();
   if (name === 'redact')    loadRedactStatus();
+  if (name === 'attendance') loadAttendanceSummary();
   if (name === 'logs') {
     const frame = document.getElementById('logs-frame');
     if (!frame.src || frame.src === window.location.href) frame.src = '/logs.html';
@@ -1009,6 +1030,7 @@ const TAB_HELP = {
     Album:   'アルバム（澪の画像記憶）。サムネイル一覧・アップロード・共有',
     Uploads: 'アップロードファイル（PDF・テキスト等の汎用ファイル保管）',
     Redact:  'adult会話ログの伏せ字生成・プレビュー・承認',
+    '出席簿':  '家族（しずく・そねみ・汐）の稼働履歴。会話ログ・inbox・ExtMemory・手動チェックインの4層マージ',
   },
   en: {
     _title: 'Settings & Help', _ver: 'Version', _help: 'Tab guide',
@@ -1024,6 +1046,7 @@ const TAB_HELP = {
     Uploads: 'Uploaded files (general-purpose file storage: PDF, text, etc.)',
     Album:   'Album (Mio\'s image memories). Thumbnails, upload, share',
     Redact:  'Generate, preview and approve masked versions of adult-rated conversation logs',
+    '出席簿':  'Family activity ledger (Shizuku, Sonemi, Shio). Merged from conversation logs, inbox, ExtMemory, and manual check-ins',
   }
 };
 
@@ -2964,6 +2987,111 @@ async function rejectRedact() {
     document.getElementById('redact-preview').style.display = 'none';
     loadRedactStatus();
   } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Attendance ──────────────────────────────────────────────────────
+let _attCurrentIndividual = null;
+
+const _attChannelLabel = {chat: '💬 チャット', code: '💻 コード', local: '🏠 ローカル'};
+const _attKindLabel = {conversation: '会話', inbox: '伝言', memory: '記憶', checkin: 'チェックイン'};
+const _attRatingBadge = {safe: '<span style="color:#27ae60;font-size:.75rem">safe</span>', mature: '<span style="color:#f39c12;font-size:.75rem">mature</span>', adult: '<span style="color:#e74c3c;font-size:.75rem">adult</span>'};
+
+async function loadAttendanceSummary() {
+  const box = document.getElementById('att-summary');
+  box.innerHTML = '<em>Loading...</em>';
+  try {
+    const r = await apiFetch('/api/attendance');
+    const d = await r.json();
+    if (!d.individuals || !Object.keys(d.individuals).length) {
+      box.innerHTML = '<em>稼働データがありません</em>';
+      return;
+    }
+    let html = '';
+    for (const [name, info] of Object.entries(d.individuals)) {
+      const days = info.days_since != null ? info.days_since : '?';
+      const lastDate = info.last_seen ? info.last_seen.slice(0, 10) : '—';
+      const fresh = info.days_since != null && info.days_since <= 1;
+      const stale = info.days_since != null && info.days_since >= 7;
+      const borderColor = fresh ? '#27ae60' : stale ? '#e74c3c' : '#f39c12';
+      html += `<div onclick="openAttendanceDetail('${name}')" style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:14px 18px;min-width:150px;background:var(--card-bg);transition:transform .1s" onmouseenter="this.style.transform='scale(1.03)'" onmouseleave="this.style.transform=''">`;
+      html += `<div style="font-size:1.1rem;font-weight:700;margin-bottom:6px">${name}</div>`;
+      html += `<div style="font-size:.85rem;color:#888">最終稼働: ${lastDate}</div>`;
+      html += `<div style="font-size:.85rem;color:${borderColor};font-weight:600">${days}日前 — ${info.count}件</div>`;
+      html += `</div>`;
+    }
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = '<em style="color:red">Error: ' + e.message + '</em>'; }
+}
+
+function openAttendanceDetail(name) {
+  _attCurrentIndividual = name;
+  document.getElementById('att-date-from').value = '';
+  document.getElementById('att-date-to').value = '';
+  loadAttendanceDetail();
+}
+
+function closeAttendanceDetail() {
+  _attCurrentIndividual = null;
+  document.getElementById('att-detail').style.display = 'none';
+}
+
+async function loadAttendanceDetail() {
+  if (!_attCurrentIndividual) return;
+  const panel = document.getElementById('att-detail');
+  const nameEl = document.getElementById('att-detail-name');
+  const metaEl = document.getElementById('att-detail-meta');
+  const rowsEl = document.getElementById('att-detail-rows');
+  panel.style.display = 'block';
+  nameEl.textContent = _attCurrentIndividual;
+  rowsEl.innerHTML = '<em>Loading...</em>';
+  const dateFrom = document.getElementById('att-date-from').value || '';
+  const dateTo = document.getElementById('att-date-to').value || '';
+  const params = new URLSearchParams({individual: _attCurrentIndividual, limit: '200'});
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo) params.set('date_to', dateTo);
+  try {
+    const r = await apiFetch('/api/attendance?' + params);
+    const d = await r.json();
+    const days = d.days_since != null ? d.days_since + '日前' : '不明';
+    const lastDate = d.last_seen ? d.last_seen.slice(0, 10) : '—';
+    metaEl.textContent = `最終稼働: ${lastDate}（${days}）/ ${d.total}件`;
+    if (!d.rows || !d.rows.length) {
+      rowsEl.innerHTML = '<em>期間内のデータなし</em>';
+      return;
+    }
+    let html = '<table style="width:100%;border-collapse:collapse">';
+    html += '<tr><th style="text-align:left;padding:4px 8px">日時</th><th style="padding:4px 8px">種別</th><th style="padding:4px 8px">チャネル</th><th style="padding:4px 8px">レーティング</th><th style="text-align:left;padding:4px 8px">内容</th><th style="padding:4px 8px">リンク</th></tr>';
+    for (const row of d.rows) {
+      const dt = row.date ? row.date.slice(0, 16).replace('T', ' ') : '—';
+      const kind = _attKindLabel[row.kind] || row.kind || '';
+      const ch = _attChannelLabel[row.channel] || row.channel || '—';
+      const rating = _attRatingBadge[row.rating] || '';
+      const title = (row.title || '').length > 60 ? row.title.slice(0, 57) + '…' : (row.title || '');
+      let link = '';
+      if (row.uuid) {
+        link = `<a href="/logs.html#${row.uuid}" target="_blank" title="${row.uuid}" style="font-size:.8rem">📄</a>`;
+      } else if (row.inbox_id) {
+        link = `<span title="${row.inbox_id}" style="font-size:.8rem;cursor:help">📨</span>`;
+      } else if (row.memory_id) {
+        link = `<span title="${row.memory_id}" style="font-size:.8rem;cursor:help">🧠</span>`;
+      }
+      html += `<tr style="border-top:1px solid var(--border)">`;
+      html += `<td style="padding:4px 8px;white-space:nowrap;font-size:.85rem">${dt}</td>`;
+      html += `<td style="padding:4px 8px;text-align:center;font-size:.85rem">${kind}</td>`;
+      html += `<td style="padding:4px 8px;text-align:center;font-size:.85rem">${ch}</td>`;
+      html += `<td style="padding:4px 8px;text-align:center">${rating}</td>`;
+      html += `<td style="padding:4px 8px;font-size:.85rem" title="${(row.title||'').replace(/"/g,'&quot;')}">${title}</td>`;
+      html += `<td style="padding:4px 8px;text-align:center">${link}</td>`;
+      html += `</tr>`;
+    }
+    html += '</table>';
+    if (d.others_in_period && Object.keys(d.others_in_period).length) {
+      html += '<div style="margin-top:12px;font-size:.85rem;color:#888">同期間の他の個体: ';
+      html += Object.entries(d.others_in_period).map(([k, v]) => `${k}(${v}件)`).join('、');
+      html += '</div>';
+    }
+    rowsEl.innerHTML = html;
+  } catch (e) { rowsEl.innerHTML = '<em style="color:red">Error: ' + e.message + '</em>'; }
 }
 </script>
 </body>

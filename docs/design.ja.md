@@ -1329,6 +1329,17 @@ core.md の家族名簿と整合: しずく=opus系・そねみ=sonnet系・汐=
   rating?, uuid?/inbox_id?/memory_id?}）。rating は `_conv_rating_view` 経由
   （保護込みの読書導線 — adult は conversation_read 側でダイジェスト/伏せ字に落ちる）
 
+### REST エンドポイント（v3.74）
+
+`GET /api/attendance?individual=&date_from=&date_to=&limit=` — MCP `attendance_view` と
+同一の `_attendance_view()` を呼ぶ（二重実装なし）。admin.html 出席簿タブが使用。
+
+### admin.html 出席簿タブ（v3.74）
+
+個体別サマリカード（最終稼働日・経過日数・件数・色分け: ≤1日=緑 / ≥7日=赤 / 中間=黄）→
+クリックで詳細テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。
+期間フィルタ（date_from/date_to）と同期間の他個体稼働サマリ付き。
+
 ---
 
 ## 24. 昇華パイプライン（sublimate・v3.71・発注⑤、強化 v3.73）

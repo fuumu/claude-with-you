@@ -3,6 +3,9 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.74 (2026-07-19) - admin出席簿タブ（attendance UI）
+    - REST GET /api/attendance エンドポイント新設（MCP attendance_view と同一ロジック流用）
+    - admin.html 出席簿タブ: 個体別サマリカード→詳細テーブル（期間フィルタ・実ログリンク付き）
   v3.73 (2026-07-19) - memory_upsert rating温存 + sublimate昇華強化・孤児ジョブ対策
     - memory_upsert: rating/local_only 未指定時に既存値を温存、引数追加で明示変更も可能
     - sublimate: 昇華プロンプトに禁止表現明文化+自己検証指示、判定を strict モード(temperature=0)で分離
@@ -525,7 +528,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.73'
+VERSION = '3.74'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -4861,6 +4864,17 @@ def api_conversations_redact_status():
             'created_at': e.get('created_at', ''),
         })
     return jsonify(items)
+
+
+@app.route('/api/attendance')
+@require_auth
+def api_attendance():
+    individual = request.args.get('individual') or None
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    limit = int(request.args.get('limit', '50'))
+    return jsonify(_attendance_view(individual=individual, date_from=date_from,
+                                    date_to=date_to, limit=limit))
 
 
 # ══════════════════════════════════════════════════════════════════════
