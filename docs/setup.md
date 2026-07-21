@@ -184,7 +184,7 @@ For an English-speaking new environment, set `MIO_SEED_LANG=en` in `.env` before
 1. Replace the `<...>` placeholders in `core_stable.md` (identity) and `core_infra.md` (host/URL/version)
    — edit via the admin.html CoreMem tab or the MCP `CoreMem_save` tool
 2. Adjust the operating rules in `core_rules.md` as needed
-3. `protocol_guide.md` (the 31-tool MCP guide) works as-is (install-agnostic)
+3. `protocol_guide.md` (the 34-tool MCP guide) works as-is (install-agnostic)
 
 > See `memory/skeleton/README.md` for the full rationale and policy.
 

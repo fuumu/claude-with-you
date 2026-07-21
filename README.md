@@ -47,7 +47,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.66","mcp_tool_count":31}
+# {"status":"ok","version":"3.75","mcp_tool_count":34}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -270,7 +270,7 @@ inbox_check(to="chat") → {"count": 1, "ids": ["inbox_..."], "server_time": "..
 inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 ```
 
-### Batch tools (1)
+### Batch tools (2)
 
 | Tool | Description | Key args |
 |------|-------------|----------|
@@ -279,7 +279,7 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 
 `backend` defaults to `anthropic` when `ANTHROPIC_API_KEY` is set, otherwise `lmstudio` (local LLM). The same batch auto-starts after each ZIP import. The rating batch also runs nightly for unrated conversations.
 
-### Album tools (4, v3.52)
+### Album tools (5, v3.52)
 
 | Tool | Description | Key args |
 |------|-------------|----------|
@@ -319,13 +319,23 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | DELETE | `/api/coremem/<name>` | Delete UserCoreMemory file (all versions) |
 | GET | `/api/conversations/` | Search conversations |
 | GET | `/api/conversations/<uuid>` | Get conversation |
+| GET | `/api/conversations/index` | Conversation index (pagination, search, v3.34) |
+| POST | `/api/conversations/index/rebuild` | Rebuild conversation index (v3.34) |
 | GET | `/api/conversations/<uuid>/annotations` | List a conversation's annotations (read-only, v3.42) |
 | POST | `/api/conversations/<uuid>/digest` | Generate/retrieve conversation digest (`?force=true&safe_mode=true`, v3.53) |
+| POST | `/api/conversations/<uuid>/redact` | Generate redacted version (v3.69) |
+| GET | `/api/conversations/<uuid>/redacted` | Get redacted version (v3.69) |
+| POST | `/api/conversations/<uuid>/redact/approve` | Approve redaction (v3.69) |
+| POST | `/api/conversations/<uuid>/redact/reject` | Reject redaction (v3.69) |
+| GET | `/api/conversations/redact-status` | List redaction statuses (v3.69) |
 | PATCH | `/api/conversations/<uuid>/rating` | Set conversation rating (safe/mature/adult, v3.56; accepts reason/source v3.68; clears skip_reason v3.70) |
 | GET | `/api/rating-batch/status` | Rating batch status (incl. pending, index_counts, skip_reasons, v3.68/v3.70) |
 | POST | `/api/rating-batch/start` | Start the rating batch (v3.68) |
 | GET | `/api/inbox` | List inbox messages |
 | POST | `/api/inbox` | Post a message |
+| GET | `/api/inbox/<id>` | Get individual message (v3.57) |
+| PATCH | `/api/inbox/<id>` | Partial update of inbox message (v3.57) |
+| DELETE | `/api/inbox/<id>` | Delete inbox message (v3.57) |
 | PATCH | `/api/inbox/<id>/read` | Mark as read |
 | PATCH | `/api/inbox/<id>/unread` | Mark as unread |
 | PATCH | `/api/inbox/<id>/persistent` | Toggle persistent flag |
@@ -351,6 +361,8 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | POST | `/api/uploads/` | Upload file (multipart/form-data) |
 | DELETE | `/api/uploads/<id>` | Delete uploaded file |
 | GET | `/api/attendance` | Attendance ledger (`?individual=&date_from=&date_to=&limit=`, v3.74) |
+| GET | `/api/batch/status` | Summary layer batch status |
+| POST | `/api/batch/start` | Start summary layer batch |
 | GET | `/health` | Health check |
 
 ---
@@ -585,6 +597,8 @@ claude-with-you/
 
 **Design phase**
 - OpenWebUI automatic sync — API polling for periodic sync (manual import implemented in v3.66, [design doc](docs/openwebui-sync.md))
+- SysMemory dump versioning
+- mio-memory direct auth for Claude Code
 
 **Implemented (v3.9–v3.75)**
 - Inbox auto-sublimation pipeline + admin UI improvements (v3.75) — ① auto-sublimation: `inbox_post` to=chat with title containing `【生】` triggers automatic raw backup to ExtMemory (rating=adult, tags=バカンス日記) + placeholder swap + async sublimate; on completion title becomes `【未承認】` (success) or `【要人手】` (needs human); raw text never stays in inbox ② admin inbox: timed-standing (expires_at) display (remaining days, color-coded, near-expiry in red) + action buttons (change deadline, promote to permanent, demote to timed, clear expiry) ③ admin attendance: uuid/memory_id/inbox_id now clickable links navigating to admin Logs/Memory/Inbox tabs

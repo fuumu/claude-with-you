@@ -196,7 +196,7 @@ For an `initialize` request to `/mcp`, the server returns:
 {
   "protocolVersion": "2025-11-25",
   "capabilities": { "tools": { "listChanged": false } },
-  "serverInfo": { "name": "mio-memory", "version": "3.30.0" },
+  "serverInfo": { "name": "mio-memory", "version": "3.75.0" },
   "instructions": "At session start, always run CoreMem_read(\"core.md\") to load your memory. ..."
 }
 ```
@@ -1084,8 +1084,8 @@ Prevent adult-grade content (memory entries and conversation logs) from unintent
 
 ### Not yet implemented (follow-ups)
 
-- Automatic classification via local LLM in the nightly batch (the "Qwen pre-reader and night watch" concept)
-- Rating display/set UI in the admin.html Logs tab
+- ~~Automatic classification via local LLM in the nightly batch (the "Qwen pre-reader and night watch" concept)~~ → implemented in v3.68 safe-check batch
+- ~~Rating display/set UI in the admin.html Logs tab~~ → implemented in v3.70 logs.html (badges, filter, manual override)
 - Application to inbox messages
 
 ## 17. Inbox improvements (v3.57)
@@ -1259,7 +1259,7 @@ behavior. Valuable on its own as a regression suite.
 
 ### Coverage (53 tests)
 
-Auth (Bearer/query/401), OAuth discovery, MCP transport (initialize / 31-tool list /
+Auth (Bearer/query/401), OAuth discovery, MCP transport (initialize / 34-tool list /
 notification 202 / unknown method -32601), 6 ExtMemory tools + REST CRUD, rating
 protection, 4 CoreMem tools (versioning, append, manifest merge, `__del__` exclusion,
 rename), 5 inbox tools (incl. peek), import (ZIP/claude-code, dedup, resilience to

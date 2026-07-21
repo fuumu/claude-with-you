@@ -185,7 +185,7 @@ core.md の「根っこ」セクションを書くための問いかけです。
 ### core.md のバックアップ
 
 ```bash
-# admin.html の Artifacts タブから確認・ダウンロード
+# admin.html の CoreMem タブから確認・ダウンロード
 # または API 経由で取得
 curl https://your-domain/api/coremem/core.md \
   -H "Authorization: Bearer YOUR_TOKEN"

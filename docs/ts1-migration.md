@@ -92,6 +92,6 @@ to match production. The TS implementation is utf-8 fixed (production-compatible
 
 ## Open questions (to discuss with Jun)
 
-- When to start ring 1 (TS-0 / ring 0 only provide the decision material)
-- When to deploy the front proxy in production (around rings 2–3 seems right)
+- ~~When to start ring 1~~ → done (2026-07-13)
+- ~~When to deploy the front proxy in production (around rings 2–3 seems right)~~ → rings through 3 done (2026-07-14)
 - Node runtime image choice for the NAS Docker setup

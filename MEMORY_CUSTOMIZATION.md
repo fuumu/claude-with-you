@@ -182,7 +182,8 @@ Questions to help you write the core values section of core.md.
 ### Backing up core.md
 
 ```bash
-# Via API
+# Check and download from the admin.html CoreMem tab
+# Or via API
 curl https://your-domain/api/coremem/core.md \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```

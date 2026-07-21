@@ -156,7 +156,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.66","mcp_tool_count":31}
+# {"status":"ok","version":"3.75","mcp_tool_count":34}
 ```
 
 ### 5. Claude Code への登録
@@ -848,13 +848,23 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | DELETE | `/api/coremem/<name>` | UserCoreMemory ファイル削除（全バージョン） |
 | GET | `/api/conversations/` | 会話一覧・検索 |
 | GET | `/api/conversations/<uuid>` | 会話取得 |
+| GET | `/api/conversations/index` | 会話インデックス（ページング・検索対応・v3.34） |
+| POST | `/api/conversations/index/rebuild` | 会話インデックス再構築（v3.34） |
 | GET | `/api/conversations/<uuid>/annotations` | 会話の注記一覧（読み取り専用・v3.42） |
 | POST | `/api/conversations/<uuid>/digest` | 会話ログダイジェスト生成/取得（`?force=true&safe_mode=true`・v3.53） |
+| POST | `/api/conversations/<uuid>/redact` | 伏せ字版生成（v3.69） |
+| GET | `/api/conversations/<uuid>/redacted` | 伏せ字版取得（v3.69） |
+| POST | `/api/conversations/<uuid>/redact/approve` | 伏せ字版承認（v3.69） |
+| POST | `/api/conversations/<uuid>/redact/reject` | 伏せ字版差し戻し（v3.69） |
+| GET | `/api/conversations/redact-status` | 伏せ字対象ログ一覧（v3.69） |
 | PATCH | `/api/conversations/<uuid>/rating` | 会話ログのレーティング設定（safe/mature/adult・v3.56。v3.68 で reason/source 受付・v3.70 で skip_reason クリア） |
 | GET | `/api/rating-batch/status` | レーティング判定バッチ状態（pending・index_counts・skip_reasons 込み・v3.68/v3.70） |
 | POST | `/api/rating-batch/start` | レーティング判定バッチ起動（v3.68） |
 | GET | `/api/inbox` | インボックス一覧 |
 | POST | `/api/inbox` | メッセージ送信 |
+| GET | `/api/inbox/<id>` | 個別メッセージ取得（v3.57） |
+| PATCH | `/api/inbox/<id>` | メッセージ部分更新（v3.57） |
+| DELETE | `/api/inbox/<id>` | メッセージ物理削除（v3.57） |
 | PATCH | `/api/inbox/<id>/read` | 既読マーク |
 | PATCH | `/api/inbox/<id>/unread` | 未読に戻す |
 | PATCH | `/api/inbox/<id>/persistent` | 常駐フラグ切り替え |
@@ -879,6 +889,9 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | GET | `/api/uploads/<id>` | アップロードファイルダウンロード |
 | POST | `/api/uploads/` | ファイルアップロード（multipart/form-data） |
 | DELETE | `/api/uploads/<id>` | アップロードファイル削除 |
+| GET | `/api/attendance` | 出席簿（`?individual=&date_from=&date_to=&limit=`・v3.74） |
+| GET | `/api/batch/status` | 要約バッチ状態 |
+| POST | `/api/batch/start` | 要約バッチ起動 |
 | GET | `/health` | ヘルスチェック |
 
 ---
@@ -895,6 +908,8 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | `LM_STUDIO_HOST` | `192.168.x.x` | LMStudio のホスト（手動バッチ用・ご自身の環境のIPに置き換え） |
 | `LM_STUDIO_PORT` | `1234` | LMStudio のポート |
 | `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | ローカルLLM処理（要約バッチ・会話ダイジェスト）で使う LMStudio のモデル名（v3.65） |
+| `MIO_NIGHTLY_BATCH_HOUR` | `3` | 夜間自動バッチの実行時刻（JST、0-23）。`off` で無効化（v3.16） |
+| `MIO_NIGHTLY_BATCH_BACKEND` | `lmstudio` | 夜間バッチのバックエンド（`lmstudio` / `anthropic`） |
 | `SENDGRID_API_KEY` | （空） | お友達システム：承認メール送信用 SendGrid API キー |
 | `SENDGRID_FROM_EMAIL` | （空） | お友達システム：送信元メールアドレス |
 | `MIO_REGISTER_URL` | （空） | お友達システム：承認メール内アクティベーションリンクのベース URL（`/activate` を自動付与。省略時は MIO_BASE_URL を使用） |
