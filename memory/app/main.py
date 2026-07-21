@@ -3,6 +3,13 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.75 (2026-07-21) - inbox自動昇華パイプライン + admin UI改善
+    - inbox自動昇華: 【生】タイトルのchat宛inbox着弾時、原文をExtMemory(rating=adult)に即時退避
+      →プレースホルダ化→非同期sublimate→結果でinbox本文差替え(【未承認】/【要人手】)
+      処理中はinbox_check/readで生テキストが返らない（要件4: 窓を塞ぐ）
+    - admin inbox: 期間常駐(expires_at)の表示（残り日数・期限切れ間近は色分け）＋
+      期限変更・無期限昇格・期間化・期限解除の操作ボタン
+    - admin出席簿: uuid/memory_id/inbox_idのリンク化（admin内タブ遷移）
   v3.74 (2026-07-19) - admin出席簿タブ（attendance UI）
     - REST GET /api/attendance エンドポイント新設（MCP attendance_view と同一ロジック流用）
     - admin.html 出席簿タブ: 個体別サマリカード→詳細テーブル（期間フィルタ・実ログリンク付き）
@@ -528,7 +535,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.74'
+VERSION = '3.75'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1780,6 +1787,16 @@ def _post_inbox_message(to, title, body, from_='code', persistent=False,
     os.makedirs(dir_, exist_ok=True)
     now   = now_jst()
     msg_id = f'inbox_{now.replace(":", "").replace("-", "").replace("T", "_")[:15]}_{secrets.token_hex(4)}'
+
+    # 自動昇華パイプライン（v3.75）: 【生】を含むchat宛は即時退避→プレースホルダ化→非同期昇華
+    sublimate_trigger = _inbox_needs_sublimate(to, title)
+    original_body = body
+    memory_id = None
+    if sublimate_trigger:
+        memory_id = _create_raw_backup_entry(title, original_body, msg_id, now)
+        body = f'【処理中】昇華処理を実行中です。原文は ExtMemory `{memory_id}` に退避済みです。'
+        title = title.replace(_SUBLIMATE_TRIGGER, '【処理中】')
+
     msg = {"id": msg_id, "to": to, "from": from_, "title": title, "body": body,
            "from_model": _norm_model_field(from_model),
            "to_model": _norm_model_field(to_model),
@@ -1788,6 +1805,12 @@ def _post_inbox_message(to, title, body, from_='code', persistent=False,
            "expires_at": expires_at or None}
     with open(os.path.join(dir_, f'{msg_id}.json'), 'w', encoding='utf-8') as f:
         json.dump(msg, f, ensure_ascii=False, indent=2)
+
+    if sublimate_trigger:
+        t = threading.Thread(target=_run_inbox_sublimate,
+                             args=(msg_id, original_body, memory_id), daemon=True)
+        t.start()
+
     return msg
 
 def _mark_inbox_read(msg_id, peek=False):
@@ -4566,6 +4589,87 @@ def _sublimate_text(text):
             f'{len(parts)}/{len(chunks)}チャンク完了。'
             'msg_from/msg_to で範囲を狭めて再実行してください')
     return result
+
+
+# ── inbox 自動昇華パイプライン（v3.75）─────────────────────────────────
+_SUBLIMATE_TRIGGER = '【生】'
+
+def _inbox_needs_sublimate(to, title):
+    return to == 'chat' and _SUBLIMATE_TRIGGER in (title or '')
+
+def _create_raw_backup_entry(title, body, inbox_id, created_at):
+    """原文を ExtMemory に rating=adult で退避し、entry_id を返す"""
+    ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+    entry_id = f'{ts}_バカンス日記'
+    entry = {
+        'id': entry_id, 'created_at': now_jst(), 'updated_at': now_jst(),
+        'title': title,
+        'body': f'<!-- inbox自動退避: {inbox_id} / {created_at} -->\n\n{body}',
+        'tags': ['バカンス日記', '自動退避'],
+        'source_thread': '', 'importance': 'normal',
+        'author': 'mio', 'deleted': False,
+        'rating': 'adult', 'local_only': True,
+    }
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(os.path.join(DATA_DIR, f'{entry_id}.json'), 'w', encoding='utf-8') as f:
+        json.dump(entry, f, ensure_ascii=False, indent=2)
+    append_oplog('create', entry_id, None, entry)
+    rebuild_index()
+    return entry_id
+
+def _update_inbox_file(msg_id, updates):
+    """inbox メッセージファイルを部分更新する"""
+    path = _find_inbox_file(msg_id)
+    if not path:
+        return
+    with open(path, encoding='utf-8') as f:
+        msg = json.load(f)
+    msg.update(updates)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(msg, f, ensure_ascii=False, indent=2)
+
+def _run_inbox_sublimate(msg_id, original_body, memory_id):
+    """バックグラウンドで昇華処理を実行し、inbox メッセージを更新する"""
+    try:
+        _log_info(f'inbox sublimate start: {msg_id} → memory {memory_id}')
+        result = _sublimate_text(original_body)
+        if 'error' in result:
+            _update_inbox_file(msg_id, {
+                'title_prefix_swap': None,
+                'title': _find_inbox_title(msg_id).replace('【処理中】', '【要人手】'),
+                'body': f'昇華処理でエラーが発生しました。\n原文は ExtMemory `{memory_id}` に退避済みです。\n\nエラー: {result["error"]}',
+            })
+            _log_info(f'inbox sublimate error: {msg_id}: {result["error"]}')
+            return
+        if result.get('needs_human') or result.get('rating') == 'adult':
+            _update_inbox_file(msg_id, {
+                'title': _find_inbox_title(msg_id).replace('【処理中】', '【要人手】'),
+                'body': f'機械昇華では mature 以下に着地できませんでした。\n原文は ExtMemory `{memory_id}` に退避済みです。\n人手での昇華をお願いします。\n\nレーティング: {result.get("rating")} / 理由: {result.get("rating_reason", "")}',
+            })
+            _log_info(f'inbox sublimate needs_human: {msg_id}')
+        else:
+            sublimated = result.get('sublimated', '')
+            _update_inbox_file(msg_id, {
+                'title': _find_inbox_title(msg_id).replace('【処理中】', '【未承認】'),
+                'body': f'{sublimated}\n\n---\n原文 ExtMemory ID: `{memory_id}`\nレーティング: {result.get("rating")} / チャンク: {result.get("chunks")} / 試行: {result.get("attempts")}',
+            })
+            _log_info(f'inbox sublimate done: {msg_id} → {result.get("rating")}')
+    except Exception as exc:
+        _log_info(f'inbox sublimate exception: {msg_id}: {exc}')
+        try:
+            _update_inbox_file(msg_id, {
+                'title': _find_inbox_title(msg_id).replace('【処理中】', '【要人手】'),
+                'body': f'昇華処理中に例外が発生しました。\n原文は ExtMemory `{memory_id}` に退避済みです。\n\n例外: {exc}',
+            })
+        except Exception:
+            pass
+
+def _find_inbox_title(msg_id):
+    path = _find_inbox_file(msg_id)
+    if not path:
+        return ''
+    with open(path, encoding='utf-8') as f:
+        return json.load(f).get('title', '')
 
 
 def _conv_text_for_sublimation(uuid, msg_from=None, msg_to=None):

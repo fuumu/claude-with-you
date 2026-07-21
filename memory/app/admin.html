@@ -445,6 +445,8 @@
     .inbox-item-title { font-size:.9rem; color:#c8d8e8; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .inbox-badge-unread { background:#7ec8e3; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
     .inbox-badge-persistent { background:#f1c40f; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
+    .inbox-badge-timed { background:#e67e22; color:#0f0f1a; border-radius:4px; font-size:.7rem; padding:1px 5px; flex-shrink:0; }
+    .inbox-badge-timed.expiring { background:#e74c3c; color:#fff; }
     .inbox-item-meta { font-size:.75rem; color:#5a6a7a; }
     .inbox-empty { color:#5a6a7a; font-size:.88rem; text-align:center; padding:2rem 0; }
     .inbox-actions { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1rem; }
@@ -1428,6 +1430,25 @@ function openConvInLogs(uuid) {
   if (btn) switchTab('logs', btn);
 }
 
+async function navigateToInbox(inboxId) {
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Inbox'));
+  if (btn) switchTab('inbox', btn);
+  if (!_inboxData.find(x => x.id === inboxId)) {
+    try {
+      const res = await apiFetch('/api/inbox/' + inboxId);
+      const msg = await res.json();
+      _inboxData.push(msg);
+    } catch { return; }
+  }
+  openInboxModal(inboxId);
+}
+
+function navigateToMemory(memoryId) {
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Memory'));
+  if (btn) switchTab('memory', btn);
+  openMemory(memoryId);
+}
+
 // ── Import ────────────────────────────────────────────────────────────
 async function loadImportStatus() {
   try {
@@ -1771,13 +1792,23 @@ function openInboxModal(id) {
   const ts      = (m.created_at || '').slice(0, 19).replace('T', ' ');
   const fromStr = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
   const toStr   = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
+  const expiry  = _inboxExpiryInfo(m);
+  const isTimed = expiry && !expiry.expired;
+  let metaText  = `${fromStr} → ${toStr}　${ts}`;
+  if (m.persistent) metaText += '　🔒 無期限常駐';
+  else if (isTimed) metaText += `　⏳ 期間常駐 ${expiry.label}（${expiry.date}まで）`;
+  else if (expiry && expiry.expired) metaText += `　⌛ 期限切れ（${expiry.date}）`;
   document.getElementById('modal-title').textContent = m.title || '';
-  document.getElementById('modal-meta').textContent  = `${fromStr} → ${toStr}　${ts}`;
+  document.getElementById('modal-meta').textContent  = metaText;
   const btns = [
-    !m.read && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(id)}');closeModal()">既読</button>` : '',
-    m.read  && !m.persistent ? `<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(id)}');closeModal()">未読に戻す</button>` : '',
-    !m.persistent ? `<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(id)}',true);closeModal()">常駐ON</button>` : '',
+    !m.read && !m.persistent && !isTimed ? `<button class="inbox-action-btn" onclick="inboxMarkRead('${esc(id)}');closeModal()">既読</button>` : '',
+    m.read  && !m.persistent && !isTimed ? `<button class="inbox-action-btn" onclick="inboxMarkUnread('${esc(id)}');closeModal()">未読に戻す</button>` : '',
+    !m.persistent && !isTimed ? `<button class="inbox-action-btn" onclick="inboxSetPersistent('${esc(id)}',true);closeModal()">無期限常駐</button>` : '',
     m.persistent  ? `<button class="inbox-action-btn danger" onclick="inboxSetPersistent('${esc(id)}',false);closeModal()">常駐OFF</button>` : '',
+    m.persistent  ? `<button class="inbox-action-btn" onclick="inboxPromptTtl('${esc(id)}','demote')">期間化</button>` : '',
+    isTimed ? `<button class="inbox-action-btn" onclick="inboxPromoteToPerma('${esc(id)}')">無期限昇格</button>` : '',
+    isTimed ? `<button class="inbox-action-btn" onclick="inboxPromptTtl('${esc(id)}','extend')">期限変更</button>` : '',
+    isTimed ? `<button class="inbox-action-btn danger" onclick="inboxClearExpiry('${esc(id)}')">期限解除</button>` : '',
   ].filter(Boolean).join('');
   const body = document.getElementById('modal-body');
   body.className = 'modal-body md-body';
@@ -1807,10 +1838,21 @@ function updateInboxBadge() {
   else             { badge.style.display = 'none'; }
 }
 
+function _inboxExpiryInfo(m) {
+  if (!m.expires_at) return null;
+  const exp = new Date(m.expires_at);
+  const now = new Date();
+  const diffMs = exp - now;
+  const days = Math.ceil(diffMs / 86400000);
+  const expired = diffMs <= 0;
+  const label = expired ? '期限切れ' : days <= 0 ? '今日まで' : `残${days}日`;
+  return { expired, days, label, date: m.expires_at.slice(0, 10) };
+}
+
 function renderInbox() {
   const list = document.getElementById('inbox-list');
   let data = _inboxFilter === 'all' ? _inboxData : _inboxData.filter(m => m.to === _inboxFilter);
-  if (_inboxUnreadOnly) data = data.filter(m => !m.read || m.persistent);
+  if (_inboxUnreadOnly) data = data.filter(m => !m.read || m.persistent || (m.expires_at && !_inboxExpiryInfo(m).expired));
   const sorted = [...data].sort((a, b) => {
     const c = (a.created_at || '').localeCompare(b.created_at || '');
     return _inboxSortAsc ? c : -c;
@@ -1829,10 +1871,18 @@ function renderInbox() {
 
   function renderItem(m, depth) {
     const ts          = (m.created_at || '').slice(0, 19).replace('T', ' ');
-    const stateCls    = m.persistent ? 'persistent' : (!m.read ? 'unread' : '');
-    const badge       = m.persistent
-      ? '<span class="inbox-badge-persistent">常駐</span>'
-      : (!m.read ? '<span class="inbox-badge-unread">未読</span>' : '');
+    const expiry      = _inboxExpiryInfo(m);
+    const isTimed     = expiry && !expiry.expired;
+    const stateCls    = m.persistent ? 'persistent' : isTimed ? 'persistent' : (!m.read ? 'unread' : '');
+    let badge = '';
+    if (m.persistent) {
+      badge = '<span class="inbox-badge-persistent">常駐</span>';
+    } else if (isTimed) {
+      const cls = expiry.days <= 3 ? 'inbox-badge-timed expiring' : 'inbox-badge-timed';
+      badge = `<span class="${cls}" title="期限: ${expiry.date}">期間常駐 ${expiry.label}</span>`;
+    } else if (!m.read) {
+      badge = '<span class="inbox-badge-unread">未読</span>';
+    }
     const fromStr     = (m.from || '?') + (m.from_model ? ` (${m.from_model})` : '');
     const toStr       = (m.to   || '?') + (m.to_model   ? ` (${m.to_model})`   : '');
     const indent      = depth > 0 ? ` style="margin-left:${depth * 1.25}rem"` : '';
@@ -1887,6 +1937,57 @@ async function inboxSetPersistent(id, value) {
     const updated = await res.json();
     Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
     updateInboxBadge(); renderInbox();
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function inboxPromoteToPerma(id) {
+  try {
+    const res = await apiFetch(`/api/inbox/${id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({persistent: true})
+    });
+    const updated = await res.json();
+    Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
+    updateInboxBadge(); renderInbox(); closeModal();
+    showToast('無期限常駐に昇格しました');
+  } catch(e) { showToast('通信エラー'); }
+}
+
+async function inboxClearExpiry(id) {
+  try {
+    const res = await apiFetch(`/api/inbox/${id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({expires_at: null})
+    });
+    const updated = await res.json();
+    Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
+    updateInboxBadge(); renderInbox(); closeModal();
+    showToast('期限を解除しました');
+  } catch(e) { showToast('通信エラー'); }
+}
+
+function inboxPromptTtl(id, mode) {
+  const label = mode === 'demote' ? '期間化: 期限日数を入力' : '新しい期限日数を入力';
+  const input = prompt(label + '（日数、例: 7）');
+  if (!input) return;
+  const days = parseInt(input, 10);
+  if (isNaN(days) || days < 1) { showToast('正の整数を入力してください'); return; }
+  inboxSetTtl(id, days);
+}
+
+async function inboxSetTtl(id, days) {
+  try {
+    const res = await apiFetch(`/api/inbox/${id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ttl_days: days})
+    });
+    const updated = await res.json();
+    Object.assign(_inboxData.find(m => m.id === id) || {}, updated);
+    updateInboxBadge(); renderInbox(); closeModal();
+    showToast(`期限を${days}日に設定しました`);
   } catch(e) { showToast('通信エラー'); }
 }
 
@@ -3069,11 +3170,11 @@ async function loadAttendanceDetail() {
       const title = (row.title || '').length > 60 ? row.title.slice(0, 57) + '…' : (row.title || '');
       let link = '';
       if (row.uuid) {
-        link = `<a href="/logs.html#${row.uuid}" target="_blank" title="${row.uuid}" style="font-size:.8rem">📄</a>`;
+        link = `<a href="javascript:void(0)" onclick="openConvInLogs('${row.uuid}')" title="${row.uuid}" style="font-size:.8rem">📄</a>`;
       } else if (row.inbox_id) {
-        link = `<span title="${row.inbox_id}" style="font-size:.8rem;cursor:help">📨</span>`;
+        link = `<a href="javascript:void(0)" onclick="navigateToInbox('${row.inbox_id}')" title="${row.inbox_id}" style="font-size:.8rem">📨</a>`;
       } else if (row.memory_id) {
-        link = `<span title="${row.memory_id}" style="font-size:.8rem;cursor:help">🧠</span>`;
+        link = `<a href="javascript:void(0)" onclick="navigateToMemory('${row.memory_id}')" title="${row.memory_id}" style="font-size:.8rem">🧠</a>`;
       }
       html += `<tr style="border-top:1px solid var(--border)">`;
       html += `<td style="padding:4px 8px;white-space:nowrap;font-size:.85rem">${dt}</td>`;

@@ -1430,3 +1430,29 @@ Prevents unbounded LLM processing when a client disconnects:
 ### LLM
 
 `MIO_LM_MODEL` (LMStudio, same as the rating batch), shared via `_lm_client()`.
+
+### Inbox Auto-Sublimation Pipeline (v3.75, work order #6)
+
+Server-side pipeline that automatically backs up and sublimates `【生】`-titled inbox posts
+(to=chat) on arrival. Alternative to the friend-token-based local delegation approach (deferred
+pending F4 completion).
+
+**Trigger**: `_inbox_needs_sublimate(to, title)` — `to == "chat"` and title contains `【生】`.
+Detected inside `_post_inbox_message`.
+
+**Processing flow** (sync + async, two stages inside `_post_inbox_message`):
+
+1. **Sync (immediate, zero raw-text dwell)**:
+   - Save original body to ExtMemory with `rating=adult`, `local_only=True`,
+     tags `["バカンス日記", "自動退避"]` (`_create_raw_backup_entry`)
+   - Replace inbox body with placeholder; replace `【生】` → `【処理中】` in title
+   - **Requirement 4**: raw text is fully removed from inbox at this point
+
+2. **Async (daemon thread)** (`_run_inbox_sublimate`):
+   - Run `_sublimate_text(original_body)` (existing chunk/self-check loop)
+   - Success (mature or below): replace body with sublimated version, title → `【未承認】`
+   - Failure (needs_human / adult): replace body with notification only, title → `【要人手】`
+   - Exception: same as failure (title → `【要人手】` + exception message)
+
+**Approval**: automation only produces a "draft". Promotion to `【承認済み】` remains a manual
+operation by the individual via `inbox_update`.
