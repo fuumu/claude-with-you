@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.76 (2026-07-28) - 検索強化・伏せ字ID導線・turn_offset バグ修正
+    - conversation_read: redact=true 時に turn_offset/turn_limit が効かないバグを修正。
+      レスポンスに total_messages/slice を追加（スライス時のみ）
+    - conversation_search: body_search=true で本文検索、rating フィルタ、
+      include_redact_status で adult 会話の伏せ字状態を返す
+    - conversation_index: rating フィルタ、include_redact_status 追加
   v3.75 (2026-07-21) - inbox自動昇華パイプライン + admin UI改善
     - inbox自動昇華: 【生】タイトルのchat宛inbox着弾時、原文をExtMemory(rating=adult)に即時退避
       →プレースホルダ化→非同期sublimate→結果でinbox本文差替え(【未承認】/【要人手】)
@@ -535,7 +541,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.75'
+VERSION = '3.76'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -2611,6 +2617,54 @@ def _conv_rating_view(entry):
         out['rating'] = 'safe' if out.get('rating_source') else None
     out.setdefault('rating_source', None)
     return out
+
+
+def _conv_rating_match(entry, rating_filter):
+    """インデックスエントリが指定 rating に合致するか判定（v3.76）"""
+    r = entry.get('rating')
+    if not r:
+        r = 'safe' if entry.get('rating_source') else None
+    if rating_filter == 'safe':
+        return r == 'safe'
+    return r == rating_filter
+
+
+def _conv_redact_status(uuid):
+    """adult 会話の伏せ字状態を返す（v3.76）"""
+    cache_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_redacted.json')
+    if not os.path.exists(cache_path):
+        return 'not_generated'
+    try:
+        with open(cache_path, encoding='utf-8') as f:
+            rd = json.load(f)
+        return 'approved' if rd.get('approved') else 'pending_approval'
+    except Exception:
+        return 'not_generated'
+
+
+def _conv_body_match(entry, q):
+    """会話のタイトルまたはメッセージ本文に q が含まれるか判定（v3.76）"""
+    if q in (entry.get('title', '') + ' ' + entry.get('uuid', '')).lower():
+        return True
+    uuid = entry.get('uuid', '')
+    fpath = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+    if not os.path.exists(fpath):
+        return False
+    try:
+        with open(fpath, encoding='utf-8') as f:
+            conv = json.load(f)
+        for m in conv.get('chat_messages', []):
+            content = m.get('content') or m.get('text') or ''
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get('type') == 'text':
+                        if q in (c.get('text', '') or '').lower():
+                            return True
+            elif q in str(content).lower():
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _save_conversations(conversations):
@@ -5785,21 +5839,26 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_index",
-        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。各アイテムに rating（safe/mature/adult・未判定は null）と rating_source（auto/manual）を含む（v3.70）。キーワード全文検索はconversation_search、中身の取得はconversation_read",
+        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。各アイテムに rating（safe/mature/adult・未判定は null）と rating_source（auto/manual）を含む（v3.70）。rating フィルタで特定レーティングのみ絞り込み可（v3.76）。キーワード全文検索はconversation_search、中身の取得はconversation_read",
         "inputSchema": {"type": "object", "properties": {
             "search": {"type": "string",  "description": "タイトルに対する部分一致フィルタ（省略可）"},
             "limit":  {"type": "integer", "description": "最大取得件数（デフォルト50、最大500）"},
-            "offset": {"type": "integer", "description": "スキップ件数（ページネーション用、デフォルト0）"}
+            "offset": {"type": "integer", "description": "スキップ件数（ページネーション用、デフォルト0）"},
+            "rating": {"type": "string",  "description": "ratingで絞り込み（'safe'/'mature'/'adult'）。省略時はフィルタなし（v3.76）"},
+            "include_redact_status": {"type": "boolean", "description": "trueの場合、adult会話に伏せ字状態（redact_status: not_generated/pending_approval/approved）を付与。デフォルト: false（v3.76）"}
         }, "required": []}
     },
     {
         "name": "conversation_search",
-        "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数・rating・rating_source）を返す（rating は v3.70 から明示。未判定は null）",
+        "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数・rating・rating_source）を返す（rating は v3.70 から明示。未判定は null）。body_search=trueでメッセージ本文も検索（重い）。rating フィルタで特定レーティングのみ絞り込み可（v3.76）",
         "inputSchema": {"type": "object", "properties": {
             "q":         {"type": "string",  "description": "検索キーワード（省略可）"},
             "date_from": {"type": "string",  "description": "検索開始日（ISO 8601形式 例: 2026-06-01）"},
             "date_to":   {"type": "string",  "description": "検索終了日（ISO 8601形式 例: 2026-06-30）"},
-            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト5）"}
+            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト5）"},
+            "body_search": {"type": "boolean", "description": "trueの場合、メッセージ本文も検索対象にする（タイトル不一致でも本文ヒットなら返す）。デフォルト: false"},
+            "rating":    {"type": "string",  "description": "ratingで絞り込み（'safe'/'mature'/'adult'）。省略時はフィルタなし"},
+            "include_redact_status": {"type": "boolean", "description": "trueの場合、adult会話に伏せ字状態（redact_status: not_generated/pending_approval/approved）を付与。デフォルト: false"}
         }, "required": []}
     },
     {
@@ -6254,12 +6313,21 @@ def _handle_tool_call_raw(name, arguments):
         search = arguments.get("search", "").lower()
         limit  = min(int(arguments.get("limit",  50)), 500)
         offset = max(int(arguments.get("offset",  0)), 0)
+        rating_filter = arguments.get("rating")
+        include_redact_status = bool(arguments.get("include_redact_status", False))
         index  = _load_conv_index()
         if search:
             index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+        if rating_filter:
+            index = [e for e in index if _conv_rating_match(e, rating_filter)]
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
         total = len(index)
         items = [_conv_rating_view(e) for e in index[offset:offset + limit]]
+        if include_redact_status:
+            for item in items:
+                if (item.get('rating') == 'adult' or
+                    (not item.get('rating') and not item.get('rating_source') and rating_filter == 'adult')):
+                    item['redact_status'] = _conv_redact_status(item.get('uuid', ''))
         return {"total": total, "offset": offset, "limit": limit, "items": items, "server_time": now_jst()}
 
     elif name == "conversation_search":
@@ -6267,15 +6335,27 @@ def _handle_tool_call_raw(name, arguments):
         date_from = arguments.get("date_from", "")
         date_to   = arguments.get("date_to", "")
         limit     = min(int(arguments.get("limit", 5)), 50)
+        body_search = bool(arguments.get("body_search", False))
+        rating_filter = arguments.get("rating")
+        include_redact_status = bool(arguments.get("include_redact_status", False))
         index     = _load_conv_index()
-        if q:
+        if q and not body_search:
             index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
         if date_from:
             index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) >= date_from]
         if date_to:
             index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= date_to + 'T23:59:59']
+        if rating_filter:
+            index = [e for e in index if _conv_rating_match(e, rating_filter)]
+        if q and body_search:
+            index = [e for e in index if _conv_body_match(e, q)]
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
-        return [_conv_rating_view(e) for e in index[:limit]]
+        items = [_conv_rating_view(e) for e in index[:limit]]
+        if include_redact_status:
+            for item in items:
+                if item.get('rating') == 'adult':
+                    item['redact_status'] = _conv_redact_status(item.get('uuid', ''))
+        return items
 
     elif name == "conversation_share":
         uid   = arguments.get("uuid", "")
@@ -6317,37 +6397,37 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": f"conversation not found: {uid}"}
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
-        # M-LOCAL-7（v3.56 + v3.69 三択分岐）: rating=adult の閲覧制御
+        # M-LOCAL-7（v3.56 + v3.69 三択分岐 + v3.76 turn_offset/turn_limit 適用）: rating=adult の閲覧制御
         # 優先順位: 1. include_raw=true → 原文  2. redact=true → 承認済み伏せ字  3. デフォルト → 伏せ字 or safeダイジェスト
         if conv.get('rating') == 'adult' and not bool(arguments.get('include_raw', False)):
             want_redact = bool(arguments.get('redact', False))
             redacted = _get_redacted(uid)
 
+            if redacted:
+                redacted_msgs = redacted.get('redacted_messages', [])
+                total_redacted = len(redacted_msgs)
+                if turn_offset < 0:
+                    r_lo = max(0, total_redacted + turn_offset)
+                else:
+                    r_lo = min(turn_offset, total_redacted)
+                r_hi = min(r_lo + turn_limit, total_redacted) if turn_limit > 0 else total_redacted
+                lines = [f'[{rm["role"]}] {rm["text"]}' for rm in redacted_msgs[r_lo:r_hi]]
+                body = '\n\n'.join(lines)
+                result = {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
+                          "gated": True, "redacted": True,
+                          "mask_count": redacted.get('mask_count', 0),
+                          "body": body}
+                if turn_offset != 0 or turn_limit != 0:
+                    result["total_messages"] = total_redacted
+                    result["slice"] = f"{r_lo + 1}-{r_hi}" if r_hi > r_lo else "該当なし"
+                return result
+
             if want_redact:
-                if redacted:
-                    lines = []
-                    for rm in redacted.get('redacted_messages', []):
-                        lines.append(f'[{rm["role"]}] {rm["text"]}')
-                    body = '\n\n'.join(lines)
-                    return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
-                            "gated": True, "redacted": True,
-                            "mask_count": redacted.get('mask_count', 0),
-                            "body": body}
                 return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
                         "gated": True, "redacted": False,
                         "notice": 'この会話の承認済み伏せ字ログはまだありません。'
                                   '生成: POST /api/conversations/{uuid}/redact → '
                                   '承認: POST /api/conversations/{uuid}/redact/approve'}
-
-            if redacted:
-                lines = []
-                for rm in redacted.get('redacted_messages', []):
-                    lines.append(f'[{rm["role"]}] {rm["text"]}')
-                body = '\n\n'.join(lines)
-                return {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
-                        "gated": True, "redacted": True,
-                        "mask_count": redacted.get('mask_count', 0),
-                        "body": body}
 
             safe_path = os.path.join(CONVERSATIONS_DIR, f'{uid}_digest_safe.json')
             notice = ('この会話は rating=adult のため、原文の代わりに safe ダイジェストを返しています。'

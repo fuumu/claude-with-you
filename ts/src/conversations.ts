@@ -86,6 +86,12 @@ function messageText(m: Record<string, unknown>): string {
   return String(content);
 }
 
+function convRatingMatch(entry: ConvMeta, ratingFilter: string): boolean {
+  const r = entry.rating || ((entry as Record<string, unknown>).rating_source ? 'safe' : '');
+  if (ratingFilter === 'safe') return r === 'safe';
+  return r === ratingFilter;
+}
+
 function convMatchesBody(entry: ConvMeta, q: string): boolean {
   if ((String(entry.title ?? '') + ' ' + String(entry.uuid ?? '')).toLowerCase().includes(q)) {
     return true;
@@ -103,7 +109,7 @@ function convMatchesBody(entry: ConvMeta, q: string): boolean {
   return false;
 }
 
-/** GET /api/conversations/ — 検索（q / from / to / limit / body_search） */
+/** GET /api/conversations/ — 検索（q / from / to / limit / body_search / rating） */
 function handleSearch(res: http.ServerResponse, url: URL): void {
   const q = (url.searchParams.get('q') ?? '').toLowerCase();
   const from = url.searchParams.get('from') ?? '';
@@ -111,6 +117,7 @@ function handleSearch(res: http.ServerResponse, url: URL): void {
   const limitParam = url.searchParams.get('limit');
   const limit = Math.min(limitParam === null ? 20 : parseInt(limitParam, 10), 1200);
   const bodySearch = (url.searchParams.get('body_search') ?? 'false').toLowerCase() === 'true';
+  const ratingFilter = url.searchParams.get('rating') ?? '';
 
   let index = loadConvIndex();
   if (q && !bodySearch) {
@@ -124,6 +131,9 @@ function handleSearch(res: http.ServerResponse, url: URL): void {
   if (to) {
     index = index.filter((e) => sortKey(e) <= to + 'T23:59:59');
   }
+  if (ratingFilter) {
+    index = index.filter((e) => convRatingMatch(e, ratingFilter));
+  }
   if (q && bodySearch) {
     index = index.filter((e) => convMatchesBody(e, q));
   }
@@ -131,19 +141,23 @@ function handleSearch(res: http.ServerResponse, url: URL): void {
   sendJson(res, 200, index.slice(0, limit));
 }
 
-/** GET /api/conversations/index — タイトル一覧（search / limit / offset） */
+/** GET /api/conversations/index — タイトル一覧（search / limit / offset / rating） */
 function handleIndex(res: http.ServerResponse, url: URL): void {
   const search = (url.searchParams.get('search') ?? '').toLowerCase();
   const limitParam = url.searchParams.get('limit');
   const offsetParam = url.searchParams.get('offset');
   const limit = Math.min(limitParam === null ? 50 : parseInt(limitParam, 10), 500);
   const offset = Math.max(offsetParam === null ? 0 : parseInt(offsetParam, 10), 0);
+  const ratingFilter = url.searchParams.get('rating') ?? '';
 
   let index = loadConvIndex();
   if (search) {
     index = index.filter((e) =>
       (String(e.title ?? '') + ' ' + String(e.uuid ?? '')).toLowerCase().includes(search),
     );
+  }
+  if (ratingFilter) {
+    index = index.filter((e) => convRatingMatch(e, ratingFilter));
   }
   sortDescByUpdated(index);
   sendJson(res, 200, {

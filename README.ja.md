@@ -597,17 +597,24 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ### conversation_search
 
 ```
-引数: q（省略可）, date_from（ISO 8601, 例: 2026-06-01）, date_to（ISO 8601）, limit（デフォルト5）
-返値: [{uuid, title, created_at, updated_at, message_count, rating, rating_source}, ...]
+引数: q（省略可）, date_from（ISO 8601, 例: 2026-06-01）, date_to（ISO 8601）, limit（デフォルト5）,
+      body_search（省略可, bool — trueでメッセージ本文も検索。デフォルト false。v3.76）,
+      rating（省略可 — 'safe'/'mature'/'adult' で絞り込み。v3.76）,
+      include_redact_status（省略可, bool — adult会話に伏せ字状態を付与。v3.76）
+返値: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, redact_status?}, ...]
 ※ q・date_from・date_to は組み合わせ可能。全省略で全件（limit件）取得
 ※ rating は v3.70 から明示: safe 判定済みは "safe"・未判定は null（rating_skip_reason があれば判定不能）
+※ body_search=true は全ファイルを走査するため重い。デフォルトはタイトルのみ検索
+※ include_redact_status=true の場合、adult 会話に redact_status（not_generated/pending_approval/approved）が付く
 ```
 
 ### conversation_index（v3.34）
 
 ```
-引数: search（省略可 — タイトル部分一致）, limit（デフォルト50・最大500）, offset（デフォルト0）
-返値: {total, offset, limit, items: [{uuid, title, created_at, updated_at, message_count, rating, rating_source}, ...]}
+引数: search（省略可 — タイトル部分一致）, limit（デフォルト50・最大500）, offset（デフォルト0）,
+      rating（省略可 — 'safe'/'mature'/'adult' で絞り込み。v3.76）,
+      include_redact_status（省略可, bool — adult会話に伏せ字状態を付与。v3.76）
+返値: {total, offset, limit, items: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, redact_status?}, ...]}
 ※ rating は v3.70 から明示: safe 判定済みは "safe"・未判定は null
 ※ タイトル一覧・日付降順ブラウズ用。UUID が不明なときの絞り込みに使う
 ※ conversation_search（全文キーワード検索）とは別物
@@ -629,7 +636,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ※ include_annotations=true で log_annotate の注記を該当位置にインライン表示し、
    各メッセージに [No.X] 通番を付ける（注記の target と対応）
 ※ include_body=false で本文を省略し注記のみ返す（include_annotations=true と併用。v3.33）
-※ turn_offset/turn_limit でメッセージ単位スライス（冒頭だけ turn_limit=4 / 末尾だけ turn_offset=-4）。スライス時は先頭に「表示: 全N件中 start-end」を付与。両省略で従来と完全同一・No.X は元通番を保持（v3.47）
+※ turn_offset/turn_limit でメッセージ単位スライス（冒頭だけ turn_limit=4 / 末尾だけ turn_offset=-4）。スライス時は先頭に「表示: 全N件中 start-end」を付与。両省略で従来と完全同一・No.X は元通番を保持（v3.47）。redact=true でも正しく効く（v3.76 修正 — 以前は無視されていた）
 ※ 省略時に thinking ブロックがあった場合、末尾に件数のヒントが付く
 ```
 
@@ -1007,7 +1014,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.75）**
+**実装済み（v3.9〜v3.76）**
 - お友達システム — 登録申請・メール承認・専用 MCP セッション・記憶管理（v3.9〜v3.12）
 - `CoreMem_delete` ツール・`DELETE /api/coremem/<name>`・logs.html Unicode 表示修正（v3.13）
 - admin/logs UI 改善 — モーダル強化（先頭表示・スクロール・最大化・IDコピー）、チャット↔ファイル双方向リンク（v3.14）
@@ -1059,6 +1066,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - admin Redactタブ起動不能バグ修正＋logs.html ソースフィルタ（v3.72）— ① admin.html: Redact タブが参照していた未定義ヘルパー `authHeaders()` を定義（タブを開くだけで `Can't find variable: authHeaders` エラーになり一覧取得・生成・承認とも操作不能だった）② i18n 辞書に `redact.title` / `redact.desc` を追加（見出しが生キー表示になっていた）。Reload ボタンを `common.reload` に統一、album 系の辞書漏れ3件も補完 ③ logs.html: ソースフィルタ追加（チャット / Claude Code / OpenWebUI。会話インデックスの `source` フィールドでクライアント側絞り込み。v3.71 の source 保全が前提）
 - memory_upsert rating温存＋sublimate昇華強化・孤児ジョブ対策（v3.73）— ① `memory_upsert` に `rating` / `local_only` 引数追加。未指定時は既存エントリの値を温存（従来は上書きで消失していた）② sublimate 昇華プロンプト強化: 禁止表現リスト明文化（性器名称・行為進行・体液等）・「最重要原則: 必ず mature 以下」・出力前自己検証指示を追加 ③ sublimate 判定分離: セルフチェックを strict モード（temperature=0・昇華出力専用の厳格プレフィクス付き）に変更。生成と判定が同一モデルでも引きずられにくくする ④ sublimate 孤児ジョブ対策: 入力上限 60,000 文字（超過時は即エラー＋範囲縮小推奨）、全体処理時間上限 180 秒（超過時は処理済みチャンクの partial 結果を返却。`partial=true` / `timeout_message` で状態通知）
 - admin出席簿タブ（v3.74）— admin.html に出席簿（Attendance）タブ追加。REST `GET /api/attendance` エンドポイント新設（MCP attendance_view と同一ロジック流用・二重実装なし）。個体別サマリカード（最終稼働日・経過日数・件数を色分け表示: 1日以内=緑・7日以上=赤・中間=黄）→ クリックで履歴テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。期間フィルタ（date_from/date_to）・同期間の他個体活動サマリ付き
+- 検索強化・伏せ字ID導線・turn_offsetバグ修正（v3.76）— ① `conversation_read`: `redact=true` 時に `turn_offset`/`turn_limit` が効かないバグを修正（スライスが early return 前に適用されず常に先頭から返っていた）。スライス時のレスポンスに `total_messages`/`slice` を追加 ② `conversation_search`: `body_search=true` でメッセージ本文も検索対象に（タイトル不一致でも本文ヒットなら返す・重い操作のためオプトイン）、`rating` フィルタで特定レーティングのみ絞り込み、`include_redact_status=true` で adult 会話の伏せ字状態（not_generated/pending_approval/approved）を付与 ③ `conversation_index`: `rating` フィルタ・`include_redact_status` 追加（②と同仕様）④ REST API（TS層）: `GET /api/conversations/` および `GET /api/conversations/index` にも `rating` クエリパラメータ追加
 - inbox自動昇華パイプライン＋admin UI改善（v3.75）— ① inbox自動昇華: `inbox_post` で to=chat・タイトルに「【生】」を含む着弾時、原文を ExtMemory に `rating=adult` で即時退避→inbox本文をプレースホルダに差替え→非同期で `sublimate` 実行→結果で本文を更新（タイトルは【未承認】or【要人手】に変更）。処理中は inbox_check/read で生テキストが返らない（窓を塞ぐ）。承認は個体本人の運用のまま ② admin inbox: 期間常駐（expires_at）の表示（残り日数・色分け・期限切れ間近は赤）＋操作ボタン（期限変更・無期限昇格・期間化・期限解除）③ admin出席簿: uuid/memory_id/inbox_id をクリック可能なリンクに変更（admin内のLogs/Memory/Inboxタブへ内部遷移）
 - file_read JSON対応強化＋OpenWebUIインポート＋admin.html改善（v3.66）— ① `file_read` に拡張子ベースのフォールバック追加（mimetype が不正でも `.json`/`.jsonl` 等のテキスト系ファイルは `content` フィールドに展開）② `POST /api/import/openwebui` 新設：OpenWebUI（ローカルLLM）のチャットエクスポート JSON を会話ストアに取り込み。messages 配列 / history.messages ツリー両対応、重複スキップ、要約バッチ自動起動。admin.html Import タブにドロップゾーン追加 ③ admin.html Uploads タブ：モーダルを他タブと統一（`openModal()` 使用）、IDコピー対応、ダークテーマ対応のプレビュー ④ admin.html Album タブ：画像クリックでライトボックス（最大化）表示。Escape で閉じる
 
