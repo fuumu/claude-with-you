@@ -202,6 +202,13 @@
       padding: .4rem .55rem; font-size: .72rem; color: #7a8a9a;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .album-thumb { position: relative; }
+    .album-rating-badge {
+      position: absolute; top: 6px; right: 6px; font-size: .65rem; font-weight: 600;
+      padding: 1px 6px; border-radius: 4px; line-height: 1.4;
+    }
+    .album-rating-badge.adult { background: rgba(231,76,60,.85); color: #fff; }
+    .album-rating-badge.mature { background: rgba(243,156,18,.85); color: #fff; }
     .album-detail-img { max-width: 100%; max-height: 50vh; border-radius: 6px; margin-bottom: 1rem; cursor: pointer; transition: opacity .15s; }
     .album-detail-img:hover { opacity: .85; }
     .lightbox-overlay {
@@ -2621,7 +2628,7 @@ let albumData = [];
 
 async function loadAlbum() {
   try {
-    const res = await apiFetch('/api/album/');
+    const res = await apiFetch('/api/album/?include_adult=true');
     const d = await res.json();
     albumData = d.items || [];
     renderAlbumGrid();
@@ -2637,13 +2644,17 @@ function renderAlbumGrid() {
       (_adminLang === 'en' ? 'No images yet' : 'まだ画像がありません') + '</p>';
     return;
   }
-  grid.innerHTML = albumData.map((m, i) => `
+  grid.innerHTML = albumData.map((m, i) => {
+    const ratingBadge = m.rating === 'adult' ? '<span class="album-rating-badge adult">adult</span>'
+      : m.rating === 'mature' ? '<span class="album-rating-badge mature">mature</span>' : '';
+    return `
     <div class="album-thumb" onclick="openAlbumDetail(${i})">
       <img src="${API}/api/album/${esc(m.id)}?token=${getToken()}" loading="lazy"
            onerror="this.style.display='none'">
+      ${ratingBadge}
       <div class="album-thumb-info">${esc(m.comment || m.id)}</div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 function toggleAlbumUpload() {
@@ -2755,6 +2766,10 @@ function openAlbumDetail(idx) {
     `${ts}　${m.width}×${m.height}　${(m.size_bytes/1024).toFixed(0)} KB　${(m.tags||[]).join(', ')}`;
   const body = document.getElementById('modal-body');
   body.className = 'modal-body';
+  const ratingOpts = ['', 'safe', 'mature', 'adult'].map(v =>
+    `<option value="${v}"${(m.rating||'') === v ? ' selected' : ''}>${v || '(none)'}</option>`).join('');
+  const guardMsg = m.guard_message || '';
+  const viewLog = (m.view_log || []).map(v => `${v.viewer} (${(v.viewed_at||'').slice(0,16).replace('T',' ')})`).join(', ');
   body.innerHTML = `
     <img src="${API}/api/album/${esc(m.id)}?token=${getToken()}" class="album-detail-img"
          onclick="openLightbox(this.src)" title="クリックで拡大表示">
@@ -2766,6 +2781,15 @@ function openAlbumDetail(idx) {
       <label>Tags</label>
       <input type="text" id="album-edit-tags" value="${esc((m.tags||[]).join(', '))}">
     </div>
+    <div class="album-edit-row">
+      <label>Rating</label>
+      <select id="album-edit-rating" style="flex:1;padding:.35rem .5rem;background:#0f0f1a;border:1px solid #2a3a5a;border-radius:5px;color:#c8d8e8;font-size:.82rem">${ratingOpts}</select>
+    </div>
+    <div class="album-edit-row">
+      <label>Guard msg</label>
+      <input type="text" id="album-edit-guard" value="${esc(guardMsg)}" placeholder="開封前メッセージ（省略可）">
+    </div>
+    ${viewLog ? `<div style="font-size:.72rem;color:#7a8a9a;margin-bottom:.5rem">👁 ${esc(viewLog)}</div>` : ''}
     <div style="display:flex;gap:.5rem;margin-top:.8rem">
       <button class="btn-link" onclick="albumSaveMeta('${esc(m.id)}', ${idx})"
         data-i18n="album.saveMeta">${_adminLang === 'en' ? 'Save' : '保存'}</button>
@@ -2784,12 +2808,14 @@ function openAlbumDetail(idx) {
 async function albumSaveMeta(id, idx) {
   const comment = document.getElementById('album-edit-comment').value;
   const tagsRaw = document.getElementById('album-edit-tags').value;
-  const tags = tagsRaw.split(/[,、\s]+/).map(t => t.trim()).filter(Boolean);  // カンマ・読点・空白いずれでも区切れる（v3.55）
+  const tags = tagsRaw.split(/[,、\s]+/).map(t => t.trim()).filter(Boolean);
+  const rating = document.getElementById('album-edit-rating').value || null;
+  const guard_message = document.getElementById('album-edit-guard').value || null;
   try {
     const res = await apiFetch('/api/album/' + id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment, tags })
+      body: JSON.stringify({ comment, tags, rating, guard_message })
     });
     if (res.ok) {
       const updated = await res.json();
@@ -3252,7 +3278,7 @@ async function navigateToAlbum(albumId) {
   // Ensure album data is loaded (switchTab triggers loadAlbum)
   if (!albumData.length) {
     try {
-      const res = await apiFetch('/api/album/');
+      const res = await apiFetch('/api/album/?include_adult=true');
       const d = await res.json();
       albumData = d.items || [];
     } catch { return; }
