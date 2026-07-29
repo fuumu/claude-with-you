@@ -3,6 +3,10 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.78 (2026-07-29) - Admin album タブ adult画像表示対応
+    - admin.html: album一覧で include_adult=true を使用し全画像を管理画面に表示
+    - admin.html: サムネイルにratingバッジ（adult=赤、mature=オレンジ）追加
+    - admin.html: 詳細モーダルにrating/guard_message編集UI＋view_log表示追加
   v3.77 (2026-07-29) - LogStore重複修正・album保護・空リンクバグ修正
     - _save_conversations: メッセージ数比較による差分更新（多い方を残す、少ない方はスキップ）
     - _load_conv_index: UUID重複排除（メッセージ数が多い方を残す）
@@ -553,7 +557,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.77'
+VERSION = '3.78'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
