@@ -338,6 +338,40 @@
     .modal-scroll-btn:hover { border-color: #7c6af7; color: #7c6af7; }
     .modal-scroll-btn.close:hover { border-color: #e74c3c; color: #e74c3c; }
 
+    /* ── Modal in-popup search ── */
+    .modal-search-bar {
+      display: none; position: sticky; top: 0; z-index: 10;
+      background: #0f0f1a; border: 1px solid #2a3a5a; border-radius: 6px;
+      padding: .35rem .5rem; margin: -.5rem -.5rem .75rem; gap: .4rem;
+      align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
+    .modal-search-bar.open { display: flex; }
+    .modal-search-bar input {
+      flex: 1; min-width: 0; padding: .3rem .5rem; background: #1a1a2e;
+      border: 1px solid #2a3a5a; border-radius: 4px; color: #c8d8e8;
+      font-size: .82rem; outline: none;
+    }
+    .modal-search-bar input:focus { border-color: #7c6af7; }
+    .modal-search-bar input::placeholder { color: #3a4a6a; }
+    .modal-search-count {
+      font-size: .75rem; color: #7a8a9a; white-space: nowrap; min-width: 3.5em; text-align: center;
+    }
+    .modal-search-nav {
+      background: none; border: 1px solid #2a3a5a; border-radius: 4px;
+      color: #7a8a9a; cursor: pointer; font-size: .78rem; padding: .2rem .45rem;
+      line-height: 1;
+    }
+    .modal-search-nav:hover { border-color: #7c6af7; color: #7c6af7; }
+    .modal-search-nav:disabled { opacity: .3; cursor: default; }
+    .modal-search-nav:disabled:hover { border-color: #2a3a5a; color: #7a8a9a; }
+    .modal-search-close {
+      background: none; border: none; color: #5a6a7a; cursor: pointer;
+      font-size: .95rem; line-height: 1; padding: .1rem .25rem;
+    }
+    .modal-search-close:hover { color: #c8d8e8; }
+    .modal-search-highlight { background: rgba(241,196,15,.35); border-radius: 2px; }
+    .modal-search-highlight.current { background: rgba(241,196,15,.7); outline: 1px solid #f1c40f; }
+
     /* Markdown */
     .md-body { white-space: normal; }  /* pre-wrap を打ち消し、MDの二重改行を防ぐ */
     .md-body h1, .md-body h2, .md-body h3 { margin: 1rem 0 .5rem; color: #7c6af7; }
@@ -402,7 +436,7 @@
     .oplog-row {
       background: #16213e; border: 1px solid #2a3a5a; border-radius: 7px;
       padding: .6rem 1rem; display: grid;
-      grid-template-columns: 9rem 6rem 1fr;
+      grid-template-columns: 9rem 6rem 1fr auto;
       align-items: center; gap: .75rem; cursor: pointer; transition: border-color .2s;
       font-size: .82rem;
     }
@@ -427,6 +461,15 @@
     .op-file_delete    { background: rgba(192,57,43,.15);  color: #c0392b; border: 1px solid rgba(192,57,43,.3); }
     .op-conv_rating    { background: rgba(142,68,173,.15); color: #8e44ad; border: 1px solid rgba(142,68,173,.3); }
     .oplog-id  { color: #c8d8e8; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oplog-actions { display: flex; gap: .25rem; align-items: center; flex-shrink: 0; }
+    /* ID inline action buttons (open / copy) — used in Oplog rows, Attendance, Redact */
+    .id-action-btn {
+      background: none; border: 1px solid #2a3a5a; border-radius: 4px;
+      color: #5a6a7a; cursor: pointer; font-size: .68rem; padding: 1px 5px;
+      line-height: 1.3; white-space: nowrap; transition: color .15s, border-color .15s;
+    }
+    .id-action-btn:hover { border-color: #7c6af7; color: #7c6af7; }
+    .id-action-btn.copied { border-color: #2ecc71; color: #2ecc71; }
 
     /* ── Prism overrides ── */
     pre[class*="language-"] { border-radius: 6px; margin: 0; font-size: .82rem; }
@@ -914,6 +957,13 @@
         <button class="modal-tool-btn" onclick="toggleModalMax()" title="最大化 / 元に戻す">⛶</button>
         <button class="modal-close" onclick="closeModal()">✕</button>
       </div>
+    </div>
+    <div class="modal-search-bar" id="modal-search-bar">
+      <input type="text" id="modal-search-input" placeholder="検索..." autocomplete="off">
+      <span class="modal-search-count" id="modal-search-count"></span>
+      <button class="modal-search-nav" id="modal-search-prev" onclick="modalSearchNav(-1)" title="前へ (Shift+Enter)">&#9650;</button>
+      <button class="modal-search-nav" id="modal-search-next" onclick="modalSearchNav(1)" title="次へ (Enter)">&#9660;</button>
+      <button class="modal-search-close" onclick="modalSearchClose()" title="閉じる (Escape)">&#10005;</button>
     </div>
     <div class="modal-meta" id="modal-meta"></div>
     <div class="modal-links" id="modal-links" style="display:none"></div>
@@ -2485,12 +2535,19 @@ function renderOplog() {
   list.innerHTML = items.map((row, i) => {
     const ts  = (row.timestamp || '').slice(0, 19).replace('T', ' ');
     const op  = row.operation || '?';
+    const eid = row.entry_id || '';
     const idx = oplogData.length - 1 - i;
+    const actions = eid ? `
+        <span class="oplog-actions">
+          <button class="id-action-btn" onclick="openOplogEntity('${esc(op)}','${esc(eid)}',event)" title="Open entity">Open</button>
+          <button class="id-action-btn" onclick="copyIdInline(this,'${esc(eid)}',event)" title="Copy ID">Copy</button>
+        </span>` : '<span></span>';
     return `
       <div class="oplog-row" onclick="openOplog(${idx})">
         <span class="oplog-ts">${esc(ts)}</span>
         <span class="op-badge op-${esc(op)}">${esc(op)}</span>
-        <span class="oplog-id">${esc(row.entry_id || '')}</span>
+        <span class="oplog-id">${esc(eid)}</span>
+        ${actions}
       </div>`;
   }).join('');
 }
@@ -2522,7 +2579,15 @@ function openOplog(idx) {
     : `▼ after\n${after}`;
   body.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-all">${esc(content)}</pre>`;
   setModalId(row.entry_id || '');
-  setModalLinks('');
+  // Add "Open entity" link in oplog detail modal
+  if (row.entry_id) {
+    const entityLabels = {memory: '🧠 記憶エントリを開く', coremem: '📄 CoreMemを開く', album: '🖼 Albumを開く', upload: '📁 Uploadを開く', conversation: '💬 会話ログを開く'};
+    const entityType = _oplogEntityType(op);
+    const label = entityLabels[entityType] || '📂 エントリを開く';
+    setModalLinks(`<span class="modal-link" onclick="openOplogEntity('${esc(op)}','${esc(row.entry_id)}')">${label}</span>`);
+  } else {
+    setModalLinks('');
+  }
   openModal();
 }
 
@@ -2920,8 +2985,12 @@ function openModal() {
   box.classList.remove('maximized');
   document.getElementById('modal').classList.add('open');
   box.scrollTop = 0;
+  modalSearchClose();   // 前回の検索状態をクリア
 }
-function closeModal() { document.getElementById('modal').classList.remove('open'); }
+function closeModal() {
+  modalSearchClose();
+  document.getElementById('modal').classList.remove('open');
+}
 function onOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
 
 function openLightbox(src) {
@@ -2930,8 +2999,168 @@ function openLightbox(src) {
 }
 function closeLightbox() { document.getElementById('lightbox').classList.remove('open'); }
 
-document.addEventListener('keydown', e => {
+// ── Modal in-popup search ────────────────────────────────────────────
+let _msearchMarks = [];   // 現在のハイライト <mark> 要素の配列
+let _msearchIdx   = -1;   // 現在フォーカス中のインデックス
+let _msearchTimer = null;
+
+/** 検索バーを開く */
+function modalSearchOpen() {
+  const bar   = document.getElementById('modal-search-bar');
+  const input = document.getElementById('modal-search-input');
+  bar.classList.add('open');
+  input.focus();
+  if (input.value) input.select();
+}
+
+/** 検索バーを閉じてハイライトをクリア */
+function modalSearchClose() {
+  const bar = document.getElementById('modal-search-bar');
+  bar.classList.remove('open');
+  document.getElementById('modal-search-input').value = '';
+  document.getElementById('modal-search-count').textContent = '';
+  _modalSearchClearMarks();
+}
+
+/** 既存のハイライトをすべて除去 */
+function _modalSearchClearMarks() {
+  // <mark> を元のテキストノードに戻す
+  for (const mark of _msearchMarks) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    parent.replaceChild(document.createTextNode(mark.textContent), mark);
+    parent.normalize();   // 隣接テキストノードを結合
+  }
+  _msearchMarks = [];
+  _msearchIdx   = -1;
+}
+
+/** テキストノードを走査してキーワードをハイライトする */
+function _modalSearchExec(keyword) {
+  _modalSearchClearMarks();
+  const countEl = document.getElementById('modal-search-count');
+  if (!keyword) { countEl.textContent = ''; _modalSearchUpdateNav(); return; }
+
+  const body    = document.getElementById('modal-body');
+  const kwLower = keyword.toLowerCase();
+  const walker  = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null);
+  const hits    = [];   // { node, start }[]
+
+  // まず全テキストノードを走査してヒット箇所を集める
+  let node;
+  while ((node = walker.nextNode())) {
+    // <script>, <style>, <iframe> 内はスキップ
+    const tag = node.parentElement && node.parentElement.tagName;
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'IFRAME') continue;
+    const text = node.textContent.toLowerCase();
+    let pos = 0;
+    while ((pos = text.indexOf(kwLower, pos)) !== -1) {
+      hits.push({ node, start: pos });
+      pos += kwLower.length;
+    }
+  }
+
+  // ヒットなし
+  if (!hits.length) {
+    countEl.textContent = '0/0';
+    _modalSearchUpdateNav();
+    return;
+  }
+
+  // 後ろのヒットから処理して DOM オフセットがずれないようにする
+  // 同一ノード内の複数ヒットも後ろから処理
+  const grouped = new Map();
+  for (const h of hits) {
+    if (!grouped.has(h.node)) grouped.set(h.node, []);
+    grouped.get(h.node).push(h.start);
+  }
+
+  const marks = [];
+  for (const [textNode, starts] of grouped) {
+    // 降順にソート（後ろから処理してオフセットずれを防ぐ）
+    starts.sort((a, b) => b - a);
+    const nodeMarks = [];
+    let current = textNode;
+    for (const start of starts) {
+      // split して mark でくくる
+      const after = current.splitText(start + keyword.length);
+      const match = current.splitText(start);
+      const mark  = document.createElement('mark');
+      mark.className = 'modal-search-highlight';
+      mark.textContent = match.textContent;
+      match.parentNode.replaceChild(mark, match);
+      nodeMarks.unshift(mark);  // ノード内は降順処理なので unshift で昇順に
+    }
+    marks.push(...nodeMarks);   // ノード間はドキュメント順
+  }
+
+  _msearchMarks = marks;
+  _msearchIdx   = 0;
+  _modalSearchFocus(0);
+  countEl.textContent = `1/${marks.length}`;
+  _modalSearchUpdateNav();
+}
+
+/** n 番目のマークにフォーカスを移す */
+function _modalSearchFocus(idx) {
+  if (!_msearchMarks.length) return;
+  // 前のフォーカスを解除
+  for (const m of _msearchMarks) m.classList.remove('current');
+  _msearchIdx = ((idx % _msearchMarks.length) + _msearchMarks.length) % _msearchMarks.length;
+  const target = _msearchMarks[_msearchIdx];
+  target.classList.add('current');
+  // modal-box 内でスクロール
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('modal-search-count').textContent =
+    `${_msearchIdx + 1}/${_msearchMarks.length}`;
+}
+
+/** 前後ナビゲーション（+1 = 次、-1 = 前） */
+function modalSearchNav(dir) {
+  if (!_msearchMarks.length) return;
+  _modalSearchFocus(_msearchIdx + dir);
+}
+
+/** ナビボタンの enabled/disabled を更新 */
+function _modalSearchUpdateNav() {
+  const hasHits = _msearchMarks.length > 0;
+  document.getElementById('modal-search-prev').disabled = !hasHits;
+  document.getElementById('modal-search-next').disabled = !hasHits;
+}
+
+document.getElementById('modal-search-input').addEventListener('input', function() {
+  clearTimeout(_msearchTimer);
+  const kw = this.value.trim();
+  _msearchTimer = setTimeout(() => _modalSearchExec(kw), 200);
+});
+
+document.getElementById('modal-search-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    modalSearchNav(e.shiftKey ? -1 : 1);
+  }
   if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    modalSearchClose();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  // Ctrl+F / Cmd+F: モーダルが開いているとき検索バーを表示
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    if (document.getElementById('modal').classList.contains('open')) {
+      e.preventDefault();
+      modalSearchOpen();
+      return;
+    }
+  }
+  if (e.key === 'Escape') {
+    // 検索バーが開いていれば先に閉じる
+    if (document.getElementById('modal-search-bar').classList.contains('open')) {
+      modalSearchClose();
+      return;
+    }
     if (document.getElementById('lightbox').classList.contains('open')) closeLightbox();
     else closeModal();
   }
@@ -2946,6 +3175,119 @@ function copyTextToClipboard(text) {
   navigator.clipboard.writeText(text)
     .then(() => showToast('コピーしました: ' + text))
     .catch(() => showToast('コピー失敗'));
+}
+
+// Inline copy button handler (brief visual feedback without toast)
+function copyIdInline(btn, text, event) {
+  if (event) event.stopPropagation();
+  navigator.clipboard.writeText(text).then(() => {
+    btn.classList.add('copied');
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+  }).catch(() => showToast('コピー失敗'));
+}
+
+// ── Entity navigation by ID type ─────────────────────────────────────
+
+// Detect entity type from oplog operation
+function _oplogEntityType(operation) {
+  if (['coremem_save', 'coremem_delete', 'coremem_rename'].includes(operation)) return 'coremem';
+  if (['album_save', 'album_update', 'album_delete'].includes(operation)) return 'album';
+  if (['file_upload', 'file_delete'].includes(operation)) return 'upload';
+  if (['conv_rating', 'conv_rating_auto'].includes(operation)) return 'conversation';
+  return 'memory';
+}
+
+// Open entity from oplog entry (dispatches to correct tab/detail)
+function openOplogEntity(operation, entryId, event) {
+  if (event) event.stopPropagation();
+  if (!entryId) return;
+  const type = _oplogEntityType(operation);
+  switch (type) {
+    case 'memory':       navigateToMemory(entryId); break;
+    case 'coremem':      navigateToCoreMem(entryId); break;
+    case 'album':        navigateToAlbum(entryId); break;
+    case 'upload':       navigateToUpload(entryId); break;
+    case 'conversation': openConvInLogs(entryId); break;
+  }
+}
+
+// Navigate to CoreMem tab and open a specific file
+function navigateToCoreMem(name) {
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('CoreMem'));
+  if (btn) switchTab('coremem', btn);
+  openArtifact(name);
+}
+
+// Navigate to Album tab and open a specific album item by ID
+async function navigateToAlbum(albumId) {
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Album'));
+  if (btn) switchTab('album', btn);
+  // Ensure album data is loaded (switchTab triggers loadAlbum)
+  if (!albumData.length) {
+    try {
+      const res = await apiFetch('/api/album/');
+      const d = await res.json();
+      albumData = d.items || [];
+    } catch { return; }
+  }
+  const idx = albumData.findIndex(m => m.id === albumId);
+  if (idx >= 0) openAlbumDetail(idx);
+  else showToast('Album item not found: ' + albumId);
+}
+
+// Navigate to Uploads tab and open a specific upload by ID
+async function navigateToUpload(uploadId) {
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Uploads'));
+  if (btn) switchTab('uploads', btn);
+  if (!_uploadsData.length) {
+    try {
+      const res = await apiFetch('/api/uploads/');
+      _uploadsData = await res.json();
+    } catch { return; }
+  }
+  const idx = _uploadsData.findIndex(f => f.id === uploadId);
+  if (idx >= 0) openUploadDetail(idx);
+  else showToast('Upload not found: ' + uploadId);
+}
+
+// Generic: detect ID type heuristically and open entity
+function openEntityById(id) {
+  if (!id) return;
+  // UUID pattern (conversation uuid, inbox_id)
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    // Could be conversation UUID or inbox_id - try conversation first
+    openConvInLogs(id);
+    return;
+  }
+  // CoreMem file name pattern (contains a dot like .md, .txt)
+  if (/\.\w+$/.test(id) && !/^\d{8}_/.test(id)) {
+    navigateToCoreMem(id);
+    return;
+  }
+  // Memory entry ID pattern (YYYYMMDD_HHMMSS_slug)
+  if (/^\d{8}_\d{6}_/.test(id)) {
+    navigateToMemory(id);
+    return;
+  }
+  // Inbox ID pattern (inbox_YYYYMMDD_HHMMSS_hex)
+  if (/^inbox_/.test(id)) {
+    navigateToInbox(id);
+    return;
+  }
+  // Album ID pattern (alb_hex)
+  if (/^alb_/.test(id)) {
+    navigateToAlbum(id);
+    return;
+  }
+  // Upload ID pattern (upl_hex)
+  if (/^upl_/.test(id)) {
+    navigateToUpload(id);
+    return;
+  }
+  // Fallback: try as memory entry
+  navigateToMemory(id);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
@@ -3006,7 +3348,7 @@ async function loadRedactStatus() {
       const sl = statusLabel[it.status] || it.status;
       const mc = it.mask_count != null ? it.mask_count : '-';
       html += `<tr style="border-top:1px solid var(--border)">`;
-      html += `<td style="padding:6px 8px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.uuid}">${it.title || it.uuid}</td>`;
+      html += `<td style="padding:6px 8px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.uuid}">${it.title || it.uuid} <button class="id-action-btn" onclick="openConvInLogs('${it.uuid}')" title="Open log">Open</button> <button class="id-action-btn" onclick="copyIdInline(this,'${it.uuid}',event)" title="Copy UUID">Copy</button></td>`;
       html += `<td style="padding:6px 8px;text-align:center"><span style="color:${sc};font-weight:600">${sl}</span></td>`;
       html += `<td style="padding:6px 8px;text-align:center">${mc}</td>`;
       html += `<td style="padding:6px 8px;text-align:center">`;
@@ -3170,11 +3512,11 @@ async function loadAttendanceDetail() {
       const title = (row.title || '').length > 60 ? row.title.slice(0, 57) + '…' : (row.title || '');
       let link = '';
       if (row.uuid) {
-        link = `<a href="javascript:void(0)" onclick="openConvInLogs('${row.uuid}')" title="${row.uuid}" style="font-size:.8rem">📄</a>`;
+        link = `<a href="javascript:void(0)" onclick="openConvInLogs('${row.uuid}')" title="${row.uuid}" style="font-size:.8rem">📄</a> <button class="id-action-btn" onclick="copyIdInline(this,'${row.uuid}',event)" title="Copy UUID">Copy</button>`;
       } else if (row.inbox_id) {
-        link = `<a href="javascript:void(0)" onclick="navigateToInbox('${row.inbox_id}')" title="${row.inbox_id}" style="font-size:.8rem">📨</a>`;
+        link = `<a href="javascript:void(0)" onclick="navigateToInbox('${row.inbox_id}')" title="${row.inbox_id}" style="font-size:.8rem">📨</a> <button class="id-action-btn" onclick="copyIdInline(this,'${row.inbox_id}',event)" title="Copy ID">Copy</button>`;
       } else if (row.memory_id) {
-        link = `<a href="javascript:void(0)" onclick="navigateToMemory('${row.memory_id}')" title="${row.memory_id}" style="font-size:.8rem">🧠</a>`;
+        link = `<a href="javascript:void(0)" onclick="navigateToMemory('${row.memory_id}')" title="${row.memory_id}" style="font-size:.8rem">🧠</a> <button class="id-action-btn" onclick="copyIdInline(this,'${row.memory_id}',event)" title="Copy ID">Copy</button>`;
       }
       html += `<tr style="border-top:1px solid var(--border)">`;
       html += `<td style="padding:4px 8px;white-space:nowrap;font-size:.85rem">${dt}</td>`;

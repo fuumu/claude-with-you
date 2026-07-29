@@ -1425,7 +1425,8 @@ def search():
     for entry in load_all_entries():
         if entry.get('deleted'):
             continue
-        text = ((entry.get('title') or '') + (entry.get('body') or '') +
+        text = ((entry.get('id') or '') + ' ' +
+                (entry.get('title') or '') + (entry.get('body') or '') +
                 ' '.join(entry.get('tags') or [])).lower()
         if q in text:
             results.append(entry)
@@ -3506,6 +3507,7 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
     matched = {}  # id -> match_layer（挿入順 = 優先順）
     for e in index:
         text = ' '.join([
+            str(e.get('id') or ''),
             str(e.get('title') or ''),
             ' '.join(str(t) for t in (e.get('tags') or [])),
             ' '.join(str(k) for k in (e.get('keywords') or [])),
