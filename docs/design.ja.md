@@ -919,9 +919,9 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 
 | ツール | 説明 |
 |--------|------|
-| `album_save` | URL（直リンク or HTMLページ）またはNASローカルパスから画像取得→リサイズ→保存。HTMLページの場合 og:image → `<img>` タグから画像を自動抽出（v3.52） |
-| `album_read` | base64 エンコード画像を MCP image コンテンツとして返却＋メタデータ |
-| `album_list` | 全画像メタデータ一覧（タグフィルタ対応・画像本体は含まない） |
+| `album_save` | URL（直リンク or HTMLページ）またはNASローカルパスから画像取得→リサイズ→保存。HTMLページの場合 og:image → `<img>` タグから画像を自動抽出（v3.52）。`rating`（safe/mature/adult）と `guard_message`（カーテンの手紙）で保護レベル設定可能（v3.77） |
+| `album_read` | base64 エンコード画像を MCP image コンテンツとして返却＋メタデータ。adult はデフォルト非表示（`include_adult=true` で閲覧可・`guard_message` ありは `acknowledged=true` で本体表示・閲覧記録 `view_log` に残る・v3.77） |
+| `album_list` | 画像メタデータ一覧（タグフィルタ対応・画像本体は含まない）。adult はデフォルト除外（`include_adult=true` で含める・v3.77） |
 | `album_share` | 24 時間限定の認証不要共有 URL を生成 |
 | `album_delete` | 画像とメタデータを完全削除（復元不可・v3.55） |
 
@@ -932,7 +932,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 | GET | `/api/album/` | admin | 画像メタデータ一覧（`?tag=...` でフィルタ） |
 | GET | `/api/album/<id>` | admin | 画像本体を返却（ブラウザで直接表示可） |
 | POST | `/api/album/upload` | admin | 画像アップロード（multipart/form-data or URL） |
-| PATCH | `/api/album/<id>` | admin | メタデータ更新（comment・tags） |
+| PATCH | `/api/album/<id>` | admin | メタデータ更新（comment・tags・rating・guard_message） |
 | DELETE | `/api/album/<id>` | admin | 画像＋メタデータの完全削除 |
 | POST | `/api/album/<id>/share` | admin | 共有 URL 生成（24 時間有効） |
 | GET | `/api/album/shared/<token>` | 不要 | 共有画像（24 時間限定） |
@@ -1069,7 +1069,10 @@ adult 級のコンテンツ（記憶エントリ・会話ログ）が、検索�
 - 設定手段: `PATCH /api/conversations/<uuid>/rating`（body: `{"rating": "adult"}`、`"safe"` で解除）
 - `conversation_read`: `rating=adult` の会話はデフォルトで **safe ダイジェスト**（`{uuid}_digest_safe.json`、conversation_digest safe_mode で生成）に差し替えて返す。未生成なら本文を返さず生成方法を案内。`include_raw=true` で原文
 - `conversation_search` / `conversation_index`: インデックスメタ経由で `rating` が結果に表示される（本文スニペットはもともと返さない）
-- 再インポート耐性: `_save_conversations` が既存ファイルの `rating` を新データに引き継ぐ（v3.70 で rating_reason / rating_source / rating_judged_at / rating_model / rating_skip_reason も対象に。index rebuild も同様に保全）
+- 再インポート耐性: `_save_conversations` がメッセージ数を比較し多い方を残す（v3.77）。既存ファイルの `rating` 系メタも引き継ぐ（v3.70 で rating_reason / rating_source 等も対象に。index rebuild も同様に保全）
+- インデックス重複排除: `_load_conv_index` が UUID 重複を検出し message_count が多い方を残す（v3.77）
+- レーティングバッチのレース条件修正: スナップショット全体保持→エントリ単位パッチ（`_patch_conv_index_entry`）方式に変更。バッチ中のインポートと競合しない（v3.77）
+- ExtMemory 重複スキャン: `POST /api/memory/dedup-scan` で同一 source_thread の重複エントリを検出・soft-delete（v3.77）
 - 可視化（v3.70・発注③）: MCP `conversation_index` / `conversation_search` の各アイテムに `rating`（safe 判定済みは明示的 "safe"・未判定は null）と `rating_source` を常に付与。logs.html に rating バッジ・フィルタ・手動上書き UI。判定不能ログは `rating_skip_reason`（empty / no_text / parse_error）でマークされバッチ対象から恒久除外（force で再試行）
 - REST `GET /api/conversations/<uuid>`（logs.html 用）はゲートしない——ブラウザでの人間の閲覧は AI セッションの文脈に入らないため
 

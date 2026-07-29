@@ -130,7 +130,7 @@ response shapes pinned by tests.
 | `CoreMem_list` | list → `{data:[{name,version,updated_at}]}`; `__del__` prefix excluded |
 | `CoreMem_delete` | `{deleted}` / rename: `{renamed,src,dst}` |
 | `conversation_index` | `{total, offset, limit, items[]}` |
-| `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`; title match only; date range supported |
+| `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`; title match by default; `body_search=true` for message text (v3.76); date range supported |
 | `conversation_read` | Body dict; `turn_offset` (negative = from tail) / `turn_limit`; `include_annotations=true` adds annotations + `[No.X]`; **adult conversations never return raw text by default** (`include_raw=true` for raw) |
 | `log_annotate` | The appended annotation (seq starts at 1); no edit/delete API |
 | `inbox_check` | `{count, ids, non_persistent_unread_count, non_persistent_unread_ids, persistent[] (with bodies)}`; `limit/days/from_model/to_model` filters |
@@ -139,7 +139,7 @@ response shapes pinned by tests.
 | `inbox_update` | Partially updated dict (unspecified fields kept) |
 | `inbox_delete` | Physical delete |
 | `batch_run_summary_layers` | `status_only=true` → `{running,total,processed,errors,skipped,raw_pending,keywords_pending}` |
-| `album_*` / `file_*` | Same metadata shapes as REST; `album_read` returns MCP image content |
+| `album_*` / `file_*` | Same metadata shapes as REST; `album_read` returns MCP image content; `album_save` accepts `rating`/`guard_message` (v3.77); `album_read` with `rating=adult`: hidden by default (`include_adult=true`), `guard_message` triggers two-step reveal (`acknowledged=true` to view, logs `viewer` to `view_log`); `album_list` excludes adult by default (`include_adult=true`) |
 | `attendance_view` | With `individual`: `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}`; without: `{individual:"all",individuals{},period,total,rows[]}`; rows are date-descending with `kind` (conversation/inbox/memory/checkin) + real-log refs (uuid/inbox_id/memory_id) (v3.71) |
 | `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`; exactly one of `text`/`uuid` required (both → `{error}` exclusive); unreachable LLM → `{error:"sublimation failed: ..."}` (v3.71) |
 
@@ -165,7 +165,14 @@ response shapes pinned by tests.
   **exactly one** imported conversation's range
 - Existing source_thread values are **never overwritten**
 - Conversation saving (`_save_conversations`) always runs independently of dedup
-  (including rating carry-over)
+  (including rating carry-over); v3.77: diff update — skips write when existing file
+  has ≥ message_count (response includes `skipped`/`updated` counts)
+
+## 6b. ExtMemory dedup scan (v3.77)
+
+| Method | Path | Contract |
+|---|---|---|
+| POST | `/api/memory/dedup-scan` | Scans ExtMemory for duplicate `source_thread` entries, soft-deletes inferior ones (lower importance, fewer tags). `{scanned, duplicates_found, deleted_ids[]}` |
 
 ## 7. Other REST
 
@@ -174,7 +181,7 @@ response shapes pinned by tests.
 | conversations | `/api/conversations/*` | search (`q`/`from`/`to`/`limit`/`body_search`, updated_at desc) / index (`search`/`limit`≤500/`offset`, `{total,offset,limit,items}`) / rebuild (`{rebuilt}`) / `<uuid>` fetch (404) / annotations (`[]` when none) / share POST (`{token,url,expires_at}`, `expires_in` accepted) / view GET (no auth; bad token 404, expired 410) / rating PATCH (400 unless safe/mature/adult; clears `rating_skip_reason`) / rebuild preserves rating metadata (reason/source/skip_reason, v3.70) |
 | coremem | `/api/coremem*` | list `[{name,version,updated_at}]` / POST `{content}` → 201 `{name,version,version_str}` (sequential versions) / `?version=N` reads old version / DELETE removes all versions `{deleted}` (404 if missing) / manifest-merged; `?raw=true` bypasses |
 | inbox | `/api/inbox*` | GET list / POST (`expires_at`/`ttl_days` timed standing, exclusive with persistent → 400; expired ones demote to read at check time, v3.70) / PATCH read・unread / PATCH partial update (accepts `expires_at`/`ttl_days`/`read`, v3.70) / DELETE |
-| album | `/api/album/*` | list / image / upload / PATCH meta / DELETE / share (shared image needs no auth) |
+| album | `/api/album/*` | list (`include_adult` query param) / image / upload / PATCH meta (incl. rating, guard_message) / DELETE / share (shared image needs no auth) |
 | uploads | `/api/uploads/*` | list / download / POST (201; tags split on commas, Japanese commas, whitespace) / DELETE (404 if missing) |
 | batch | `/api/batch/status` `/api/batch/start` | Summary batch: status dict / background start |
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict (`pending` = next-run targets, `index_counts` distribution, `skip_reasons`, `error_uuids`, v3.70) / background start (v3.68) |

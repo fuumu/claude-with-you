@@ -135,7 +135,7 @@ python -m venv .venv
 | `inbox_update` | 部分更新後の dict（未指定フィールド維持） |
 | `inbox_delete` | 物理削除 |
 | `batch_run_summary_layers` | `status_only=true` → `{running,total,processed,errors,skipped,raw_pending,keywords_pending}` |
-| `album_*` / `file_*` | REST と同じメタデータ形状。`album_read` は MCP image content |
+| `album_*` / `file_*` | REST と同じメタデータ形状。`album_read` は MCP image content。`album_save` は `rating`/`guard_message` 受付（v3.77）。`album_read`/`album_list` は adult デフォルト除外（`include_adult` で表示・v3.77） |
 | `attendance_view` | `individual` 指定時 `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}` / 省略時 `{individual:"all",individuals{},period,total,rows[]}`。rows は日付降順・`kind`（conversation/inbox/memory/checkin）＋実ログ参照（uuid/inbox_id/memory_id）付き（v3.71） |
 | `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`。`text`/`uuid` どちらか必須（両方は `{error}`・exclusive）。LLM 到達不能時は `{error:"sublimation failed: ..."}`（v3.71） |
 
@@ -157,7 +157,7 @@ python -m venv .venv
 - インポート会話の本文から `memory_id: <ID>` を走査 → 該当エントリの空 `source_thread` に会話UUIDを設定
 - 補助: エントリ created_at が**ちょうど1つ**の会話の時間範囲に収まる場合のみ紐づけ
 - 既存の source_thread は**上書きしない**
-- 会話保存（`_save_conversations`）は重複チェックと独立に常に実行される（rating 引き継ぎ含む）
+- 会話保存（`_save_conversations`）はメッセージ数を比較し多い方を残す（v3.77）。rating 系メタは既存ファイルから引き継ぐ
 
 ## 7. その他 REST
 
@@ -166,7 +166,8 @@ python -m venv .venv
 | conversations | `/api/conversations/*` | 検索（`q`/`from`/`to`/`limit`/`body_search`・updated_at 降順）/ index（`search`/`limit`≤500/`offset`・`{total,offset,limit,items}`）/ rebuild（`{rebuilt}`）/ `<uuid>` 取得（404）/ annotations（空なら `[]`）/ share POST（`{token,url,expires_at}`・`expires_in` 指定可）/ view GET（認証不要・不正 404・期限切れ 410）/ rating PATCH（safe/mature/adult 以外は 400・`rating_skip_reason` クリア）/ rebuild は rating 系メタ（reason/source/skip_reason）を保全（v3.70） |
 | coremem | `/api/coremem*` | 一覧 `[{name,version,updated_at}]` / POST `{content}`→201 `{name,version,version_str}`（版番号は連番）/ `?version=N` で旧版 / DELETE は全版削除 `{deleted}`（対象なし 404）/ manifest マージ返却。`?raw=true` で素通し |
 | inbox | `/api/inbox*` | GET一覧 / POST（`expires_at`/`ttl_days` 期間常駐・persistent と排他 400・期限切れはチェック時既読降格, v3.70）/ PATCH read・unread / PATCH 部分更新（`expires_at`/`ttl_days`/`read` 受付, v3.70）/ DELETE |
-| album | `/api/album/*` | 一覧 / 画像 / upload / PATCH メタ / DELETE / share（共有画像は認証不要） |
+| album | `/api/album/*` | 一覧（`include_adult` 対応）/ 画像 / upload / PATCH メタ（rating・guard_message 含む）/ DELETE / share（共有画像は認証不要）（v3.77） |
+| memory dedup | `POST /api/memory/dedup-scan` | source_thread 重複スキャン＋soft-delete。`dry_run=true` でプレビュー（v3.77） |
 | uploads | `/api/uploads/*` | 一覧 / ダウンロード / POST（201・タグはカンマ・読点・空白区切り）/ DELETE（404 if missing） |
 | batch | `/api/batch/status` `/api/batch/start` | 要約バッチ: 状態 dict / バックグラウンド起動 |
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict（`pending`=次回対象件数・`index_counts` 分布・`skip_reasons`・`error_uuids`, v3.70）/ バックグラウンド起動（v3.68） |

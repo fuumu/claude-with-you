@@ -811,6 +811,16 @@
     </div>
     <div id="backup-result" style="margin-top:.9rem;font-size:.85rem"></div>
   </div>
+
+  <!-- Conversation index rebuild (v3.77) -->
+  <div class="batch-section">
+    <h3>会話インデックス再構築</h3>
+    <p>会話ファイルからインデックスを再構築します。重複エントリの解消や、メタデータの不整合修正に使えます。</p>
+    <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-secondary" onclick="rebuildConvIndex()">🔄 インデックスを再構築</button>
+      <span id="rebuild-result" style="font-size:.85rem;color:#7a8a9a"></span>
+    </div>
+  </div>
 </div>
 
 <!-- Oplog tab -->
@@ -1449,7 +1459,7 @@ async function openArtifact(name) {
       body.textContent = a.content || '';
     }
     setModalId(a.name || name);
-    const convUuid = a.source_conversation_uuid || '';
+    const convUuid = (a.source_conversation_uuid || '').trim();
     setModalLinks(convUuid
       ? `<span class="modal-link" onclick="openConvInLogs('${esc(convUuid)}')">💬 生まれた会話を開く</span>`
       : '');
@@ -1745,6 +1755,18 @@ async function backupExecute() {
     document.getElementById('backup-execute-btn').style.display = 'none';
   } catch (e) {
     if (e.message !== '401') showBackupResult(`<span class="result-err">${t('backup.commfail')}: ${esc(e.message)}</span>`);
+  }
+}
+
+async function rebuildConvIndex() {
+  const el = document.getElementById('rebuild-result');
+  el.textContent = '再構築中...';
+  try {
+    const res = await apiFetch('/api/conversations/index/rebuild', { method: 'POST' });
+    const d = await res.json();
+    el.innerHTML = `<span style="color:#2ecc71">✓ ${d.rebuilt}件のエントリで再構築完了</span>`;
+  } catch (e) {
+    el.innerHTML = `<span style="color:#e74c3c">✗ ${esc(e.message)}</span>`;
   }
 }
 
@@ -2173,11 +2195,14 @@ async function openFile(convUuid, filename, convName) {
       if (typeof Prism !== 'undefined') Prism.highlightElement(body.querySelector('code'));
     }
     setModalId(filename);
-    let links = `<span class="modal-link" onclick="openConvInLogs('${esc(convUuid)}')">💬 この会話を開く</span>`;
-    const sibs = filesData.filter(f => f.conv_uuid === convUuid && f.filename !== filename);
-    if (sibs.length) {
-      links += '<span class="links-label">同じ会話のファイル:</span>' +
-        sibs.map(s => `<span class="modal-link" onclick="openFile('${esc(s.conv_uuid)}','${esc(s.filename)}','${esc(s.conv_name)}')">📄 ${esc(s.filename)}</span>`).join('');
+    let links = '';
+    if (convUuid && convUuid.trim()) {
+      links = `<span class="modal-link" onclick="openConvInLogs('${esc(convUuid)}')">💬 この会話を開く</span>`;
+      const sibs = filesData.filter(f => f.conv_uuid === convUuid && f.filename !== filename);
+      if (sibs.length) {
+        links += '<span class="links-label">同じ会話のファイル:</span>' +
+          sibs.map(s => `<span class="modal-link" onclick="openFile('${esc(s.conv_uuid)}','${esc(s.filename)}','${esc(s.conv_name)}')">📄 ${esc(s.filename)}</span>`).join('');
+      }
     }
     setModalLinks(links);
     openModal();

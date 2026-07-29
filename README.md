@@ -283,9 +283,9 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `album_save` | Save an image to the album. Downloads from URL (direct or HTML page — auto-extracts from og:image/img tags) or reads from NAS local path, resizes to max 1024px long side (Pillow), saves image + metadata JSON to `/data/album/` | `url`, `file_path`, `comment`, `tags` |
-| `album_read` | Read an album image. Returns MCP image content (base64) + metadata JSON | `id` |
-| `album_list` | List album image metadata (no image data). Filter by tags | `tags` |
+| `album_save` | Save an image to the album. Downloads from URL (direct or HTML page — auto-extracts from og:image/img tags) or reads from NAS local path, resizes to max 1024px long side (Pillow), saves image + metadata JSON to `/data/album/`. Supports `rating` (safe/mature/adult) and `guard_message` (curtain message shown before adult images, v3.77) | `url`, `file_path`, `comment`, `tags`, `rating`, `guard_message` |
+| `album_read` | Read an album image. Returns MCP image content (base64) + metadata JSON. Adult images hidden by default (`include_adult=true` to view); `guard_message` triggers two-step reveal (`acknowledged=true`); logs `viewer` to `view_log` (v3.77) | `id`, `include_adult`, `acknowledged`, `viewer` |
+| `album_list` | List album image metadata (no image data). Filter by tags. Adult images excluded by default (`include_adult=true` to include, v3.77) | `tags`, `include_adult` |
 | `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
 | `album_delete` | Permanently delete an album image and its metadata (v3.55) | `id` |
 

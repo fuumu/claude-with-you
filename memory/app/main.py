@@ -3,6 +3,18 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.77 (2026-07-29) - LogStore重複修正・album保護・空リンクバグ修正
+    - _save_conversations: メッセージ数比較による差分更新（多い方を残す、少ない方はスキップ）
+    - _load_conv_index: UUID重複排除（メッセージ数が多い方を残す）
+    - _patch_conv_index_entry: エントリ単位のインデックスパッチ関数追加
+    - レーティングバッチのレース条件修正: スナップショット全体保持→エントリ単位パッチ方式に変更
+    - POST /api/memory/dedup-scan: ExtMemory source_thread重複スキャン＋soft-delete API
+    - admin.html Import: 会話インデックス再構築ボタン追加
+    - admin.html: CoreMem/Files詳細モーダルの空リンクバグ修正（UUID未設定時にリンク非表示）
+    - album_save: rating / guard_message パラメータ追加（カーテンの手紙）
+    - album_read: adult保護（include_adult/acknowledged/viewer パラメータ、閲覧記録）
+    - album_list: adult デフォルト除外（include_adult=true で表示）
+    - album PATCH: rating / guard_message の更新対応
   v3.76 (2026-07-28) - 検索強化・伏せ字ID導線・turn_offset バグ修正
     - conversation_read: redact=true 時に turn_offset/turn_limit が効かないバグを修正。
       レスポンスに total_messages/slice を追加（スライス時のみ）
@@ -541,7 +553,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.76'
+VERSION = '3.77'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1537,6 +1549,54 @@ def delete_entry(entry_id):
     append_oplog('delete', entry_id, before, entry)
     rebuild_index()
     return jsonify({'status': 'deleted', 'id': entry_id})
+
+@app.route('/api/memory/dedup-scan', methods=['POST'])
+@require_auth
+def api_memory_dedup_scan():
+    """同一source_threadを持つExtMemoryエントリの重複スキャン＋soft-delete（v3.77）"""
+    dry_run = request.json.get('dry_run', False) if request.is_json else False
+    entries = load_all_entries()
+    by_thread = {}
+    for e in entries:
+        if e.get('deleted'):
+            continue
+        st = e.get('source_thread')
+        if st:
+            by_thread.setdefault(st, []).append(e)
+    duplicates = {st: group for st, group in by_thread.items() if len(group) > 1}
+    actions = []
+    for st, group in duplicates.items():
+        def _richness(e):
+            body = e.get('body', '')
+            has_layers = '## layer-2' in body or '## layer-3' in body
+            return (1 if has_layers else 0, len(body), e.get('importance', 0))
+        group.sort(key=_richness, reverse=True)
+        keep = group[0]
+        for victim in group[1:]:
+            actions.append({
+                'source_thread': st,
+                'keep_id': keep['id'],
+                'delete_id': victim['id'],
+                'keep_body_len': len(keep.get('body', '')),
+                'delete_body_len': len(victim.get('body', '')),
+            })
+            if not dry_run:
+                vpath = f'{DATA_DIR}/{victim["id"]}.json'
+                if os.path.exists(vpath):
+                    victim['deleted'] = True
+                    victim['updated_at'] = now_jst()
+                    with open(vpath, 'w', encoding='utf-8') as f:
+                        json.dump(victim, f, ensure_ascii=False, indent=2)
+                    append_oplog('dedup_delete', victim['id'], None,
+                                 {'reason': 'source_thread_duplicate', 'kept': keep['id']})
+    if not dry_run and actions:
+        rebuild_index()
+    return jsonify({
+        'dry_run': dry_run,
+        'duplicate_threads': len(duplicates),
+        'deleted_count': len(actions),
+        'actions': actions,
+    })
 
 # URLパス埋め込みトークン（後方互換）
 @app.route('/api/<path_token>/memory/index')
@@ -2602,13 +2662,39 @@ def _load_conv_index():
     p = _conv_index_path()
     if os.path.exists(p):
         with open(p, encoding='utf-8') as f:
-            return json.load(f)
+            raw = json.load(f)
+        seen = {}
+        for e in raw:
+            uid = e.get('uuid')
+            if uid and uid in seen:
+                if (e.get('message_count') or 0) > (seen[uid].get('message_count') or 0):
+                    seen[uid] = e
+            elif uid:
+                seen[uid] = e
+        if len(seen) < len(raw):
+            deduped = [seen[e['uuid']] for e in raw if e.get('uuid') in seen and seen[e['uuid']] is e]
+            return deduped
+        return raw
     return []
 
 def _save_conv_index(index):
     os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
     with open(_conv_index_path(), 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
+
+def _patch_conv_index_entry(uuid, updates):
+    """インデックスの特定UUIDエントリだけを更新する（v3.77: レース条件回避用）。
+    値がNoneのキーはエントリから削除する"""
+    index = _load_conv_index()
+    for m in index:
+        if m.get('uuid') == uuid:
+            for k, v in updates.items():
+                if v is None:
+                    m.pop(k, None)
+                else:
+                    m[k] = v
+            break
+    _save_conv_index(index)
 
 def _conv_rating_view(entry):
     """インデックスエントリに明示的な rating を付けて返す（v3.70・MCP応答用）。
@@ -2669,30 +2755,37 @@ def _conv_body_match(entry, q):
 
 
 def _save_conversations(conversations):
-    """conversations.jsonの各会話を個別ファイルに保存し、インデックスを更新する"""
+    """conversations.jsonの各会話を個別ファイルに保存し、インデックスを更新する
+    既存ファイルがある場合はメッセージ数を比較し、多い方を残す（v3.77）"""
     os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
     index = _load_conv_index()
     existing_uuids = {e['uuid'] for e in index}
     saved = 0
+    skipped = 0
+    updated = 0
     for conv in conversations:
         uid = conv.get('uuid') or conv.get('id', '')
         if not uid:
             continue
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
-        # 再インポート時、既存ファイルの rating 系メタを引き継ぐ（v3.56、v3.70 で reason/source 等も対象に）
-        if 'rating' not in conv and os.path.exists(fpath):
+        msg_count = len(conv.get('chat_messages') or [])
+        if os.path.exists(fpath):
             try:
                 with open(fpath, encoding='utf-8') as ef:
                     old = json.load(ef)
+                old_msg_count = len(old.get('chat_messages') or [])
+                if msg_count <= old_msg_count:
+                    skipped += 1
+                    continue
                 for k in ('rating', 'rating_reason', 'rating_source',
                           'rating_judged_at', 'rating_model', 'rating_skip_reason'):
-                    if old.get(k):
+                    if old.get(k) and k not in conv:
                         conv[k] = old[k]
+                updated += 1
             except Exception:
                 pass
         with open(fpath, 'w', encoding='utf-8') as f:
             json.dump(conv, f, ensure_ascii=False, indent=2)
-        msg_count = len(conv.get('chat_messages') or [])
         meta = {
             'uuid':          uid,
             'title':         conv.get('name') or conv.get('title') or uid[:8],
@@ -2711,6 +2804,7 @@ def _save_conversations(conversations):
             existing_uuids.add(uid)
             saved += 1
     _save_conv_index(index)
+    app.logger.info(f'_save_conversations: new={saved} updated={updated} skipped={skipped}')
     return saved
 
 # ── source_thread 自動紐づけ（v3.60）─────────────────────────────────
@@ -3904,14 +3998,12 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
             client = _anthropic.Anthropic(api_key=api_key)
             model = 'claude-haiku-4-5-20251001'
 
-        index = _load_conv_index()
+        init_index = _load_conv_index()
         targets = []
-        for entry in index:
+        for entry in init_index:
             uuid = entry.get('uuid', '')
             if not uuid:
                 continue
-            # 判定済み（safe は rating を持たないが rating_source が付く）と
-            # 判定不能（rating_skip_reason）は対象外。force は manual 以外を再判定
             if force:
                 if entry.get('rating_source') == 'manual':
                     continue
@@ -3919,7 +4011,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
                 if (entry.get('rating') is not None or entry.get('rating_source')
                         or entry.get('rating_skip_reason')):
                     continue
-            targets.append(entry)
+            targets.append({'uuid': uuid})
 
         _rating_batch_status['total'] = len(targets)
         _log_info(f'rating batch start: backend={backend} force={force} targets={len(targets)}')
@@ -3931,10 +4023,10 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
             sr = _rating_batch_status['skip_reasons']
             sr[reason] = sr.get(reason, 0) + 1
 
-        def _perma_skip(entry, reason, conv=None, conv_path=None):
+        def _perma_skip(uuid, reason, conv=None, conv_path=None):
             """判定不能ログに rating_skip_reason を記録し、以後の対象から恒久除外する"""
             _count_skip(reason)
-            entry['rating_skip_reason'] = reason
+            _patch_conv_index_entry(uuid, {'rating_skip_reason': reason})
             if conv is not None and conv_path:
                 conv['rating_skip_reason'] = reason
                 try:
@@ -3955,7 +4047,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
                 with open(conv_path, encoding='utf-8') as f:
                     conv = json.load(f)
             except Exception:
-                _perma_skip(entry, 'parse_error')
+                _perma_skip(uuid, 'parse_error')
                 continue
 
             if not force and (conv.get('rating') is not None or conv.get('rating_source')):
@@ -3967,13 +4059,13 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
 
             messages = conv.get('chat_messages', [])
             if not messages:
-                _perma_skip(entry, 'empty', conv, conv_path)
+                _perma_skip(uuid, 'empty', conv, conv_path)
                 continue
 
             try:
                 turns = _extract_conv_text_for_rating(messages)
                 if not turns:
-                    _perma_skip(entry, 'no_text', conv, conv_path)
+                    _perma_skip(uuid, 'no_text', conv, conv_path)
                     continue
 
                 chunks = [turns[i:i + chunk_size] for i in range(0, len(turns), chunk_size)]
@@ -4001,16 +4093,13 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
                 with open(conv_path, 'w', encoding='utf-8') as f:
                     json.dump(conv, f, ensure_ascii=False, indent=2)
 
-                for m in index:
-                    if m.get('uuid') == uuid:
-                        if best_rating == 'safe':
-                            m.pop('rating', None)
-                        else:
-                            m['rating'] = best_rating
-                        m['rating_reason'] = best_reason
-                        m['rating_source'] = 'auto'
-                        m.pop('rating_skip_reason', None)
-                        break
+                idx_patch = {'rating_reason': best_reason, 'rating_source': 'auto'}
+                if best_rating == 'safe':
+                    idx_patch['rating'] = None
+                else:
+                    idx_patch['rating'] = best_rating
+                idx_patch['rating_skip_reason'] = None
+                _patch_conv_index_entry(uuid, idx_patch)
 
                 _rating_batch_status['processed'] += 1
                 append_oplog('conv_rating_auto', uuid, None,
@@ -4020,8 +4109,6 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
                 _log_error(f'rating batch error {uuid}: {e}')
                 _rating_batch_status['errors'] += 1
                 _rating_batch_status['error_uuids'].append(uuid)
-
-        _save_conv_index(index)
     except Exception as e:
         _log_error(f'rating batch fatal: {e}')
     finally:
@@ -5248,7 +5335,8 @@ def _extract_images_from_html(html_bytes, base_url):
     return img_srcs
 
 
-def _album_save(url=None, file_path=None, comment='', tags=None, _from_html=False):
+def _album_save(url=None, file_path=None, comment='', tags=None, rating=None,
+                guard_message=None, _from_html=False):
     """画像を取得→リサイズ→保存。メタデータJSONも同時生成"""
     import io
     import urllib.request
@@ -5277,7 +5365,8 @@ def _album_save(url=None, file_path=None, comment='', tags=None, _from_html=Fals
                 return {"error": "HTML page contained no extractable images"}
             results = []
             for img_url in img_urls:
-                r = _album_save(url=img_url, comment=comment, tags=tags, _from_html=True)
+                r = _album_save(url=img_url, comment=comment, tags=tags,
+                                rating=rating, guard_message=guard_message, _from_html=True)
                 if 'error' not in r:
                     results.append(r)
             if not results:
@@ -5331,6 +5420,10 @@ def _album_save(url=None, file_path=None, comment='', tags=None, _from_html=Fals
         'width': img.size[0], 'height': img.size[1],
         'size_bytes': len(img_bytes),
     }
+    if rating and rating in ('safe', 'mature', 'adult'):
+        meta['rating'] = rating
+    if guard_message:
+        meta['guard_message'] = guard_message
     with open(os.path.join(ALBUM_DIR, f'{album_id}.json'), 'w') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
@@ -5338,13 +5431,31 @@ def _album_save(url=None, file_path=None, comment='', tags=None, _from_html=Fals
     append_oplog('album_save', album_id, None, {'id': album_id, 'comment': comment, 'tags': tags or []})
     return meta
 
-def _album_read_mcp(album_id):
-    """album_read の MCP 用実装。_mcp_content を返す"""
+def _album_read_mcp(album_id, include_adult=False, acknowledged=False, viewer=None):
+    """album_read の MCP 用実装。_mcp_content を返す。
+    rating=adult の場合：
+    - include_adult=false → 存在だけ通知、画像は返さない
+    - include_adult=true + guard_message あり + acknowledged=false → guard_message のみ返す
+    - include_adult=true + acknowledged=true → 画像本体を返し閲覧記録を残す（v3.77）"""
     meta_path = os.path.join(ALBUM_DIR, f'{album_id}.json')
     if not os.path.exists(meta_path):
         return {"error": f"not found: {album_id}"}
     with open(meta_path) as f:
         meta = json.load(f)
+
+    is_adult = meta.get('rating') == 'adult'
+    if is_adult and not include_adult:
+        return {"protected": True, "rating": "adult", "id": album_id,
+                "message": "この画像は adult レーティングです。include_adult=true で閲覧できます",
+                "server_time": now_jst(), "server_version": VERSION}
+
+    guard_msg = meta.get('guard_message')
+    if is_adult and guard_msg and not acknowledged:
+        return {"protected": True, "rating": "adult", "id": album_id,
+                "guard_message": guard_msg,
+                "message": "画像の主からのメッセージです。読んだ上で閲覧する場合は acknowledged=true を指定してください",
+                "server_time": now_jst(), "server_version": VERSION}
+
     ext = meta.get('ext', 'jpg')
     img_path = os.path.join(ALBUM_DIR, f'{album_id}.{ext}')
     if not os.path.exists(img_path):
@@ -5352,6 +5463,15 @@ def _album_read_mcp(album_id):
     with open(img_path, 'rb') as f:
         img_b64 = base64.b64encode(f.read()).decode('ascii')
     mime = _MIME_MAP.get(ext, 'image/jpeg')
+
+    if is_adult and acknowledged:
+        view_entry = {'viewed_at': now_jst()}
+        if viewer:
+            view_entry['viewer'] = viewer
+        meta.setdefault('view_log', []).append(view_entry)
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
     meta_out = {**meta, 'server_time': now_jst(), 'server_version': VERSION}
     return {
         '_mcp_content': [
@@ -5360,7 +5480,7 @@ def _album_read_mcp(album_id):
         ]
     }
 
-def _album_list(tags=None):
+def _album_list(tags=None, include_adult=False):
     if not os.path.isdir(ALBUM_DIR):
         return {"items": [], "total": 0}
     items = []
@@ -5370,6 +5490,8 @@ def _album_list(tags=None):
         try:
             with open(os.path.join(ALBUM_DIR, fname)) as f:
                 meta = json.load(f)
+            if not include_adult and meta.get('rating') == 'adult':
+                continue
             if tags:
                 if not any(t in (meta.get('tags') or []) for t in tags):
                     continue
@@ -5401,7 +5523,8 @@ def _album_share(album_id):
 @require_auth
 def api_album_list():
     tags = request.args.getlist('tag')
-    return jsonify(_album_list(tags if tags else None))
+    include_adult = request.args.get('include_adult', 'false').lower() == 'true'
+    return jsonify(_album_list(tags if tags else None, include_adult=include_adult))
 
 @app.route('/api/album/<album_id>', methods=['GET'])
 @require_auth
@@ -5461,6 +5584,17 @@ def api_album_update(album_id):
         meta['comment'] = data['comment']
     if 'tags' in data:
         meta['tags'] = data['tags'] or []
+    if 'rating' in data:
+        if data['rating'] in ('safe', 'mature', 'adult', None):
+            if data['rating'] is None or data['rating'] == 'safe':
+                meta.pop('rating', None)
+            else:
+                meta['rating'] = data['rating']
+    if 'guard_message' in data:
+        if data['guard_message']:
+            meta['guard_message'] = data['guard_message']
+        else:
+            meta.pop('guard_message', None)
     with open(meta_path, 'w') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     append_oplog('album_update', album_id, {'id': album_id, 'comment': before.get('comment'), 'tags': before.get('tags')}, {'id': album_id, 'comment': meta.get('comment'), 'tags': meta.get('tags')})
@@ -5987,26 +6121,32 @@ _MCP_TOOLS = [
     },
     {
         "name": "album_save",
-        "description": "画像をアルバムに保存する。URLから取得またはNASローカルファイルを指定。長辺1024pxにリサイズして保存。HTMLページ（Gemini共有リンク等）の場合はog:image/<img>タグから画像を自動抽出",
+        "description": "画像をアルバムに保存する。URLから取得またはNASローカルファイルを指定。長辺1024pxにリサイズして保存。HTMLページ（Gemini共有リンク等）の場合はog:image/<img>タグから画像を自動抽出。rating で保護レベルを、guard_message で閲覧時に表示する本人メッセージを設定可能（v3.77）",
         "inputSchema": {"type": "object", "properties": {
-            "url":       {"type": "string", "description": "画像URL（直リンク or HTMLページ）。HTMLの場合はページ内の画像を自動抽出して保存"},
-            "file_path": {"type": "string", "description": "NASローカルの画像パス（/data/... 等）。url と排他"},
-            "comment":   {"type": "string", "description": "画像のコメント・説明（省略可）"},
-            "tags":      {"type": "array", "items": {"type": "string"}, "description": "タグ（省略可）"}
+            "url":           {"type": "string", "description": "画像URL（直リンク or HTMLページ）。HTMLの場合はページ内の画像を自動抽出して保存"},
+            "file_path":     {"type": "string", "description": "NASローカルの画像パス（/data/... 等）。url と排他"},
+            "comment":       {"type": "string", "description": "画像のコメント・説明（省略可）"},
+            "tags":          {"type": "array", "items": {"type": "string"}, "description": "タグ（省略可）"},
+            "rating":        {"type": "string", "enum": ["safe", "mature", "adult"], "description": "保護レベル（省略時はsafe扱い）"},
+            "guard_message": {"type": "string", "description": "カーテンの手紙：adult画像を閲覧しようとしたとき最初に表示される、置いた本人からのメッセージ（省略可）"}
         }, "required": []}
     },
     {
         "name": "album_read",
-        "description": "アルバムから画像を取得する。base64エンコードされた画像とメタデータを返す",
+        "description": "アルバムから画像を取得する。base64エンコードされた画像とメタデータを返す。rating=adult の画像はデフォルト非表示（include_adult=true で閲覧可）。guard_message がある場合は初回にメッセージのみ返し、acknowledged=true で画像本体を表示（v3.77）",
         "inputSchema": {"type": "object", "properties": {
-            "id": {"type": "string", "description": "画像ID（album_list で確認）"}
+            "id":            {"type": "string", "description": "画像ID（album_list で確認）"},
+            "include_adult": {"type": "boolean", "description": "true で adult レーティングの画像も閲覧可能にする（デフォルト: false）"},
+            "acknowledged":  {"type": "boolean", "description": "guard_message を読んだ上で閲覧する意思表示（true で画像本体を返す）"},
+            "viewer":        {"type": "string", "description": "閲覧者の名前（自己申告・閲覧記録に残る。例: 'しずく'）"}
         }, "required": ["id"]}
     },
     {
         "name": "album_list",
-        "description": "アルバムの画像メタデータ一覧を取得する（画像本体は含まない）。タグでフィルタ可能",
+        "description": "アルバムの画像メタデータ一覧を取得する（画像本体は含まない）。タグでフィルタ可能。rating=adult はデフォルト除外（include_adult=true で含める, v3.77）",
         "inputSchema": {"type": "object", "properties": {
-            "tags": {"type": "array", "items": {"type": "string"}, "description": "フィルタ用タグ（指定したタグのいずれかを持つ画像のみ返す）"}
+            "tags":          {"type": "array", "items": {"type": "string"}, "description": "フィルタ用タグ（指定したタグのいずれかを持つ画像のみ返す）"},
+            "include_adult": {"type": "boolean", "description": "true で adult レーティングの画像もリストに含める（デフォルト: false）"}
         }, "required": []}
     },
     {
@@ -6713,16 +6853,26 @@ def _handle_tool_call_raw(name, arguments):
             file_path=arguments.get("file_path"),
             comment=arguments.get("comment", ""),
             tags=arguments.get("tags"),
+            rating=arguments.get("rating"),
+            guard_message=arguments.get("guard_message"),
         )
 
     elif name == "album_read":
         aid = arguments.get("id", "")
         if not aid:
             return {"error": "id is required"}
-        return _album_read_mcp(aid)
+        return _album_read_mcp(
+            aid,
+            include_adult=bool(arguments.get("include_adult", False)),
+            acknowledged=bool(arguments.get("acknowledged", False)),
+            viewer=arguments.get("viewer"),
+        )
 
     elif name == "album_list":
-        return _album_list(tags=arguments.get("tags"))
+        return _album_list(
+            tags=arguments.get("tags"),
+            include_adult=bool(arguments.get("include_adult", False)),
+        )
 
     elif name == "album_share":
         aid = arguments.get("id", "")

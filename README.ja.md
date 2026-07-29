@@ -700,7 +700,9 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
        file_path（省略可 — NASローカルの画像パス。url と排他）
        comment（省略可 — 画像の説明）
        tags（省略可 — タグ配列）
-返値: {id, ext, comment, tags, source_url, original_filename, created_at, width, height, size_bytes}
+       rating（省略可 — "safe"/"mature"/"adult"。省略時はsafe扱い。v3.77）
+       guard_message（省略可 — カーテンの手紙。adult閲覧時に最初に表示される本人メッセージ。v3.77）
+返値: {id, ext, comment, tags, source_url, original_filename, created_at, width, height, size_bytes, rating?, guard_message?}
       HTMLページから複数画像を抽出した場合: {items: [{...}, ...], total: N}
 ※ 長辺1024pxにリサイズ（アスペクト比維持・Pillow使用）
 ※ /data/album/ に画像本体（{id}.{ext}）とメタデータ（{id}.json）を保存
@@ -711,14 +713,21 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 
 ```
 引数: id（必須）
+       include_adult（省略可 — true で adult 画像を閲覧可能にする。デフォルト false。v3.77）
+       acknowledged（省略可 — guard_message を読んだ上で画像を見る意思表示。v3.77）
+       viewer（省略可 — 閲覧者名。閲覧記録に残る。自己申告制。v3.77）
 返値: MCP image コンテンツ（base64エンコード画像）＋ メタデータJSON
 ※ MCPレスポンスの content に type:"image" と type:"text" を返す
+※ rating=adult の場合: include_adult なしで保護通知のみ、
+  guard_message ありの場合 acknowledged なしでメッセージのみ返却、
+  acknowledged=true で画像本体を返却し閲覧記録を view_log に残す
 ```
 
 ### album_list
 
 ```
 引数: tags（省略可 — フィルタ用タグ配列）
+       include_adult（省略可 — true で adult 画像もリストに含める。デフォルト false。v3.77）
 返値: {items: [{id, ext, comment, tags, ...}, ...], total: N}
 ※ 画像本体は含まない（メタデータのみ）
 ```

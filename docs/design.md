@@ -928,9 +928,9 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 
 | Tool | Description |
 |------|-------------|
-| `album_save` | Download from URL (direct link or HTML page — auto-extracts og:image/img tags, v3.52) or read from NAS local path → resize → save |
-| `album_read` | Return base64-encoded image as MCP image content + metadata |
-| `album_list` | List all image metadata (tag filter supported, no image data) |
+| `album_save` | Download from URL (direct link or HTML page — auto-extracts og:image/img tags, v3.52) or read from NAS local path → resize → save. `rating` (safe/mature/adult) and `guard_message` (curtain message) for protection (v3.77) |
+| `album_read` | Return base64-encoded image as MCP image content + metadata. Adult hidden by default (`include_adult=true` to view; `guard_message` triggers two-step reveal with `acknowledged=true`; view logged in `view_log`, v3.77) |
+| `album_list` | List image metadata (tag filter supported, no image data). Adult excluded by default (`include_adult=true` to include, v3.77) |
 | `album_share` | Generate a 24h auth-free share URL |
 | `album_delete` | Permanently delete an image and its metadata (irreversible, v3.55) |
 
@@ -941,7 +941,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 | GET | `/api/album/` | admin | List image metadata (`?tag=...` to filter) |
 | GET | `/api/album/<id>` | admin | Serve image file (browser-displayable) |
 | POST | `/api/album/upload` | admin | Upload image (multipart/form-data or URL) |
-| PATCH | `/api/album/<id>` | admin | Update metadata (comment, tags) |
+| PATCH | `/api/album/<id>` | admin | Update metadata (comment, tags, rating, guard_message) |
 | DELETE | `/api/album/<id>` | admin | Delete image + metadata (permanent) |
 | POST | `/api/album/<id>/share` | admin | Generate share URL (24h) |
 | GET | `/api/album/shared/<token>` | none | Shared image (24h limit) |
