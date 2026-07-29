@@ -383,7 +383,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 | **Logs** | Search and read full conversation history |
 | **Oplog** | Audit log of all data mutations (ExtMemory, CoreMem, Album, Uploads, conversation rating) |
 | **Friends** | Manage friend registrations — approve requests, issue access tokens, view usage |
-| **Album** | Image memory management (thumbnail grid, drag & drop upload, edit, delete, share, lightbox) |
+| **Album** | Image memory management (thumbnail grid, drag & drop upload, edit, delete, share, lightbox, rating badges, guard_message edit, view_log display; v3.78) |
 | **Uploads** | General-purpose file storage (PDF, text, etc. — upload, preview, download, ID copy) |
 | **Search** | Hierarchical search visualizer (4-column: Keywords / Summary / Symbolic / Raw body) |
 | **Redact** | Generate, preview and approve masked versions of adult-rated conversation logs (v3.69) |

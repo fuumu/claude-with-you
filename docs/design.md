@@ -938,7 +938,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/album/` | admin | List image metadata (`?tag=...` to filter) |
+| GET | `/api/album/` | admin | List image metadata (`?tag=...` to filter, `?include_adult=true` to include adult) |
 | GET | `/api/album/<id>` | admin | Serve image file (browser-displayable) |
 | POST | `/api/album/upload` | admin | Upload image (multipart/form-data or URL) |
 | PATCH | `/api/album/<id>` | admin | Update metadata (comment, tags, rating, guard_message) |
@@ -951,7 +951,9 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 - Responsive thumbnail grid (desktop ~4 columns, mobile 2 columns)
 - Upload panel (file selector or URL input + comment + tags)
 - Drag-and-drop support (v3.52): entire tab acts as drop zone, multi-file drop, visual highlight feedback
-- Click to open modal: full image, metadata editing (comment, tags), delete, share URL generation
+- Click to open modal: full image, metadata editing (comment, tags, rating, guard_message), delete, share URL generation
+- Rating badges on thumbnails (adult=red, mature=orange; v3.78)
+- View log display in detail modal (v3.78)
 
 ### MCP image content type
 

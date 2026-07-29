@@ -929,7 +929,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 
 | メソッド | パス | 認証 | 説明 |
 |---------|------|------|------|
-| GET | `/api/album/` | admin | 画像メタデータ一覧（`?tag=...` でフィルタ） |
+| GET | `/api/album/` | admin | 画像メタデータ一覧（`?tag=...` でフィルタ、`?include_adult=true` でadult含む） |
 | GET | `/api/album/<id>` | admin | 画像本体を返却（ブラウザで直接表示可） |
 | POST | `/api/album/upload` | admin | 画像アップロード（multipart/form-data or URL） |
 | PATCH | `/api/album/<id>` | admin | メタデータ更新（comment・tags・rating・guard_message） |
@@ -942,7 +942,9 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 - サムネイルグリッド表示（レスポンシブ: PC 約4列、モバイル 2列）
 - アップロードパネル（ファイル選択 or URL入力＋コメント＋タグ）
 - ドラッグ&ドロップ対応（v3.52）: タブ全体がドロップゾーン。複数ファイル同時ドロップ可、ドラッグオーバー時にハイライトフィードバック
-- クリックでモーダル拡大表示＋メタデータ編集（comment・tags）・削除・共有URL生成
+- クリックでモーダル拡大表示＋メタデータ編集（comment・tags・rating・guard_message）・削除・共有URL生成
+- adult/mature 画像にはサムネイル右上にratingバッジ表示（adult=赤、mature=オレンジ・v3.78）
+- 詳細モーダルに view_log（閲覧記録）表示（v3.78）
 
 ### MCP image content type
 
