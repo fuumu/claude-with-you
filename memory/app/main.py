@@ -3,6 +3,15 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.79 (2026-07-30) - 空記憶・空ログ一括掃除
+    - 要約バッチ: 空RAWフィルタ（conv_text+body < 50字 → 論理削除）
+    - 要約バッチ: 生成後の無内容パターン検知（「読み取れません」等 → 論理削除）
+    - POST /api/memory/cleanup-empty: ExtMemory空記憶の一括論理削除（[会話]+hex8 / 会話ログ+summarized / low）
+    - POST /api/conversations/cleanup-empty: LogStore空ログの一括hidden化（rating_skip_reason=no_text/empty + hex8タイトル）
+    - conversation_index / search / rating統計 / 統合検索: hidden エントリ除外
+    - _rating_index_counts: hidden件数を別途返却
+    - conversations/index/rebuild: hidden フラグを旧インデックスから保全
+    - generate_summary_layers.py: 同一の空RAW/無内容パターンフィルタ追加
   v3.78 (2026-07-29) - Admin album タブ adult画像表示対応
     - admin.html: album一覧で include_adult=true を使用し全画像を管理画面に表示
     - admin.html: サムネイルにratingバッジ（adult=赤、mature=オレンジ）追加
@@ -557,7 +566,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.78'
+VERSION = '3.79'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1088,7 +1097,10 @@ def api_conversations_index():
     search = request.args.get('search', '').lower()
     limit  = min(int(request.args.get('limit',  50)), 500)
     offset = max(int(request.args.get('offset',  0)), 0)
+    include_hidden = request.args.get('include_hidden', '').lower() in ('true', '1')
     index  = _load_conv_index()
+    if not include_hidden:
+        index = [e for e in index if not e.get('hidden')]
     if search:
         index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
     index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
@@ -1101,6 +1113,8 @@ def api_conversations_index():
 def api_conversations_index_rebuild():
     rebuilt = 0
     new_index = []
+    # v3.79: hidden フラグは会話JSONに保存されないため、旧インデックスから引き継ぐ
+    old_index = {e.get('uuid'): e for e in _load_conv_index()}
     if os.path.isdir(CONVERSATIONS_DIR):
         for fname in os.listdir(CONVERSATIONS_DIR):
             if not fname.endswith('.json') or fname.startswith('_'):
@@ -1121,18 +1135,51 @@ def api_conversations_index_rebuild():
                 'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
                 'message_count': len(conv.get('chat_messages') or []),
             }
-            # rating 系メタは会話ファイルから引き継ぐ（v3.70: 従来は rebuild で消えていた）
-            # model / source は出席簿の個体推定に使う（v3.71）
             for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason',
                       'model', 'source'):
                 if conv.get(k):
                     meta[k] = conv[k]
+            old = old_index.get(uid)
+            if old and old.get('hidden'):
+                meta['hidden'] = True
             new_index.append(meta)
             rebuilt += 1
     new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     _save_conv_index(new_index)
     _log_info(f'conversations_index_rebuild: rebuilt={rebuilt}')
     return jsonify({'rebuilt': rebuilt})
+
+@app.route('/api/conversations/cleanup-empty', methods=['POST'])
+@require_auth
+def api_conversations_cleanup_empty():
+    """空ログの一括hidden化（v3.79）。
+    rating_skip_reason が no_text/empty かつ タイトルがhex8文字のみ のログに hidden=true をセット"""
+    dry_run = request.json.get('dry_run', False) if request.is_json else False
+    _hex8_re = re.compile(r'^[0-9a-f]{8}$')
+    index = _load_conv_index()
+    actions = []
+    for e in index:
+        if e.get('hidden'):
+            continue
+        skip_reason = e.get('rating_skip_reason', '')
+        title = e.get('title', '')
+        if skip_reason not in ('no_text', 'empty'):
+            continue
+        if not _hex8_re.match(title):
+            continue
+        actions.append({'uuid': e.get('uuid', ''), 'title': title, 'skip_reason': skip_reason})
+        if not dry_run:
+            e['hidden'] = True
+    if not dry_run and actions:
+        _save_conv_index(index)
+        _log_info(f'conversations cleanup-empty: hidden {len(actions)} entries')
+    return jsonify({
+        'dry_run': dry_run,
+        'hidden_count': len(actions),
+        'entries': actions[:50],
+        'total_matched': len(actions),
+    })
+
 
 @app.route('/api/conversations/<uuid>')
 @require_auth
@@ -1601,6 +1648,43 @@ def api_memory_dedup_scan():
         'deleted_count': len(actions),
         'actions': actions,
     })
+
+@app.route('/api/memory/cleanup-empty', methods=['POST'])
+@require_auth
+def api_memory_cleanup_empty():
+    """空記憶の一括論理削除（v3.79）。
+    タイトルが「[会話] + hex8文字」・tags に 会話ログ+summarized・importance=low のエントリを対象"""
+    dry_run = request.json.get('dry_run', False) if request.is_json else False
+    entries = load_all_entries()
+    actions = []
+    for e in entries:
+        if e.get('deleted'):
+            continue
+        title = e.get('title', '')
+        tags = e.get('tags') or []
+        importance = e.get('importance', '')
+        if (not _EMPTY_CONV_TITLE_RE.match(title)
+                or '会話ログ' not in tags or 'summarized' not in tags
+                or importance != 'low'):
+            continue
+        actions.append({'id': e['id'], 'title': title})
+        if not dry_run:
+            path = f'{DATA_DIR}/{e["id"]}.json'
+            if os.path.exists(path):
+                e['deleted'] = True
+                e['updated_at'] = now_jst()
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(e, f, ensure_ascii=False, indent=2)
+                append_oplog('cleanup_empty_delete', e['id'], None,
+                             {'reason': 'empty_summary_entry', 'title': title})
+    if not dry_run and actions:
+        rebuild_index()
+    return jsonify({
+        'dry_run': dry_run,
+        'deleted_count': len(actions),
+        'entries': actions,
+    })
+
 
 # URLパス埋め込みトークン（後方互換）
 @app.route('/api/<path_token>/memory/index')
@@ -3534,6 +3618,18 @@ SUMMARY_MARKER = '## 2層: 要約'
 LAYER3_MARKER  = '## 3層:'
 LAYER4_MARKER  = '## 4層:'
 
+_EMPTY_SUMMARY_PATTERNS = [
+    '読み取れません', '具体的な内容は', '識別子としての性質',
+    '推測されます', '内容を読み取ることができ', '識別子的な',
+    '内容は不明', '情報が含まれていません',
+]
+_EMPTY_CONV_TITLE_RE = re.compile(r'^\[会話\] [0-9a-f]{8}$')
+
+def _is_empty_summary(text: str) -> bool:
+    if not text or len(text.strip()) < 10:
+        return True
+    return any(p in text for p in _EMPTY_SUMMARY_PATTERNS)
+
 
 def _extract_summary(body: str) -> str:
     """body から2層要約セクションのテキストを取り出す。マーカーがなければ先頭300字"""
@@ -3670,6 +3766,8 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
     if include_conversations:
         conv_hits = []
         for m in _load_conv_index():
+            if m.get('hidden'):
+                continue
             if m.get('rating') == 'adult' and not include_adult:
                 continue
             if _all_terms_in(terms, str(m.get('title') or '').lower()):
@@ -3807,6 +3905,19 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                     except Exception:
                         pass
 
+            # v3.79: 空RAWフィルタ — conv_textもbodyも中身がなければ要約生成せず論理削除
+            raw_body = body.strip()
+            if not conv_text and len(raw_body) < 50:
+                _log_info(f'batch summary: empty raw, soft-deleting {entry_id}')
+                entry['deleted'] = True
+                entry['updated_at'] = now_jst()
+                with open(path, 'w') as ef:
+                    json.dump(entry, ef, ensure_ascii=False, indent=2)
+                append_oplog('batch_empty_delete', entry_id, None,
+                             {'reason': 'empty_raw', 'body_len': len(raw_body)})
+                _batch_status['skipped'] += 1
+                continue
+
             if conv_text:
                 prompt = (
                     f'以下はClaude.aiの会話ログです。内容を読んで要約と圧縮表現を生成してください。\n\n'
@@ -3832,6 +3943,20 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                     messages=[{'role': 'user', 'content': prompt}]
                 )
                 layers, keywords = _split_layers_and_keywords(msg.content[0].text)
+
+                # v3.79: 生成後の無内容パターン検知 — ゴミ要約なら論理削除
+                summary_text = _extract_summary(layers)
+                if _is_empty_summary(summary_text):
+                    _log_info(f'batch summary: empty summary detected, soft-deleting {entry_id}')
+                    entry['deleted'] = True
+                    entry['updated_at'] = now_jst()
+                    with open(path, 'w') as ef:
+                        json.dump(entry, ef, ensure_ascii=False, indent=2)
+                    append_oplog('batch_empty_delete', entry_id, None,
+                                 {'reason': 'empty_summary', 'summary': summary_text[:100]})
+                    _batch_status['skipped'] += 1
+                    continue
+
                 new_body = (body.strip() + '\n\n' + layers).strip() if body.strip() else layers
                 tags     = [t for t in (entry.get('tags') or []) if t != 'raw']
                 if 'summarized' not in tags:
@@ -4006,7 +4131,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
         targets = []
         for entry in init_index:
             uuid = entry.get('uuid', '')
-            if not uuid:
+            if not uuid or entry.get('hidden'):
                 continue
             if force:
                 if entry.get('rating_source') == 'manual':
@@ -4124,11 +4249,13 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
 
 def _count_pending_ratings():
     """未判定の会話ログ件数（= 次回バッチの対象件数）を返す。
-    判定済み（rating / rating_source あり）と判定不能（rating_skip_reason あり）は含まない"""
+    判定済み（rating / rating_source あり）と判定不能（rating_skip_reason あり）は含まない。
+    v3.79: hidden エントリは除外"""
     try:
         index = _load_conv_index()
         return sum(1 for e in index
-                   if e.get('rating') is None and e.get('rating_source') is None
+                   if not e.get('hidden')
+                   and e.get('rating') is None and e.get('rating_source') is None
                    and not e.get('rating_skip_reason'))
     except Exception:
         return None
@@ -4136,10 +4263,14 @@ def _count_pending_ratings():
 
 def _rating_index_counts():
     """会話インデックス全体のレーティング分布を返す（v3.70）。
-    safe = 判定済みで rating なし / unrated = 未判定 / unjudgeable = 判定不能（skip理由つき）"""
-    counts = {'safe': 0, 'mature': 0, 'adult': 0, 'unrated': 0, 'unjudgeable': 0, 'total': 0}
+    safe = 判定済みで rating なし / unrated = 未判定 / unjudgeable = 判定不能（skip理由つき）。
+    v3.79: hidden エントリは除外（hidden 件数を別途返す）"""
+    counts = {'safe': 0, 'mature': 0, 'adult': 0, 'unrated': 0, 'unjudgeable': 0, 'hidden': 0, 'total': 0}
     try:
         for e in _load_conv_index():
+            if e.get('hidden'):
+                counts['hidden'] += 1
+                continue
             counts['total'] += 1
             r = e.get('rating')
             if r in ('mature', 'adult'):
@@ -6461,7 +6592,7 @@ def _handle_tool_call_raw(name, arguments):
         offset = max(int(arguments.get("offset",  0)), 0)
         rating_filter = arguments.get("rating")
         include_redact_status = bool(arguments.get("include_redact_status", False))
-        index  = _load_conv_index()
+        index  = [e for e in _load_conv_index() if not e.get('hidden')]
         if search:
             index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
         if rating_filter:
@@ -6484,7 +6615,7 @@ def _handle_tool_call_raw(name, arguments):
         body_search = bool(arguments.get("body_search", False))
         rating_filter = arguments.get("rating")
         include_redact_status = bool(arguments.get("include_redact_status", False))
-        index     = _load_conv_index()
+        index     = [e for e in _load_conv_index() if not e.get('hidden')]
         if q and not body_search:
             index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
         if date_from:

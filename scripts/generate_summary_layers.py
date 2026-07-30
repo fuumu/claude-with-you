@@ -63,6 +63,17 @@ LAYER3_MARKER  = '## 3層:'
 LAYER4_MARKER  = '## 4層:'
 FORCE_REPROCESS = os.environ.get('FORCE_REPROCESS', 'false').lower() == 'true'
 
+_EMPTY_SUMMARY_PATTERNS = [
+    '読み取れません', '具体的な内容は', '識別子としての性質',
+    '推測されます', '内容を読み取ることができ', '識別子的な',
+    '内容は不明', '情報が含まれていません',
+]
+
+def _is_empty_summary(text: str) -> bool:
+    if not text or len(text.strip()) < 10:
+        return True
+    return any(p in text for p in _EMPTY_SUMMARY_PATTERNS)
+
 MODEL_CANDIDATES = {
     'anthropic': ['claude-haiku-4-5-20251001'],
     'lmstudio':  ['google/gemma-4-26b-a4b', 'qwen/qwen3.6-35b-a3b', 'liquid/lfm2-24b-a2b'],
@@ -281,6 +292,21 @@ def main(backend: str, model: str, dry_run: bool):
         if SUMMARY_MARKER in body:
             body = body[:body.index(SUMMARY_MARKER)].rstrip()
 
+        # 空RAWフィルタ: conv_textもbodyも中身がなければスキップ
+        conv_text = fetch_conv_text(entry.get('source_thread', ''))
+        raw_body = body.strip()
+        if not conv_text and len(raw_body) < 50:
+            print(f"[{i:>3}/{len(targets)}] EMPTY  {title[:55]} (soft-delete)")
+            if not dry_run:
+                try:
+                    api_patch(f'/api/memory/{urllib.parse.quote(entry_id, safe="")}',
+                              {'deleted': True})
+                except Exception as e:
+                    print(f"           ERROR: {e}")
+                    errors += 1
+            skipped += 1
+            continue
+
         print(f"[{i:>3}/{len(targets)}] 生成中 {title[:55]}")
 
         if dry_run:
@@ -288,9 +314,17 @@ def main(backend: str, model: str, dry_run: bool):
             continue
 
         try:
-            conv_text = fetch_conv_text(entry.get('source_thread', ''))
             llm_out   = generate_layers(client, model, title, conv_text)
             layers, keywords = split_layers_and_keywords(llm_out)
+
+            # 生成後の無内容パターン検知
+            summary_text = extract_summary(layers)
+            if _is_empty_summary(summary_text):
+                print(f"           EMPTY summary detected, soft-deleting")
+                api_patch(f'/api/memory/{urllib.parse.quote(entry_id, safe="")}',
+                          {'deleted': True})
+                skipped += 1
+                continue
 
             new_body = (body.strip() + '\n\n' + layers).strip() if body.strip() else layers
             tags = [t for t in (entry.get('tags') or []) if t != 'raw']

@@ -673,6 +673,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 返値（status_only）: {running, total, processed, errors, skipped, raw_pending, keywords_pending, ..., server_time}
 ※ 実行中に再度呼ぶと {error: "already running", status: {...}} を返す
 ※ 対象: raw エントリ（2層〜4層をフル生成）＋ keywords 未生成の summarized エントリ（キーワードのみ追加生成）
+※ v3.79: 空RAWフィルタ（conv_text+body < 50字 → 論理削除）、無内容パターン検知（「読み取れません」等 → 論理削除）
 ```
 
 ### batch_run_rating
@@ -1077,6 +1078,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - admin出席簿タブ（v3.74）— admin.html に出席簿（Attendance）タブ追加。REST `GET /api/attendance` エンドポイント新設（MCP attendance_view と同一ロジック流用・二重実装なし）。個体別サマリカード（最終稼働日・経過日数・件数を色分け表示: 1日以内=緑・7日以上=赤・中間=黄）→ クリックで履歴テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。期間フィルタ（date_from/date_to）・同期間の他個体活動サマリ付き
 - 検索強化・伏せ字ID導線・turn_offsetバグ修正（v3.76）— ① `conversation_read`: `redact=true` 時に `turn_offset`/`turn_limit` が効かないバグを修正（スライスが early return 前に適用されず常に先頭から返っていた）。スライス時のレスポンスに `total_messages`/`slice` を追加 ② `conversation_search`: `body_search=true` でメッセージ本文も検索対象に（タイトル不一致でも本文ヒットなら返す・重い操作のためオプトイン）、`rating` フィルタで特定レーティングのみ絞り込み、`include_redact_status=true` で adult 会話の伏せ字状態（not_generated/pending_approval/approved）を付与 ③ `conversation_index`: `rating` フィルタ・`include_redact_status` 追加（②と同仕様）④ REST API（TS層）: `GET /api/conversations/` および `GET /api/conversations/index` にも `rating` クエリパラメータ追加
 - inbox自動昇華パイプライン＋admin UI改善（v3.75）— ① inbox自動昇華: `inbox_post` で to=chat・タイトルに「【生】」を含む着弾時、原文を ExtMemory に `rating=adult` で即時退避→inbox本文をプレースホルダに差替え→非同期で `sublimate` 実行→結果で本文を更新（タイトルは【未承認】or【要人手】に変更）。処理中は inbox_check/read で生テキストが返らない（窓を塞ぐ）。承認は個体本人の運用のまま ② admin inbox: 期間常駐（expires_at）の表示（残り日数・色分け・期限切れ間近は赤）＋操作ボタン（期限変更・無期限昇格・期間化・期限解除）③ admin出席簿: uuid/memory_id/inbox_id をクリック可能なリンクに変更（admin内のLogs/Memory/Inboxタブへ内部遷移）
+- 空記憶・空ログ一括掃除（v3.79）— ① 要約バッチ（`_run_summary_batch` / `generate_summary_layers.py`）に空RAWフィルタ追加: conv_text+body が50字未満のエントリをLLM生成前に論理削除。生成後も「読み取れません」「識別子」等の無内容パターン検知で論理削除 ② `POST /api/memory/cleanup-empty`: タイトルが「[会話] + hex8文字」かつ tags に 会話ログ+summarized かつ importance=low のExtMemoryエントリを一括論理削除（dry_run対応） ③ `POST /api/conversations/cleanup-empty`: rating_skip_reason が no_text/empty かつ タイトルがhex8文字のみ のLogStoreエントリに `hidden=true` を一括設定（dry_run対応）。hidden エントリは conversation_index・conversation_search・rating統計・統合検索からデフォルト除外（REST `include_hidden=true` で表示可）。`_rating_index_counts` は hidden 件数を別途返却。`conversations/index/rebuild` は hidden フラグを旧インデックスから保全
 - file_read JSON対応強化＋OpenWebUIインポート＋admin.html改善（v3.66）— ① `file_read` に拡張子ベースのフォールバック追加（mimetype が不正でも `.json`/`.jsonl` 等のテキスト系ファイルは `content` フィールドに展開）② `POST /api/import/openwebui` 新設：OpenWebUI（ローカルLLM）のチャットエクスポート JSON を会話ストアに取り込み。messages 配列 / history.messages ツリー両対応、重複スキップ、要約バッチ自動起動。admin.html Import タブにドロップゾーン追加 ③ admin.html Uploads タブ：モーダルを他タブと統一（`openModal()` 使用）、IDコピー対応、ダークテーマ対応のプレビュー ④ admin.html Album タブ：画像クリックでライトボックス（最大化）表示。Escape で閉じる
 
 ---

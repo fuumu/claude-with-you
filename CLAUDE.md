@@ -90,6 +90,9 @@ Friend sessions (6 tools, exposed when `/mcp?token=<friend_token>` is used):
 - Auto-starts on ZIP import: uses `anthropic` backend if `ANTHROPIC_API_KEY` is set, otherwise falls back to `lmstudio` (v3.15)
 - Nightly scheduler (v3.16): daemon thread checks pending counts (raw + keywords-missing) daily at `MIO_NIGHTLY_BATCH_HOUR` (JST, default 3) and auto-starts the batch with `MIO_NIGHTLY_BATCH_BACKEND` (default `lmstudio`); set hour to `off` to disable
 - Layer generation (v3.17): the batch writes layer 2 (summary) + layer 3 (symbolic compression) into the entry `body` and layer 4 keywords into the entry `keywords` field (also included in `index.json`); entries with layers but no `keywords` field get a lightweight keywords-only backfill
+- Empty entry filter (v3.79): batch soft-deletes entries when conv_text is empty AND raw body < 50 chars, or when generated summary matches empty-content patterns ("読み取れません", "識別子", etc.)
+- `POST /api/memory/cleanup-empty` — bulk soft-delete ExtMemory entries matching: title `[会話] + hex8`, tags `会話ログ`+`summarized`, importance `low` (dry_run supported)
+- `POST /api/conversations/cleanup-empty` — bulk hide empty conversation logs matching: `rating_skip_reason` in (no_text, empty) AND title is hex-8 only (dry_run supported); hidden entries are excluded from `conversation_index`, `conversation_search`, rating statistics, and integrated search (v3.79); `GET /api/conversations/index?include_hidden=true` to include them; `conversations/index/rebuild` preserves `hidden` from existing index
 
 **Entry ID format:** `YYYYMMDD_HHMMSS_<first_tag_slug>` (e.g., `20260601_153000_会話メモ`).
 
