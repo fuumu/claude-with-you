@@ -144,6 +144,7 @@ def server():
         # 要約バッチが実LMStudioに接続しないよう到達不能な宛先に向ける
         'LM_STUDIO_HOST': '127.0.0.1',
         'LM_STUDIO_PORT': '1',
+        'MIO_IMPORT_AUTO_BATCH': 'off',
         'PYTHONIOENCODING': 'utf-8',
         # main.py は encoding 指定なしの open() が多い。本番（Linux/docker）は utf-8 だが
         # Windows ローカルは cp932 になるため、本番と同じ utf-8 に固定する

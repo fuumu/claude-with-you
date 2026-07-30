@@ -3,6 +3,15 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.80 (2026-07-30) - memory_search limitキャップ・conversation_read個体名表示・CoreMem_save str_replace・インポート後rating自動起動
+    - memory_search: limit=0（無制限）を廃止。上限100件にキャップ（負値・0はデフォルト10）
+    - REST /api/memory/hsearch: 同様にlimit上限100
+    - conversation_read: [assistant] 表示を出席簿の個体特定結果で [しずく] [そねみ] 等に差し替え
+      特定できない場合は [assistant] のまま（フォールバック）。会話単位の特定
+    - CoreMem_save: mode="str_replace" 追加（old_str/new_str による部分書き換え）
+      old_str が一意に見つかればそこだけ差し替え。見つからない/複数一致はエラー
+    - インポート完了時（ZIP/Claude Code/OpenWebUI）にレーティングバッチも自動起動
+      要約バッチに続いて非同期で走る。rating=null の放置期間を短縮
   v3.79 (2026-07-30) - 空記憶・空ログ一括掃除
     - 要約バッチ: 空RAWフィルタ（conv_text+body < 50字 → 論理削除）
     - 要約バッチ: 生成後の無内容パターン検知（「読み取れません」等 → 論理削除）
@@ -566,7 +575,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.79'
+VERSION = '3.80'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -858,7 +867,8 @@ def _link_or_copy_latest(rel_target: str, symlink_path: str):
         shutil.copyfile(src, symlink_path)
 
 
-def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None, mode: str = "overwrite") -> dict:
+def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None,
+                    mode: str = "overwrite", old_str: str = None, new_str: str = None) -> dict:
     name_slug = _name_slug(name)
     ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
 
@@ -871,7 +881,21 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
     version_filename = f'{next_num:03d}{ext}'
     version_path = os.path.join(versions_dir, version_filename)
 
-    if mode == "append" and existing:
+    if mode == "str_replace":
+        symlink_path = os.path.join(ARTIFACTS_DIR, name)
+        if not os.path.exists(symlink_path):
+            return {"error": f"file not found: {name}"}
+        if not old_str:
+            return {"error": "old_str is required for str_replace mode"}
+        with open(symlink_path, 'r', encoding='utf-8') as f:
+            existing_content = f.read()
+        count = existing_content.count(old_str)
+        if count == 0:
+            return {"error": "old_str not found in file"}
+        if count > 1:
+            return {"error": f"old_str matches {count} times (must be unique)"}
+        content = existing_content.replace(old_str, new_str if new_str is not None else '', 1)
+    elif mode == "append" and existing:
         symlink_path = os.path.join(ARTIFACTS_DIR, name)
         if os.path.exists(symlink_path):
             with open(symlink_path, 'r', encoding='utf-8') as f:
@@ -1506,7 +1530,7 @@ def api_memory_hsearch():
     q = request.args.get('q', '').strip()
     if not q:
         return jsonify({"results": [], "total": 0, "has_more": False})
-    limit  = int(request.args.get('limit', 30))
+    limit  = max(1, min(int(request.args.get('limit', 30)), 100))
     offset = int(request.args.get('offset', 0))
     return jsonify(_hierarchical_search(
         q, limit=limit, offset=offset, full_body=False,
@@ -3152,14 +3176,20 @@ def import_zip():
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
 
-    # インポート成功後、要約バッチを自動起動
+    # インポート成功後、要約バッチ＋レーティングバッチを自動起動
     # （ANTHROPIC_API_KEY があれば anthropic、なければ LMStudio バックエンドを使う）
-    if imported > 0:
+    # MIO_IMPORT_AUTO_BATCH=off で抑制可（テスト環境向け）
+    if imported > 0 and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
         ok, info = _start_summary_batch()
         if ok:
             _log_info(f'auto summary batch started: backend={info["backend"]}')
         else:
             _log_info(f'auto summary batch not started: {info.get("error")}')
+        ok_r, info_r = _start_rating_batch()
+        if ok_r:
+            _log_info(f'auto rating batch started: backend={info_r["backend"]}')
+        else:
+            _log_info(f'auto rating batch not started: {info_r.get("error")}')
 
     return jsonify(result)
 
@@ -3363,11 +3393,14 @@ def import_claude_code():
 
     _log_info(f'claude-code import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved}')
 
-    # インポート成功後、要約バッチを自動起動（ZIPインポートと同じ挙動）
-    if imported > 0:
+    # インポート成功後、要約バッチ＋レーティングバッチを自動起動（ZIPインポートと同じ挙動）
+    if imported > 0 and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
         ok, info = _start_summary_batch()
         if ok:
             _log_info(f'auto summary batch started: backend={info["backend"]}')
+        ok_r, info_r = _start_rating_batch()
+        if ok_r:
+            _log_info(f'auto rating batch started: backend={info_r["backend"]}')
 
     return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
                     'conversations_saved': conv_saved,
@@ -3601,10 +3634,13 @@ def import_openwebui():
 
     _log_info(f'openwebui import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved}')
 
-    if imported > 0:
+    if imported > 0 and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
         ok, info = _start_summary_batch()
         if ok:
             _log_info(f'auto summary batch started: backend={info["backend"]}')
+        ok_r, info_r = _start_rating_batch()
+        if ok_r:
+            _log_info(f'auto rating batch started: backend={info_r["backend"]}')
 
     return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
                     'conversations_saved': conv_saved,
@@ -3689,6 +3725,7 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
     クエリはスペース区切りで分割し各語をAND判定する（単語1つなら従来の部分一致と同じ）。
     include_conversations=True で会話ログのタイトル検索結果も conversations[] として併せて返す
     （統合検索・v3.61。rating=adult の会話は include_adult=True のときのみ含める）"""
+    limit = max(1, min(limit, 100))
     terms = _query_terms(q)
     index = []
     if os.path.exists(INDEX_FILE):
@@ -6060,7 +6097,7 @@ _MCP_TOOLS = [
         "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定。local_only / rating=adult のエントリはデフォルト除外。include_conversations=trueで会話ログのタイトル検索結果も conversations[] で併せて返す（統合検索・v3.61）",
         "inputSchema": {"type": "object", "properties": {
             "q":         {"type": "string", "description": "検索キーワード"},
-            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト10、0=無制限）"},
+            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト10、上限100）"},
             "offset":    {"type": "integer", "description": "スキップ件数（デフォルト0）"},
             "full_body": {"type": "boolean", "description": "trueで従来どおりbody全文も返す（デフォルトfalse=要約のみ）"},
             "include_local": {"type": "boolean", "description": "trueで local_only エントリも検索対象に含める（デフォルトfalse・v3.56）"},
@@ -6070,16 +6107,18 @@ _MCP_TOOLS = [
     },
     {
         "name": "CoreMem_save",
-        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う。mode=\"append\"で既存ファイルの末尾に追記（新バージョンとして保存）",
+        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う。mode=\"append\"で既存ファイルの末尾に追記、mode=\"str_replace\"でold_str→new_strの部分書き換え（全文送り直し不要）",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name":    {"type": "string", "description": "ファイル名（例: core.md、script.sh）"},
-                "content": {"type": "string"},
-                "mode":    {"type": "string", "description": "\"overwrite\"（デフォルト・全文書き換え）または \"append\"（既存末尾に追記）"},
+                "content": {"type": "string", "description": "保存する内容（overwrite/appendモード用。str_replaceモードでは不要）"},
+                "mode":    {"type": "string", "description": "\"overwrite\"（デフォルト・全文書き換え）/ \"append\"（既存末尾に追記）/ \"str_replace\"（old_strをnew_strに部分書き換え）"},
+                "old_str": {"type": "string", "description": "str_replaceモード用: 置換対象の文字列（ファイル内で一意に一致する必要あり）"},
+                "new_str": {"type": "string", "description": "str_replaceモード用: 置換後の文字列（空文字列で削除）"},
                 "source_conversation_uuid": {"type": "string", "description": "このファイルが生まれた会話のUUID（省略可）"}
             },
-            "required": ["name", "content"]
+            "required": ["name"]
         }
     },
     {
@@ -6502,12 +6541,21 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "CoreMem_save":
         n = arguments.get("name", "")
-        c = arguments.get("content", "")
+        m = arguments.get("mode", "overwrite")
         if not n:
             return {"error": "name is required"}
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
-        result = _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=arguments.get("mode", "overwrite"))
+        if m == "str_replace":
+            result = _artifacts_save(n, "", source_conversation_uuid=arguments.get("source_conversation_uuid"),
+                                     mode="str_replace",
+                                     old_str=arguments.get("old_str", ""),
+                                     new_str=arguments.get("new_str", ""))
+        else:
+            c = arguments.get("content", "")
+            result = _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=m)
+        if result.get('error'):
+            return result
         append_oplog('coremem_save', n, None, {'name': n, 'version': result.get('version')})
         return result
 
@@ -6674,6 +6722,7 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": f"conversation not found: {uid}"}
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
+        assistant_label = _resolve_individual(conv.get('model', '')) or 'assistant'
         # M-LOCAL-7（v3.56 + v3.69 三択分岐 + v3.76 turn_offset/turn_limit 適用）: rating=adult の閲覧制御
         # 優先順位: 1. include_raw=true → 原文  2. redact=true → 承認済み伏せ字  3. デフォルト → 伏せ字 or safeダイジェスト
         if conv.get('rating') == 'adult' and not bool(arguments.get('include_raw', False)):
@@ -6688,7 +6737,7 @@ def _handle_tool_call_raw(name, arguments):
                 else:
                     r_lo = min(turn_offset, total_redacted)
                 r_hi = min(r_lo + turn_limit, total_redacted) if turn_limit > 0 else total_redacted
-                lines = [f'[{rm["role"]}] {rm["text"]}' for rm in redacted_msgs[r_lo:r_hi]]
+                lines = [f'[{assistant_label if rm["role"] == "assistant" else rm["role"]}] {rm["text"]}' for rm in redacted_msgs[r_lo:r_hi]]
                 body = '\n\n'.join(lines)
                 result = {"uuid": uid, "title": conv.get('name', ''), "rating": "adult",
                           "gated": True, "redacted": True,
@@ -6748,6 +6797,8 @@ def _handle_tool_call_raw(name, arguments):
             if slicing_active and not (slice_lo < no <= slice_hi):
                 continue
             role    = m.get('sender') or m.get('role') or '?'
+            if role == 'assistant':
+                role = assistant_label
             content = m.get('content') or m.get('text') or ''
             text    = ''
             if isinstance(content, list):

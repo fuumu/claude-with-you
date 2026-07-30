@@ -129,6 +129,11 @@ cp .env_sample .env
 ```
 
 `.env` を編集して `MIO_API_TOKEN` を設定する。これが認証の要になる。
+既に `.env` がある場合は、マージスクリプトで `.env_sample` の新規項目だけを追加できる：
+
+```bash
+bash scripts/update-env.sh        # 差分を確認してから適用（--yes で確認スキップ）
+```
 
 ```env
 MIO_API_TOKEN=your_secret_token_here
@@ -256,7 +261,7 @@ nginx で `your-domain.com/` → `localhost:5002` にプロキシ設定。
 
 **重要度（importance）：** `high` / `normal` / `low`
 
-**検索の仕組み：** `memory_search` はタイトル・本文・タグを全文検索。`limit`（デフォルト10）と `offset` でページングできる。
+**検索の仕組み：** `memory_search` はタイトル・本文・タグを全文検索。`limit`（デフォルト10、上限100）と `offset` でページングできる。
 
 **使用例：**
 ```
@@ -523,11 +528,14 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ### CoreMem_save
 
 ```
-引数: name（必須）, content（必須）, source_conversation_uuid（省略可）,
-       mode（省略可 — "overwrite"（デフォルト） / "append"。v3.31/v3.32）
+引数: name（必須）, content（overwrite/append時は必須）, source_conversation_uuid（省略可）,
+       mode（省略可 — "overwrite"（デフォルト） / "append" / "str_replace"（v3.80））,
+       old_str（str_replace時のみ必須）, new_str（str_replace時のみ・空文字列で削除）
 返値: {name, version, version_str, server_time}
 ※ mode="append" 時は既存ファイル末尾に "\n---\n<!-- APPEND {datetime} -->\n" を挿入して追記し、
    新バージョンとして保存する（境界を明示するセパレーター自動挿入）
+※ mode="str_replace" 時は old_str をファイル内で検索し、一意に一致する場合のみ new_str に
+   置換して新バージョンとして保存。全文送り直し不要（v3.80）
 ```
 
 ### CoreMem_read
@@ -630,7 +638,9 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
        include_body（省略可, bool, デフォルト true — v3.33）,
        turn_offset（省略可, int — 先頭から飛ばすメッセージ数。負値で末尾起点。デフォルト0。v3.47）,
        turn_limit（省略可, int — 返す最大メッセージ数。0で無制限。デフォルト0。v3.47）
-返値: 会話全文テキスト（[role] 形式） + server_time
+返値: 会話全文テキスト（[個体名] 形式） + server_time
+※ [assistant] を会話のモデル情報から個体名に差し替えて表示（[しずく] [そねみ] 等。v3.80）
+   特定できない場合は [assistant] のまま
 ※ include_thinking=true で thinking ブロックを 💭[thinking] マーカー付きで含める
    （メッセージ上限が500→2000字（または thinking_limit+500）に緩和。v3.20）
 ※ include_annotations=true で log_annotate の注記を該当位置にインライン表示し、
@@ -1024,7 +1034,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.76）**
+**実装済み（v3.9〜v3.80）**
 - お友達システム — 登録申請・メール承認・専用 MCP セッション・記憶管理（v3.9〜v3.12）
 - `CoreMem_delete` ツール・`DELETE /api/coremem/<name>`・logs.html Unicode 表示修正（v3.13）
 - admin/logs UI 改善 — モーダル強化（先頭表示・スクロール・最大化・IDコピー）、チャット↔ファイル双方向リンク（v3.14）
@@ -1078,6 +1088,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - admin出席簿タブ（v3.74）— admin.html に出席簿（Attendance）タブ追加。REST `GET /api/attendance` エンドポイント新設（MCP attendance_view と同一ロジック流用・二重実装なし）。個体別サマリカード（最終稼働日・経過日数・件数を色分け表示: 1日以内=緑・7日以上=赤・中間=黄）→ クリックで履歴テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。期間フィルタ（date_from/date_to）・同期間の他個体活動サマリ付き
 - 検索強化・伏せ字ID導線・turn_offsetバグ修正（v3.76）— ① `conversation_read`: `redact=true` 時に `turn_offset`/`turn_limit` が効かないバグを修正（スライスが early return 前に適用されず常に先頭から返っていた）。スライス時のレスポンスに `total_messages`/`slice` を追加 ② `conversation_search`: `body_search=true` でメッセージ本文も検索対象に（タイトル不一致でも本文ヒットなら返す・重い操作のためオプトイン）、`rating` フィルタで特定レーティングのみ絞り込み、`include_redact_status=true` で adult 会話の伏せ字状態（not_generated/pending_approval/approved）を付与 ③ `conversation_index`: `rating` フィルタ・`include_redact_status` 追加（②と同仕様）④ REST API（TS層）: `GET /api/conversations/` および `GET /api/conversations/index` にも `rating` クエリパラメータ追加
 - inbox自動昇華パイプライン＋admin UI改善（v3.75）— ① inbox自動昇華: `inbox_post` で to=chat・タイトルに「【生】」を含む着弾時、原文を ExtMemory に `rating=adult` で即時退避→inbox本文をプレースホルダに差替え→非同期で `sublimate` 実行→結果で本文を更新（タイトルは【未承認】or【要人手】に変更）。処理中は inbox_check/read で生テキストが返らない（窓を塞ぐ）。承認は個体本人の運用のまま ② admin inbox: 期間常駐（expires_at）の表示（残り日数・色分け・期限切れ間近は赤）＋操作ボタン（期限変更・無期限昇格・期間化・期限解除）③ admin出席簿: uuid/memory_id/inbox_id をクリック可能なリンクに変更（admin内のLogs/Memory/Inboxタブへ内部遷移）
+- memory_search limitキャップ・conversation_read個体名表示・CoreMem_save str_replace・インポート時レーティング自動起動（v3.80）— ① `memory_search`: `limit=0`（無制限）を廃止し上限100件にキャップ（負値・0はデフォルト10にフォールバック）。REST `/api/memory/hsearch` も同様 ② `conversation_read`: `[assistant]` 表示を会話のモデルメタデータから個体名（`[しずく]` `[そねみ]` 等）に差し替え。特定できない場合は `[assistant]` のまま（フォールバック）。会話単位の特定 ③ `CoreMem_save`: `mode="str_replace"` 追加。`old_str` がファイル内で一意に一致する場合のみ `new_str` に置換して新バージョン保存。全文送り直し不要 ④ インポート完了時（ZIP/Claude Code/OpenWebUI）にレーティングバッチを自動起動（既存の要約バッチ自動起動と同時）。`MIO_IMPORT_AUTO_BATCH=off` で抑制可
 - 空記憶・空ログ一括掃除（v3.79）— ① 要約バッチ（`_run_summary_batch` / `generate_summary_layers.py`）に空RAWフィルタ追加: conv_text+body が50字未満のエントリをLLM生成前に論理削除。生成後も「読み取れません」「識別子」等の無内容パターン検知で論理削除 ② `POST /api/memory/cleanup-empty`: タイトルが「[会話] + hex8文字」かつ tags に 会話ログ+summarized かつ importance=low のExtMemoryエントリを一括論理削除（dry_run対応） ③ `POST /api/conversations/cleanup-empty`: rating_skip_reason が no_text/empty かつ タイトルがhex8文字のみ のLogStoreエントリに `hidden=true` を一括設定（dry_run対応）。hidden エントリは conversation_index・conversation_search・rating統計・統合検索からデフォルト除外（REST `include_hidden=true` で表示可）。`_rating_index_counts` は hidden 件数を別途返却。`conversations/index/rebuild` は hidden フラグを旧インデックスから保全
 - file_read JSON対応強化＋OpenWebUIインポート＋admin.html改善（v3.66）— ① `file_read` に拡張子ベースのフォールバック追加（mimetype が不正でも `.json`/`.jsonl` 等のテキスト系ファイルは `content` フィールドに展開）② `POST /api/import/openwebui` 新設：OpenWebUI（ローカルLLM）のチャットエクスポート JSON を会話ストアに取り込み。messages 配列 / history.messages ツリー両対応、重複スキップ、要約バッチ自動起動。admin.html Import タブにドロップゾーン追加 ③ admin.html Uploads タブ：モーダルを他タブと統一（`openModal()` 使用）、IDコピー対応、ダークテーマ対応のプレビュー ④ admin.html Album タブ：画像クリックでライトボックス（最大化）表示。Escape で閉じる
 
@@ -1107,7 +1118,8 @@ claude-with-you/
 ├── tests/                   特性テストスイート（pytest・HTTP越しブラックボックス）
 ├── ts/                      TS-1 ストラングラープロキシ（リング0）
 ├── scripts/
-│   └── generate_summary_layers.py
+│   ├── generate_summary_layers.py
+│   └── update-env.sh          .env_sample → .env マージスクリプト
 └── memory/
     ├── Dockerfile
     ├── app/

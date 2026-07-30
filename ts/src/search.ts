@@ -68,7 +68,7 @@ export interface SearchOptions {
 }
 
 export function hierarchicalSearch(q: string, opts: SearchOptions = {}): Record<string, unknown> {
-  const limit = opts.limit ?? 10;
+  const limit = Math.max(1, Math.min(opts.limit ?? 10, 100));
   const offset = opts.offset ?? 0;
   const includeLocal = opts.includeLocal ?? false;
   const includeAdult = opts.includeAdult ?? false;

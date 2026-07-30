@@ -7,8 +7,19 @@ MCP ツール側（conversation_search / read 等）は test_import_conversation
 """
 import json
 import os
+import time
 
 from conftest import make_conversation, new_uuid
+
+
+def _wait_rating_idle(server, timeout=5):
+    """先行テストが自動起動したレーティングバッチの完了を待つ"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        d = server.get('/api/rating-batch/status').json()
+        if not d.get('running'):
+            return
+        time.sleep(0.1)
 
 
 def _import_zip(server, make_conv_zip, conversations, name='r3v.zip'):
@@ -174,6 +185,7 @@ def test_rest_conversation_rating_extended(server, make_conv_zip):
 
 def test_rest_rating_batch_status(server):
     """GET /api/rating-batch/status returns status dict (v3.68)"""
+    _wait_rating_idle(server)
     r = server.get('/api/rating-batch/status')
     assert r.status_code == 200
     d = r.json()
@@ -184,6 +196,7 @@ def test_rest_rating_batch_status(server):
 
 def test_rest_rating_batch_mcp_status_only(server):
     """batch_run_rating MCP tool with status_only (v3.68)"""
+    _wait_rating_idle(server)
     res = server.tool('batch_run_rating', {'status_only': True})
     assert 'pending' in res
     assert 'running' in res
