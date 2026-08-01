@@ -1087,39 +1087,20 @@ def api_import_status():
 @require_auth
 def api_conversations_search():
     q           = request.args.get('q', '').lower()
+    terms       = _query_terms(q)
     from_       = request.args.get('from', '')
     to_         = request.args.get('to', '')
     limit       = min(int(request.args.get('limit', 20)), 1200)
     body_search = request.args.get('body_search', 'false').lower() == 'true'
     index  = _load_conv_index()
-    if q and not body_search:
-        index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+    if terms and not body_search:
+        index = [e for e in index if _all_terms_in(terms, (e.get('title', '') + ' ' + e.get('uuid', '')).lower())]
     if from_:
         index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) >= from_]
     if to_:
         index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= to_ + 'T23:59:59']
-    if q and body_search:
-        def _conv_matches(entry):
-            if q in (entry.get('title', '') + ' ' + entry.get('uuid', '')).lower():
-                return True
-            fpath = os.path.join(CONVERSATIONS_DIR, f'{entry["uuid"]}.json')
-            if not os.path.exists(fpath):
-                return False
-            try:
-                with open(fpath, encoding='utf-8') as f:
-                    conv = json.load(f)
-                for m in conv.get('chat_messages', []):
-                    content = m.get('content') or m.get('text') or ''
-                    if isinstance(content, list):
-                        text = ' '.join(c.get('text', '') for c in content if isinstance(c, dict) and c.get('type') == 'text')
-                    else:
-                        text = str(content)
-                    if q in text.lower():
-                        return True
-            except Exception:
-                pass
-            return False
-        index = [e for e in index if _conv_matches(e)]
+    if terms and body_search:
+        index = [e for e in index if _conv_body_match_terms(e, terms)]
     index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     return jsonify(index[:limit])
 
@@ -1512,9 +1493,10 @@ def import_backup():
 @require_auth
 def search():
     q      = request.args.get('q', '').lower()
+    terms  = _query_terms(q)
     limit  = int(request.args.get('limit', 0))   # 0 = no limit
     offset = int(request.args.get('offset', 0))
-    if not q:
+    if not terms:
         return jsonify([])
     results = []
     for entry in load_all_entries():
@@ -1523,7 +1505,7 @@ def search():
         text = ((entry.get('id') or '') + ' ' +
                 (entry.get('title') or '') + (entry.get('body') or '') +
                 ' '.join(entry.get('tags') or [])).lower()
-        if q in text:
+        if _all_terms_in(terms, text):
             results.append(entry)
     if offset:
         results = results[offset:]
@@ -2760,9 +2742,10 @@ def api_conversation_rating(conv_uuid):
 @require_auth
 def api_conv_artifacts_list():
     q     = request.args.get('q', '').lower()
+    terms = _query_terms(q)
     index = _load_conv_artifacts_index()
-    if q:
-        index = [e for e in index if q in (e.get('filename','') + ' ' + e.get('conv_name','')).lower()]
+    if terms:
+        index = [e for e in index if _all_terms_in(terms, (e.get('filename','') + ' ' + e.get('conv_name','')).lower())]
     return jsonify(index)
 
 @app.route('/api/conv-artifacts/<conv_uuid>/<path:filename>')
