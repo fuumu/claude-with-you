@@ -696,6 +696,17 @@
     <input type="search" id="ms-query" placeholder="🔍 階層検索（keywords → summary → full body）..." data-i18n-ph="msearch.ph" onkeydown="if(event.key==='Enter')msSearch()" style="flex:1">
     <button class="btn btn-secondary" onclick="msSearch()" style="padding:.35rem .9rem;font-size:.85rem" data-i18n="msearch.btn">検索</button>
   </div>
+  <div class="ms-filters" style="display:flex;gap:.7rem;align-items:center;margin:.35rem 0 0;font-size:.78rem">
+    <label style="color:#7a8a9a">author: <input type="text" id="ms-author" placeholder="例: mio" onkeydown="if(event.key==='Enter')msSearch()" style="width:80px;background:#12121f;border:1px solid #2a3a5a;border-radius:4px;color:#b0c0d0;padding:2px 6px;font-size:.78rem"></label>
+    <label style="color:#7a8a9a">layer:
+      <select id="ms-layer" onchange="msSearch()" style="background:#12121f;border:1px solid #2a3a5a;border-radius:4px;color:#b0c0d0;padding:2px 4px;font-size:.78rem">
+        <option value="">全階層</option>
+        <option value="index">index</option>
+        <option value="summary">summary</option>
+        <option value="full">full</option>
+      </select>
+    </label>
+  </div>
   <div id="ms-status" style="font-size:.75rem;color:#5a6a7a;margin:.4rem 0 .6rem"></div>
   <div class="ms-main">
     <div class="ms-left" id="ms-results">
@@ -2231,7 +2242,12 @@ async function msSearch() {
   const list = document.getElementById('ms-results');
   list.innerHTML = '<div class="ms-empty">検索中...</div>';
   try {
-    const res  = await apiFetch('/api/memory/hsearch?q=' + encodeURIComponent(q) + '&limit=50');
+    const author = (document.getElementById('ms-author')?.value || '').trim();
+    const layer  = document.getElementById('ms-layer')?.value || '';
+    let url = '/api/memory/hsearch?q=' + encodeURIComponent(q) + '&limit=50';
+    if (author) url += '&author=' + encodeURIComponent(author);
+    if (layer)  url += '&search_layer=' + encodeURIComponent(layer);
+    const res  = await apiFetch(url);
     const data = await res.json();
     msResults  = data.results || [];
     msSelected = null;
