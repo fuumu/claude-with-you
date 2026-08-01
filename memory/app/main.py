@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.81 (2026-08-01) - 検索改善: conversation_search AND検索化・memory_search author/search_layerフィルタ追加
+    - conversation_search: 複数キーワードをAND一致に変更（タイトル検索・body_search 両対応）
+    - memory_search: author パラメータ追加（ExtMemory author フィールドで絞り込み）
+    - memory_search: search_layer パラメータ追加（index/summary/full で検索対象レイヤー指定可）
+    - rebuild_index: author フィールドをインデックスに追加
+    - REST /api/memory/hsearch: author・search_layer パラメータ対応
   v3.80 (2026-07-30) - memory_search limitキャップ・conversation_read個体名表示・CoreMem_save str_replace・インポート後rating自動起動
     - memory_search: limit=0（無制限）を廃止。上限100件にキャップ（負値・0はデフォルト10）
     - REST /api/memory/hsearch: 同様にlimit上限100
@@ -575,7 +581,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.80'
+VERSION = '3.81'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -826,6 +832,8 @@ def rebuild_index():
             item['rating'] = e['rating']
         if e.get('local_only'):
             item['local_only'] = True
+        if e.get('author'):
+            item['author'] = e['author']
         index.append(item)
     with open(INDEX_FILE, 'w') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
@@ -1536,7 +1544,9 @@ def api_memory_hsearch():
         q, limit=limit, offset=offset, full_body=False,
         include_local=request.args.get('include_local') == 'true',
         include_adult=request.args.get('include_adult') == 'true',
-        include_conversations=request.args.get('include_conversations') == 'true'))
+        include_conversations=request.args.get('include_conversations') == 'true',
+        author=request.args.get('author', ''),
+        search_layer=request.args.get('search_layer', '')))
 
 @app.route('/api/memory/tags')
 @require_auth
@@ -2843,7 +2853,15 @@ def _conv_redact_status(uuid):
 
 def _conv_body_match(entry, q):
     """会話のタイトルまたはメッセージ本文に q が含まれるか判定（v3.76）"""
-    if q in (entry.get('title', '') + ' ' + entry.get('uuid', '')).lower():
+    return _conv_body_match_terms(entry, [q] if q else [])
+
+
+def _conv_body_match_terms(entry, terms):
+    """会話のタイトルまたはメッセージ本文に全termsが含まれるか判定（AND検索・v3.81）"""
+    if not terms:
+        return False
+    title_text = (entry.get('title', '') + ' ' + entry.get('uuid', '')).lower()
+    if _all_terms_in(terms, title_text):
         return True
     uuid = entry.get('uuid', '')
     fpath = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
@@ -2852,15 +2870,17 @@ def _conv_body_match(entry, q):
     try:
         with open(fpath, encoding='utf-8') as f:
             conv = json.load(f)
+        full_text = []
         for m in conv.get('chat_messages', []):
             content = m.get('content') or m.get('text') or ''
             if isinstance(content, list):
                 for c in content:
                     if isinstance(c, dict) and c.get('type') == 'text':
-                        if q in (c.get('text', '') or '').lower():
-                            return True
-            elif q in str(content).lower():
-                return True
+                        full_text.append((c.get('text', '') or '').lower())
+            else:
+                full_text.append(str(content).lower())
+        combined = ' '.join(full_text)
+        return _all_terms_in(terms, combined)
     except Exception:
         pass
     return False
@@ -3719,12 +3739,15 @@ def _rating_excluded(e, include_local: bool, include_adult: bool) -> bool:
 
 def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bool = False,
                          include_local: bool = False, include_adult: bool = False,
-                         include_conversations: bool = False) -> dict:
+                         include_conversations: bool = False,
+                         author: str = '', search_layer: str = '') -> dict:
     """階層検索（1次:インデックス title+tags+keywords+3層symbolic → 2次:2層要約 → 3次:全文）。
     MCP memory_search と REST /api/memory/hsearch の共通実装。
     クエリはスペース区切りで分割し各語をAND判定する（単語1つなら従来の部分一致と同じ）。
     include_conversations=True で会話ログのタイトル検索結果も conversations[] として併せて返す
-    （統合検索・v3.61。rating=adult の会話は include_adult=True のときのみ含める）"""
+    （統合検索・v3.61。rating=adult の会話は include_adult=True のときのみ含める）。
+    author: ExtMemory の author フィールドで絞り込み（v3.81）。
+    search_layer: 検索対象レイヤー指定 'index'/'summary'/'full'（省略時は従来通り階層探索・v3.81）"""
     limit = max(1, min(limit, 100))
     terms = _query_terms(q)
     index = []
@@ -3733,40 +3756,56 @@ def _hierarchical_search(q: str, limit: int = 10, offset: int = 0, full_body: bo
             index = json.load(f)
     index = [e for e in index if not e.get('deleted')
              and not _rating_excluded(e, include_local, include_adult)]
+    if author:
+        author_lower = author.lower()
+        index = [e for e in index if author_lower in str(e.get('author') or '').lower()]
+
+    # search_layer: 検索対象レイヤーの明示指定（v3.81）
+    layer = (search_layer or '').lower()
 
     # 1次: インデックスのみで検索（title + tags + keywords、次点で3層symbolic）— bodyを読まない
     matched = {}  # id -> match_layer（挿入順 = 優先順）
-    for e in index:
-        text = ' '.join([
-            str(e.get('id') or ''),
-            str(e.get('title') or ''),
-            ' '.join(str(t) for t in (e.get('tags') or [])),
-            ' '.join(str(k) for k in (e.get('keywords') or [])),
-        ]).lower()
-        if _all_terms_in(terms, text):
-            matched[e['id']] = 'keyword'
-        elif _all_terms_in(terms, str(e.get('symbolic') or '').lower()):
-            matched[e['id']] = 'symbolic'
+    if layer in ('', 'index'):
+        for e in index:
+            text = ' '.join([
+                str(e.get('id') or ''),
+                str(e.get('title') or ''),
+                ' '.join(str(t) for t in (e.get('tags') or [])),
+                ' '.join(str(k) for k in (e.get('keywords') or [])),
+            ]).lower()
+            if _all_terms_in(terms, text):
+                matched[e['id']] = 'keyword'
+            elif _all_terms_in(terms, str(e.get('symbolic') or '').lower()):
+                matched[e['id']] = 'symbolic'
 
-    # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
-    target = offset + limit if limit > 0 else None
-    if target is None or len(matched) < target:
-        summary_hits, full_hits = [], []
-        for entry in load_all_entries():
-            eid = entry.get('id')
-            if entry.get('deleted') or eid in matched:
-                continue
-            if _rating_excluded(entry, include_local, include_adult):
-                continue
-            body = str(entry.get('body') or '')
-            if _all_terms_in(terms, _extract_summary(body).lower()):
-                summary_hits.append(eid)
-            elif _all_terms_in(terms, body.lower()):
-                full_hits.append(eid)
-        for eid in summary_hits:
-            matched[eid] = 'summary'
-        for eid in full_hits:
-            matched[eid] = 'full'
+    if layer == 'index':
+        # index レイヤーのみで返す
+        pass
+    else:
+        # 2次: 2層要約セクション / 3次: 全文 — 1次のヒットが不足する場合のみ
+        target = offset + limit if limit > 0 else None
+        do_summary = layer in ('', 'summary')
+        do_full    = layer in ('', 'full')
+        if layer or target is None or len(matched) < target:
+            author_lower_f = author.lower() if author else ''
+            summary_hits, full_hits = [], []
+            for entry in load_all_entries():
+                eid = entry.get('id')
+                if entry.get('deleted') or eid in matched:
+                    continue
+                if _rating_excluded(entry, include_local, include_adult):
+                    continue
+                if author_lower_f and author_lower_f not in str(entry.get('author') or '').lower():
+                    continue
+                body = str(entry.get('body') or '')
+                if do_summary and _all_terms_in(terms, _extract_summary(body).lower()):
+                    summary_hits.append(eid)
+                elif do_full and _all_terms_in(terms, body.lower()):
+                    full_hits.append(eid)
+            for eid in summary_hits:
+                matched[eid] = 'summary'
+            for eid in full_hits:
+                matched[eid] = 'full'
 
     ids    = list(matched.keys())
     total  = len(ids)
@@ -6094,15 +6133,17 @@ _MCP_TOOLS = [
     },
     {
         "name": "memory_search",
-        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定。local_only / rating=adult のエントリはデフォルト除外。include_conversations=trueで会話ログのタイトル検索結果も conversations[] で併せて返す（統合検索・v3.61）",
+        "description": "キーワードで記憶を階層検索する（1次:タイトル+タグ+キーワード層 → 2次:要約 → 3次:全文）。複数キーワードはスペース区切りでAND一致。結果は2層要約(summary)を返す。全文が必要な場合はmemory_readで個別取得するかfull_body=trueを指定。local_only / rating=adult のエントリはデフォルト除外。include_conversations=trueで会話ログのタイトル検索結果も conversations[] で併せて返す（統合検索・v3.61）",
         "inputSchema": {"type": "object", "properties": {
-            "q":         {"type": "string", "description": "検索キーワード"},
+            "q":         {"type": "string", "description": "検索キーワード（スペース区切りでAND一致）"},
             "limit":     {"type": "integer", "description": "最大取得件数（デフォルト10、上限100）"},
             "offset":    {"type": "integer", "description": "スキップ件数（デフォルト0）"},
             "full_body": {"type": "boolean", "description": "trueで従来どおりbody全文も返す（デフォルトfalse=要約のみ）"},
             "include_local": {"type": "boolean", "description": "trueで local_only エントリも検索対象に含める（デフォルトfalse・v3.56）"},
             "include_adult": {"type": "boolean", "description": "trueで rating=adult エントリも検索対象に含める（デフォルトfalse・v3.56）"},
-            "include_conversations": {"type": "boolean", "description": "trueで会話ログもタイトル検索して conversations[]（uuid・title・日付・件数）を併せて返す（デフォルトfalse・v3.61）。adult会話は include_adult=true のときのみ含む"}
+            "include_conversations": {"type": "boolean", "description": "trueで会話ログもタイトル検索して conversations[]（uuid・title・日付・件数）を併せて返す（デフォルトfalse・v3.61）。adult会話は include_adult=true のときのみ含む"},
+            "author":    {"type": "string", "description": "ExtMemory の author フィールドで絞り込み（部分一致・v3.81）"},
+            "search_layer": {"type": "string", "description": "検索対象レイヤーを限定: 'index'（タイトル+タグ+キーワード+symbolic）/ 'summary'（2層要約のみ）/ 'full'（全文のみ）。省略時は従来通り階層探索（v3.81）"}
         }, "required": ["q"]}
     },
     {
@@ -6160,9 +6201,9 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_search",
-        "description": "過去の会話ログをキーワード・日付で検索する。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数・rating・rating_source）を返す（rating は v3.70 から明示。未判定は null）。body_search=trueでメッセージ本文も検索（重い）。rating フィルタで特定レーティングのみ絞り込み可（v3.76）",
+        "description": "過去の会話ログをキーワード・日付で検索する。複数キーワードはスペース区切りでAND一致（v3.81）。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数・rating・rating_source）を返す（rating は v3.70 から明示。未判定は null）。body_search=trueでメッセージ本文も検索（重い）。rating フィルタで特定レーティングのみ絞り込み可（v3.76）",
         "inputSchema": {"type": "object", "properties": {
-            "q":         {"type": "string",  "description": "検索キーワード（省略可）"},
+            "q":         {"type": "string",  "description": "検索キーワード（スペース区切りでAND一致・v3.81）"},
             "date_from": {"type": "string",  "description": "検索開始日（ISO 8601形式 例: 2026-06-01）"},
             "date_to":   {"type": "string",  "description": "検索終了日（ISO 8601形式 例: 2026-06-30）"},
             "limit":     {"type": "integer", "description": "最大取得件数（デフォルト5）"},
@@ -6533,6 +6574,8 @@ def _handle_tool_call_raw(name, arguments):
                 include_local=bool(arguments.get("include_local", False)),
                 include_adult=bool(arguments.get("include_adult", False)),
                 include_conversations=bool(arguments.get("include_conversations", False)),
+                author=str(arguments.get("author") or ""),
+                search_layer=str(arguments.get("search_layer") or ""),
             )
         except Exception as exc:
             import traceback
@@ -6657,6 +6700,7 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "conversation_search":
         q         = arguments.get("q", "").lower()
+        terms     = _query_terms(q)
         date_from = arguments.get("date_from", "")
         date_to   = arguments.get("date_to", "")
         limit     = min(int(arguments.get("limit", 5)), 50)
@@ -6664,16 +6708,16 @@ def _handle_tool_call_raw(name, arguments):
         rating_filter = arguments.get("rating")
         include_redact_status = bool(arguments.get("include_redact_status", False))
         index     = [e for e in _load_conv_index() if not e.get('hidden')]
-        if q and not body_search:
-            index = [e for e in index if q in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+        if terms and not body_search:
+            index = [e for e in index if _all_terms_in(terms, (e.get('title', '') + ' ' + e.get('uuid', '')).lower())]
         if date_from:
             index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) >= date_from]
         if date_to:
             index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= date_to + 'T23:59:59']
         if rating_filter:
             index = [e for e in index if _conv_rating_match(e, rating_filter)]
-        if q and body_search:
-            index = [e for e in index if _conv_body_match(e, q)]
+        if terms and body_search:
+            index = [e for e in index if _conv_body_match_terms(e, terms)]
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
         items = [_conv_rating_view(e) for e in index[:limit]]
         if include_redact_status:

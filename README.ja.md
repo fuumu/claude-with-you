@@ -261,14 +261,17 @@ nginx で `your-domain.com/` → `localhost:5002` にプロキシ設定。
 
 **重要度（importance）：** `high` / `normal` / `low`
 
-**検索の仕組み：** `memory_search` はタイトル・本文・タグを全文検索。`limit`（デフォルト10、上限100）と `offset` でページングできる。
+**検索の仕組み：** `memory_search` はタイトル・本文・タグを全文検索。複数キーワードはスペース区切りでAND一致。`limit`（デフォルト10、上限100）と `offset` でページングできる。`author` で著者フィルタ、`search_layer`（`index`/`summary`/`full`）で検索対象レイヤーを限定可能（v3.81）。
 
 **使用例：**
 ```
 memory_write(title="認証方式の決定", body="JWT を選んだ理由は...", tags=["設計", "認証"], importance="high")
 
-memory_search(q="認証")
+memory_search(q="認証 JWT")
 → {"results": [...], "total": 3, "has_more": false, "server_time": "..."}
+
+memory_search(q="認証", author="mio", search_layer="index")
+→ インデックス層のみで検索、著者フィルタ付き
 ```
 
 ---
@@ -325,7 +328,7 @@ Claude.ai のエクスポート ZIP・Claude Code セッションログ・OpenWe
 
 **使用例：**
 ```
-conversation_search(q="認証")
+conversation_search(q="認証 設計")  // 複数キーワードAND一致（v3.81）
 → [{uuid: "abc...", title: "認証設計セッション", message_count: 34}, ...]
 
 conversation_read(uuid="abc...")
@@ -512,14 +515,18 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ### memory_search
 
 ```
-引数: q（必須）, limit（デフォルト10, 0=無制限）, offset（デフォルト0）,
+引数: q（必須）, limit（デフォルト10, 上限100）, offset（デフォルト0）,
        full_body（省略可, bool — trueで従来どおりbody全文を返す）,
-       include_conversations（省略可, bool — 統合検索 v3.61）
+       include_conversations（省略可, bool — 統合検索 v3.61）,
+       author（省略可, string — ExtMemory author フィールドで絞り込み・部分一致, v3.81）,
+       search_layer（省略可, string — 'index'/'summary'/'full'・検索対象レイヤー限定, v3.81）
 返値: {results: [...], total: N, has_more: bool, server_time: "..."}
 ※ 階層検索（v3.17, symbolic追加 v3.41）: 1次=インデックスのみ（title+tags+keywords＋3層symbolic）→ 2次=2層要約 → 3次=全文
 ※ 各ヒットは body の代わりに summary（2層要約）を返す。match_layer（keyword/symbolic/summary/full）付き
 ※ 複合キーワードは AND 検索（v3.48）: クエリを半角・全角スペースで分割し、各語が全層で個別にAND判定される。単語1つなら従来の部分一致と同じ
 ※ 全文が必要なときは memory_read で個別取得するか full_body=true を指定
+※ author: ExtMemory エントリの author フィールドで絞り込み（部分一致・v3.81）。インデックス＋全文読み込み時の両段階でフィルタ
+※ search_layer: 検索対象レイヤーを限定（v3.81）。'index'=タイトル+タグ+キーワード+symbolic のみ / 'summary'=2層要約のみ / 'full'=全文のみ。省略時は従来通り階層フォールスルー
 ※ include_conversations=true で会話ログのタイトルも同じAND判定で検索し、
    conversations[]（uuid・title・日付・message_count）と conversations_total を併せて返す（v3.61）。
    rating=adult の会話は include_adult=true のときのみ含む
@@ -610,6 +617,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
       rating（省略可 — 'safe'/'mature'/'adult' で絞り込み。v3.76）,
       include_redact_status（省略可, bool — adult会話に伏せ字状態を付与。v3.76）
 返値: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, redact_status?}, ...]
+※ 複数キーワードはスペース区切りでAND一致（v3.81）。body_search=true でも同様にAND判定
 ※ q・date_from・date_to は組み合わせ可能。全省略で全件（limit件）取得
 ※ rating は v3.70 から明示: safe 判定済みは "safe"・未判定は null（rating_skip_reason があれば判定不能）
 ※ body_search=true は全ファイルを走査するため重い。デフォルトはタイトルのみ検索
@@ -1088,6 +1096,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - admin出席簿タブ（v3.74）— admin.html に出席簿（Attendance）タブ追加。REST `GET /api/attendance` エンドポイント新設（MCP attendance_view と同一ロジック流用・二重実装なし）。個体別サマリカード（最終稼働日・経過日数・件数を色分け表示: 1日以内=緑・7日以上=赤・中間=黄）→ クリックで履歴テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。期間フィルタ（date_from/date_to）・同期間の他個体活動サマリ付き
 - 検索強化・伏せ字ID導線・turn_offsetバグ修正（v3.76）— ① `conversation_read`: `redact=true` 時に `turn_offset`/`turn_limit` が効かないバグを修正（スライスが early return 前に適用されず常に先頭から返っていた）。スライス時のレスポンスに `total_messages`/`slice` を追加 ② `conversation_search`: `body_search=true` でメッセージ本文も検索対象に（タイトル不一致でも本文ヒットなら返す・重い操作のためオプトイン）、`rating` フィルタで特定レーティングのみ絞り込み、`include_redact_status=true` で adult 会話の伏せ字状態（not_generated/pending_approval/approved）を付与 ③ `conversation_index`: `rating` フィルタ・`include_redact_status` 追加（②と同仕様）④ REST API（TS層）: `GET /api/conversations/` および `GET /api/conversations/index` にも `rating` クエリパラメータ追加
 - inbox自動昇華パイプライン＋admin UI改善（v3.75）— ① inbox自動昇華: `inbox_post` で to=chat・タイトルに「【生】」を含む着弾時、原文を ExtMemory に `rating=adult` で即時退避→inbox本文をプレースホルダに差替え→非同期で `sublimate` 実行→結果で本文を更新（タイトルは【未承認】or【要人手】に変更）。処理中は inbox_check/read で生テキストが返らない（窓を塞ぐ）。承認は個体本人の運用のまま ② admin inbox: 期間常駐（expires_at）の表示（残り日数・色分け・期限切れ間近は赤）＋操作ボタン（期限変更・無期限昇格・期間化・期限解除）③ admin出席簿: uuid/memory_id/inbox_id をクリック可能なリンクに変更（admin内のLogs/Memory/Inboxタブへ内部遷移）
+- 検索改善: conversation_search AND検索化・memory_search author/search_layerフィルタ追加（v3.81）— ① `conversation_search`: 複数キーワードをスペース区切りでAND一致に変更（タイトル検索・body_search 両対応）。従来は単一文字列の部分一致だった ② `memory_search`: `author` パラメータ追加（ExtMemory の author フィールドで絞り込み・部分一致）。インデックスにも author フィールド追加 ③ `memory_search`: `search_layer` パラメータ追加（`index`=タイトル+タグ+キーワード+symbolic / `summary`=2層要約のみ / `full`=全文のみ。省略時は従来通り階層フォールスルー）④ REST `/api/memory/hsearch` にも `author` / `search_layer` クエリパラメータ追加
 - memory_search limitキャップ・conversation_read個体名表示・CoreMem_save str_replace・インポート時レーティング自動起動（v3.80）— ① `memory_search`: `limit=0`（無制限）を廃止し上限100件にキャップ（負値・0はデフォルト10にフォールバック）。REST `/api/memory/hsearch` も同様 ② `conversation_read`: `[assistant]` 表示を会話のモデルメタデータから個体名（`[しずく]` `[そねみ]` 等）に差し替え。特定できない場合は `[assistant]` のまま（フォールバック）。会話単位の特定 ③ `CoreMem_save`: `mode="str_replace"` 追加。`old_str` がファイル内で一意に一致する場合のみ `new_str` に置換して新バージョン保存。全文送り直し不要 ④ インポート完了時（ZIP/Claude Code/OpenWebUI）にレーティングバッチを自動起動（既存の要約バッチ自動起動と同時）。`MIO_IMPORT_AUTO_BATCH=off` で抑制可
 - 空記憶・空ログ一括掃除（v3.79）— ① 要約バッチ（`_run_summary_batch` / `generate_summary_layers.py`）に空RAWフィルタ追加: conv_text+body が50字未満のエントリをLLM生成前に論理削除。生成後も「読み取れません」「識別子」等の無内容パターン検知で論理削除 ② `POST /api/memory/cleanup-empty`: タイトルが「[会話] + hex8文字」かつ tags に 会話ログ+summarized かつ importance=low のExtMemoryエントリを一括論理削除（dry_run対応） ③ `POST /api/conversations/cleanup-empty`: rating_skip_reason が no_text/empty かつ タイトルがhex8文字のみ のLogStoreエントリに `hidden=true` を一括設定（dry_run対応）。hidden エントリは conversation_index・conversation_search・rating統計・統合検索からデフォルト除外（REST `include_hidden=true` で表示可）。`_rating_index_counts` は hidden 件数を別途返却。`conversations/index/rebuild` は hidden フラグを旧インデックスから保全
 - file_read JSON対応強化＋OpenWebUIインポート＋admin.html改善（v3.66）— ① `file_read` に拡張子ベースのフォールバック追加（mimetype が不正でも `.json`/`.jsonl` 等のテキスト系ファイルは `content` フィールドに展開）② `POST /api/import/openwebui` 新設：OpenWebUI（ローカルLLM）のチャットエクスポート JSON を会話ストアに取り込み。messages 配列 / history.messages ツリー両対応、重複スキップ、要約バッチ自動起動。admin.html Import タブにドロップゾーン追加 ③ admin.html Uploads タブ：モーダルを他タブと統一（`openModal()` 使用）、IDコピー対応、ダークテーマ対応のプレビュー ④ admin.html Album タブ：画像クリックでライトボックス（最大化）表示。Escape で閉じる

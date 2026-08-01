@@ -109,6 +109,42 @@ def test_memory_search_include_conversations(server, make_conv_zip):
     assert 'conversations' not in d2
 
 
+def test_memory_search_author_filter(server):
+    """v3.81: author パラメータで絞り込み"""
+    server.tool('memory_write', {
+        'title': 'author用テスト項目', 'body': '著者テスト', 'tags': ['ts0-author']})
+    d = server.tool('memory_search', {'q': 'author用テスト項目', 'author': 'mio'})
+    assert d['total'] >= 1
+    d2 = server.tool('memory_search', {'q': 'author用テスト項目', 'author': '存在しない著者XYZ'})
+    assert d2['total'] == 0
+
+
+def test_memory_search_search_layer(server):
+    """v3.81: search_layer でインデックスのみ/全文のみの検索"""
+    server.tool('memory_write', {
+        'title': 'layer絞りテスト', 'body': 'ボディ内だけの蛸語XZQT', 'tags': ['ts0-layer']})
+    d_idx = server.tool('memory_search', {'q': 'layer絞りテスト', 'search_layer': 'index'})
+    assert d_idx['total'] >= 1
+    d_idx2 = server.tool('memory_search', {'q': '蛸語XZQT', 'search_layer': 'index'})
+    assert d_idx2['total'] == 0
+    d_full = server.tool('memory_search', {'q': '蛸語XZQT', 'search_layer': 'full'})
+    assert d_full['total'] >= 1
+
+
+def test_conversation_search_and_terms(server, make_conv_zip):
+    """v3.81: conversation_search が複数キーワードAND一致"""
+    from conftest import make_conversation
+    conv = make_conversation(title='蛍と蝉の夏の話')
+    zp = make_conv_zip([conv], name='and_conv.zip')
+    with open(zp, 'rb') as f:
+        r = server.post('/import', files={'file': ('and_conv.zip', f, 'application/zip')})
+    assert r.status_code == 200
+    d = server.tool('conversation_search', {'q': '蛍 蝉'})
+    assert len(d['data']) >= 1
+    d2 = server.tool('conversation_search', {'q': '蛍 存在しない語QZYX'})
+    assert len(d2['data']) == 0
+
+
 def test_memory_upsert_overwrites_fixed_id(server):
     server.tool('memory_upsert', {'id': 'ts0_fixed', 'title': '初版', 'body': 'v1'})
     d = server.tool('memory_upsert', {'id': 'ts0_fixed', 'title': '二版', 'body': 'v2'})

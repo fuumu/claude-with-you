@@ -20,6 +20,8 @@ Layer 4: raw body  — the full conversation text
 By default, `memory_search` searches layer 1 → 2 → 3 in order and stops at the first hit.  
 Layer 4 (full body) is only read when you pass `full_body=true`.
 
+> **Since v3.81:** the `search_layer` parameter lets you explicitly limit the search target: `index` (layer 1 only) / `summary` (layer 2 only) / `full` (full text only). Omit for the default hierarchical fallthrough. An `author` parameter for author filtering is also available.
+
 > **Since v3.41 (M2):** layer-3 symbolic (the symbolic description) is now stored in index.json and is
 > a hit target in the **fast first-tier search (the same tier as keywords)**. A symbolic-only hit gets
 > `match_layer="symbolic"` (a keyword hit gets `"keyword"`). So you can retrieve by concrete words
@@ -32,13 +34,13 @@ If keywords instantly tell you "what was this conversation about," you can decid
 
 ## 2. Choosing the right layer
 
-| Type of question | Strong layer | Why |
-|---|---|---|
-| Technical terms, versions, tool names | keywords | Proper nouns land there directly |
-| "We talked about X" | keywords / summary | The topic is captured |
-| "What were the details of that discussion?" | full body | Requires the fine grain |
-| "Find the meaningful moments" | title/tags (handwritten notes) | Already curated |
-| "The first time we ..." | dedicated index (see below) | keywords don't capture time |
+| Type of question | Strong layer | `search_layer` | Why |
+|---|---|---|---|
+| Technical terms, versions, tool names | keywords | `index` | Proper nouns land there directly |
+| "We talked about X" | keywords / summary | omit (hierarchical) | The topic is captured |
+| "What were the details of that discussion?" | full body | `full` | Requires the fine grain |
+| "Find the meaningful moments" | title/tags (handwritten notes) | `index` | Already curated |
+| "The first time we ..." | dedicated index (see below) | — | keywords don't capture time |
 
 ### Actual search cost comparison
 

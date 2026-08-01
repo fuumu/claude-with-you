@@ -119,14 +119,14 @@ python -m venv .venv
 | `memory_read` | エントリ dict 全文。存在しない id は `{error}` |
 | `memory_write` | 作成エントリ dict（`id` 必須確認）。`rating`/`local_only` 受付 |
 | `memory_upsert` | 固定 id で上書き/新規。作成 dict。`rating`/`local_only` 受付（省略時は既存値温存, v3.73） |
-| `memory_search` | `{results[], total, has_more}`。デフォルト body なし（`summary`+`symbolic`+`match_layer`）。`full_body=true` で body。`include_conversations=true` で `conversations[]`+`conversations_total`（v3.61） |
+| `memory_search` | `{results[], total, has_more}`。デフォルト body なし（`summary`+`symbolic`+`match_layer`）。`full_body=true` で body。`author` で著者フィルタ（部分一致・v3.81）。`search_layer` で検索対象レイヤー限定（`index`/`summary`/`full`・v3.81）。`include_conversations=true` で `conversations[]`+`conversations_total`（v3.61） |
 | `memory_share` | `{token, url(admin.html?token=..&id=..), expires_at}` |
 | `CoreMem_save` | `{name, version, version_str}`。`mode="append"` は `<!-- APPEND datetime -->` 区切りで追記 |
 | `CoreMem_read` | `{name, version, content}`。manifest があれば `merged:true` + `<!-- BEGIN/END: file -->` 区切り + `manifest` マップ |
 | `CoreMem_list` | list → `{data:[{name,version,updated_at}]}`。`__del__` プレフィックス除外 |
 | `CoreMem_delete` | `{deleted}` / リネーム時 `{renamed,src,dst}` |
 | `conversation_index` | `{total, offset, limit, items[]}` |
-| `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`。タイトル一致のみ・日付範囲可 |
+| `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`。複数キーワードAND一致（v3.81）・日付範囲可。`body_search=true` で本文も検索（v3.76） |
 | `conversation_read` | 本文 dict。`turn_offset`（負値=末尾起点）/`turn_limit`。`include_annotations=true` で注記+`[No.X]`。**adult はデフォルトで原文非返却**（`include_raw=true` で原文） |
 | `log_annotate` | 追記した注記（seq は 1 始まり連番）。編集・削除 API なし |
 | `inbox_check` | `{count, ids, non_persistent_unread_count, non_persistent_unread_ids, persistent[]（本文込み）}`。`limit/days/from_model/to_model` フィルタ |

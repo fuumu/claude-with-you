@@ -123,14 +123,14 @@ response shapes pinned by tests.
 | `memory_read` | Full entry dict; unknown id → `{error}` |
 | `memory_write` | Created entry dict (assert `id`); accepts `rating`/`local_only` |
 | `memory_upsert` | Upsert by fixed id; created dict. Accepts `rating`/`local_only` (preserves existing values when omitted, v3.73) |
-| `memory_search` | `{results[], total, has_more}`; no body by default (`summary`+`symbolic`+`match_layer`); `full_body=true` for body; `include_conversations=true` adds `conversations[]`+`conversations_total` (v3.61) |
+| `memory_search` | `{results[], total, has_more}`; no body by default (`summary`+`symbolic`+`match_layer`); `full_body=true` for body; `author` filters by author field (partial match, v3.81); `search_layer` limits to `index`/`summary`/`full` (v3.81); `include_conversations=true` adds `conversations[]`+`conversations_total` (v3.61) |
 | `memory_share` | `{token, url(admin.html?token=..&id=..), expires_at}` |
 | `CoreMem_save` | `{name, version, version_str}`; `mode="append"` appends with `<!-- APPEND datetime -->` separator |
 | `CoreMem_read` | `{name, version, content}`; with manifest: `merged:true` + `<!-- BEGIN/END: file -->` separators + `manifest` map |
 | `CoreMem_list` | list → `{data:[{name,version,updated_at}]}`; `__del__` prefix excluded |
 | `CoreMem_delete` | `{deleted}` / rename: `{renamed,src,dst}` |
 | `conversation_index` | `{total, offset, limit, items[]}` |
-| `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`; title match by default; `body_search=true` for message text (v3.76); date range supported |
+| `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`; multi-word queries are AND-matched (v3.81); `body_search=true` for message text with AND matching (v3.76); date range supported |
 | `conversation_read` | Body dict; `turn_offset` (negative = from tail) / `turn_limit`; `include_annotations=true` adds annotations + `[No.X]`; **adult conversations never return raw text by default** (`include_raw=true` for raw) |
 | `log_annotate` | The appended annotation (seq starts at 1); no edit/delete API |
 | `inbox_check` | `{count, ids, non_persistent_unread_count, non_persistent_unread_ids, persistent[] (with bodies)}`; `limit/days/from_model/to_model` filters |
