@@ -2292,14 +2292,19 @@ async function msSearch() {
 function msRenderResults() {
   const list = document.getElementById('ms-results');
   if (!msResults.length) { list.innerHTML = '<div class="ms-empty">ヒットなし</div>'; return; }
-  list.innerHTML = msResults.map((r, i) => `
+  list.innerHTML = msResults.map((r, i) => {
+    const stLink = r.source_thread
+      ? `<button class="btn-conv-link" onclick="openConvInLogs('${esc(r.source_thread)}',event)" title="元の会話を開く" style="font-size:.75rem">📖</button>`
+      : (r.created_at ? `<button class="btn-conv-link btn-conv-date" onclick="openLogsWithDate('${esc((r.created_at||'').slice(0,10))}',event)" title="この日の会話を見る" style="font-size:.75rem">📅</button>` : '');
+    return `
     <div class="ms-item${msSelected === i ? ' sel' : ''}" onclick="msSelect(${i})">
-      <div class="t">${esc(r.title || '（無題）')}</div>
+      <div class="t">${esc(r.title || '（無題）')}${stLink}</div>
       <div class="m">
         <span class="ms-layer-badge ms-layer-${r.match_layer}">${r.match_layer}</span>
         <span>${(r.created_at || '').slice(0, 10)}</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function msSelect(i) {
@@ -2336,10 +2341,32 @@ function msSetText(col, text) {
              : `<div style="white-space:pre-wrap">${esc(text)}</div>`)
     : '<div class="ms-empty">エントリを選択してください</div>';
   if (col === 'summary' && text) {
-    html += `<div style="margin-top:.9rem"><span class="ms-link" onclick="event.stopPropagation();msActivate('raw')">Raw body を見る →</span></div>`;
+    let sumLinks = `<span class="ms-link" onclick="event.stopPropagation();msActivate('raw')">Raw body を見る →</span>`;
+    if (msSelected != null) {
+      const sr = msResults[msSelected];
+      const cached = sr ? msEntryCache[sr.id] : null;
+      const st = cached ? cached.source_thread : (sr ? sr.source_thread : '');
+      if (st) {
+        sumLinks += ` <span class="ms-link" onclick="event.stopPropagation();openConvInLogs('${esc(st)}')">📖 生ログを開く</span>`;
+      } else if (sr && sr.created_at) {
+        sumLinks += ` <span class="ms-link" onclick="event.stopPropagation();openLogsWithDate('${esc((sr.created_at||'').slice(0,10))}')">📅 この日の会話を見る</span>`;
+      }
+    }
+    html += `<div style="margin-top:.9rem">${sumLinks}</div>`;
   }
   if (col === 'raw' && text) {
-    html = `<div style="margin-bottom:.7rem"><span class="ms-link" onclick="event.stopPropagation();msActivate('summary')">← Summary に戻る</span></div>` + html;
+    let navLinks = `<span class="ms-link" onclick="event.stopPropagation();msActivate('summary')">← Summary に戻る</span>`;
+    if (msSelected != null) {
+      const sr = msResults[msSelected];
+      const cached = sr ? msEntryCache[sr.id] : null;
+      const st = cached ? cached.source_thread : (sr ? sr.source_thread : '');
+      if (st) {
+        navLinks += ` <span class="ms-link" onclick="event.stopPropagation();openConvInLogs('${esc(st)}')">📖 生ログを開く</span>`;
+      } else if (sr && sr.created_at) {
+        navLinks += ` <span class="ms-link" onclick="event.stopPropagation();openLogsWithDate('${esc((sr.created_at||'').slice(0,10))}')">📅 この日の会話を見る</span>`;
+      }
+    }
+    html = `<div style="margin-bottom:.7rem">${navLinks}</div>` + html;
   }
   el.innerHTML = html;
 }
