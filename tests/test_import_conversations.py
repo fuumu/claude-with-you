@@ -206,3 +206,31 @@ def test_conversation_rating_gate(server, make_conv_zip):
     # 不正な rating 値は 400
     bad = server.patch(f"/api/conversations/{conv['uuid']}/rating", json={'rating': 'ultra'})
     assert bad.status_code == 400
+
+
+# ── source_thread in index (v3.82) ──────────────────────────────────
+
+def test_source_thread_in_index(server):
+    """source_thread がインデックスに含まれる（Memory→会話ログ導線用・v3.82）"""
+    test_uuid = new_uuid()
+    d = server.tool('memory_write', {
+        'title': 'source_threadインデックステスト',
+        'body': 'x', 'tags': ['テスト']})
+    eid = d['id']
+    server.patch(f'/api/memory/{eid}', json={'source_thread': test_uuid})
+    r = server.get('/api/memory/index')
+    index = r.json()
+    hit = [e for e in index if e['id'] == eid]
+    assert hit
+    assert hit[0].get('source_thread') == test_uuid
+
+
+def test_source_thread_absent_not_in_index(server):
+    """source_thread が空のエントリはインデックスに source_thread フィールドを持たない"""
+    server.tool('memory_write', {
+        'title': 'source_threadなしテスト', 'body': 'y', 'tags': ['テスト']})
+    r = server.get('/api/memory/index')
+    index = r.json()
+    hit = [e for e in index if e['title'] == 'source_threadなしテスト']
+    assert hit
+    assert 'source_thread' not in hit[0]
