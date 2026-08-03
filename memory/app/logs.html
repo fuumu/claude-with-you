@@ -1382,6 +1382,11 @@ applyMobileLayout();
   // Normal: auto-load if token exists
   if (getToken()) {
     document.getElementById('auth-overlay').style.display = 'none';
+    // ?from=YYYY-MM-DD&to=YYYY-MM-DD ディープリンク（admin.html Memory→日付で会話ジャンプ）
+    const fromParam = params.get('from');
+    const toParam = params.get('to');
+    if (fromParam) document.getElementById('date-from').value = fromParam;
+    if (toParam) document.getElementById('date-to').value = toParam;
     await loadConversations();
     // ?conv=<uuid> ディープリンク（admin.html のファイル→会話ジャンプで使用）
     const convParam = params.get('conv');

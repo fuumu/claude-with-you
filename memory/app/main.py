@@ -12,6 +12,10 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
     - 名前なし個体（Opus 5 / Sonnet 5 / Haiku 4.5）をモデル名ベースのキーで記帳
     - _resolve_individual: フォールバック禁止。未登録モデルは None を返す
     - attendance_view: ?バケットの内訳（モデル名分布）を unresolved_models に追加
+    - admin.html Memory: カード一覧に会話リンクアイコン追加（📖=source_thread直行 / 📅=日付フィルタ）
+    - admin.html Memory: 詳細モーダルの生ログリンクをsource_thread無し時も対応（📅この日の会話を見る）
+    - logs.html: ?from=&to= URLパラメータ対応（admin.htmlからの日付ジャンプ用）
+    - rebuild_index: source_thread をインデックスに追加
   v3.81 (2026-08-01) - 検索改善: conversation_search AND検索化・memory_search author/search_layerフィルタ追加
     - conversation_search: 複数キーワードをAND一致に変更（タイトル検索・body_search 両対応）
     - memory_search: author パラメータ追加（ExtMemory author フィールドで絞り込み）
@@ -843,6 +847,8 @@ def rebuild_index():
             item['local_only'] = True
         if e.get('author'):
             item['author'] = e['author']
+        if e.get('source_thread'):
+            item['source_thread'] = e['source_thread']
         index.append(item)
     with open(INDEX_FILE, 'w') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)

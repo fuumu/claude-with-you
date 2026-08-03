@@ -139,6 +139,12 @@
       border: 1px solid rgba(52,152,219,.4); border-radius: 4px; color: #3498db; cursor: pointer;
     }
     .btn-link:hover { background: rgba(52,152,219,.1); }
+    .btn-conv-link {
+      background: none; border: none; cursor: pointer; font-size: .85rem;
+      padding: 0 .2rem; margin-left: .3rem; opacity: .5; transition: opacity .2s;
+    }
+    .btn-conv-link:hover { opacity: 1; }
+    .btn-conv-date { opacity: .35; }
     .toast {
       position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%) translateY(1rem);
       background: #2ecc71; color: #fff; padding: .55rem 1.2rem; border-radius: 8px;
@@ -1345,9 +1351,12 @@ function renderCards() {
     const imp  = e.importance || 'normal';
     const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
     const tags = normTags(e.tags).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+    const logLink = e.source_thread
+      ? `<button class="btn-conv-link" onclick="openConvInLogs('${esc(e.source_thread)}',event)" title="元の会話を開く">📖</button>`
+      : (e.created_at ? `<button class="btn-conv-link btn-conv-date" onclick="openLogsWithDate('${esc((e.created_at||'').slice(0,10))}',event)" title="この日の会話を見る">📅</button>` : '');
     return `
       <div class="card${e.deleted ? ' deleted' : ''}" onclick="openMemory('${esc(e.id)}')">
-        <div class="card-title"><span class="dot dot-${imp}"></span>${esc(e.title)}</div>
+        <div class="card-title"><span class="dot dot-${imp}"></span>${esc(e.title)}${logLink}</div>
         <div class="card-meta">${date}</div>
         <div class="card-tags">${tags}</div>
         <div class="card-footer">
@@ -1370,10 +1379,14 @@ async function openMemory(id) {
     body.className = 'modal-body md-body';
     body.innerHTML = renderMarkdown(e.body || '');
     setModalId(e.id || id);
-    // source_thread があれば元の生ログ（会話）へのリンクを出す
-    setModalLinks(e.source_thread
-      ? `<span class="modal-link" onclick="openConvInLogs('${esc(e.source_thread)}')">📖 生ログを開く</span>`
-      : '');
+    const dateStr = (e.created_at || '').slice(0, 10);
+    if (e.source_thread) {
+      setModalLinks(`<span class="modal-link" onclick="openConvInLogs('${esc(e.source_thread)}')">📖 生ログを開く</span>`);
+    } else if (dateStr) {
+      setModalLinks(`<span class="modal-link" onclick="openLogsWithDate('${esc(dateStr)}')">📅 この日の会話を見る</span>`);
+    } else {
+      setModalLinks('');
+    }
     openModal();
   } catch {}
 }
@@ -1502,10 +1515,20 @@ async function loadArtifactSiblings(name, convUuid) {
 }
 
 // Logsタブに切り替えて指定会話を開く（U4: ファイル→チャット）
-function openConvInLogs(uuid) {
+function openConvInLogs(uuid, event) {
+  if (event) event.stopPropagation();
   closeModal();
   const frame = document.getElementById('logs-frame');
   frame.src = '/logs.html?conv=' + encodeURIComponent(uuid);
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Logs'));
+  if (btn) switchTab('logs', btn);
+}
+
+function openLogsWithDate(date, event) {
+  if (event) event.stopPropagation();
+  closeModal();
+  const frame = document.getElementById('logs-frame');
+  frame.src = '/logs.html?from=' + encodeURIComponent(date) + '&to=' + encodeURIComponent(date);
   const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim().startsWith('Logs'));
   if (btn) switchTab('logs', btn);
 }
