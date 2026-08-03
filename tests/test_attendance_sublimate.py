@@ -156,6 +156,69 @@ def test_rest_attendance_date_filter(server):
     assert d['rows'] == []
 
 
+# ── ATT-1: individual resolution fixes (v3.82) ──────────────────────
+
+def test_attendance_omi_resolution(server):
+    """おみ（claude-opus-4-8）が独立した個体として記帳される（ATT-1 MUST-2）"""
+    server.tool('inbox_post', {
+        'to': 'chat', 'title': 'おみテスト', 'body': 'x',
+        'from_model': ['claude-opus-4-8', 'おみ']})
+    d = server.tool('attendance_view', {'individual': 'おみ'})
+    assert d['individual'] == 'おみ'
+    assert d['count'] >= 1
+    rows = [r for r in d['rows'] if r['title'] == 'おみテスト']
+    assert rows
+
+
+def test_attendance_no_fallback_to_wrong_individual(server):
+    """claude-opus-4-8 がしずくにフォールバックしない（ATT-1 MUST-1）"""
+    server.tool('inbox_post', {
+        'to': 'chat', 'title': 'Opus48テスト', 'body': 'x',
+        'from_model': 'claude-opus-4-8'})
+    d = server.tool('attendance_view', {'individual': 'しずく'})
+    assert not any(r['title'] == 'Opus48テスト' for r in d['rows'])
+
+
+def test_attendance_unnamed_individual(server):
+    """名前なし個体（Opus 5）がモデル名ベースのキーで記帳される（ATT-1 MUST-3）"""
+    server.tool('inbox_post', {
+        'to': 'chat', 'title': 'Opus5テスト', 'body': 'x',
+        'from_model': 'claude-opus-5'})
+    d = server.tool('attendance_view', {'individual': 'Opus 5'})
+    assert d['individual'] == 'Opus 5'
+    assert any(r['title'] == 'Opus5テスト' for r in d['rows'])
+
+
+def test_attendance_unresolved_models(server):
+    """?バケットのモデル分布が unresolved_models に含まれる（ATT-1 MUST-4）"""
+    server.tool('inbox_post', {
+        'to': 'chat', 'title': '未知モデルテスト', 'body': 'x',
+        'from_model': 'unknown-model-xyz'})
+    d = server.tool('attendance_view', {})
+    if '?' in d.get('individuals', {}):
+        assert 'unresolved_models' in d
+
+
+def test_oplog_delete(server):
+    """DELETE /api/oplog/<index> で個別エントリが削除できる（v3.82）"""
+    server.tool('memory_write', {'title': 'oplogテスト用', 'body': 'x', 'tags': ['テスト']})
+    r = server.get('/api/oplog')
+    assert r.status_code == 200
+    before_count = len(r.json())
+    assert before_count >= 1
+    r2 = server.delete(f'/api/oplog/{before_count - 1}')
+    assert r2.status_code == 200
+    assert r2.json()['status'] == 'deleted'
+    r3 = server.get('/api/oplog')
+    assert len(r3.json()) == before_count - 1
+
+
+def test_oplog_delete_out_of_range(server):
+    """存在しないインデックスへの削除は 404"""
+    r = server.delete('/api/oplog/99999')
+    assert r.status_code == 404
+
+
 # ── sublimate ─────────────────────────────────────────────────────────
 
 def test_sublimate_requires_text_or_uuid(server):

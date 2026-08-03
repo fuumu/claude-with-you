@@ -476,6 +476,8 @@
       line-height: 1.3; white-space: nowrap; transition: color .15s, border-color .15s;
     }
     .id-action-btn:hover { border-color: #7c6af7; color: #7c6af7; }
+    .oplog-del-btn { color: #e74c3c; border-color: rgba(231,76,60,.3); }
+    .oplog-del-btn:hover { border-color: #e74c3c; color: #ff6b6b; }
     .id-action-btn.copied { border-color: #2ecc71; color: #2ecc71; }
 
     /* ── Prism overrides ── */
@@ -2585,11 +2587,12 @@ function renderOplog() {
     const op  = row.operation || '?';
     const eid = row.entry_id || '';
     const idx = oplogData.length - 1 - i;
-    const actions = eid ? `
+    const actions = `
         <span class="oplog-actions">
-          <button class="id-action-btn" onclick="openOplogEntity('${esc(op)}','${esc(eid)}',event)" title="Open entity">Open</button>
-          <button class="id-action-btn" onclick="copyIdInline(this,'${esc(eid)}',event)" title="Copy ID">Copy</button>
-        </span>` : '<span></span>';
+          ${eid ? `<button class="id-action-btn" onclick="openOplogEntity('${esc(op)}','${esc(eid)}',event)" title="Open entity">Open</button>
+          <button class="id-action-btn" onclick="copyIdInline(this,'${esc(eid)}',event)" title="Copy ID">Copy</button>` : ''}
+          <button class="id-action-btn oplog-del-btn" onclick="deleteOplogEntry(${idx},event)" title="Delete">Del</button>
+        </span>`;
     return `
       <div class="oplog-row" onclick="openOplog(${idx})">
         <span class="oplog-ts">${esc(ts)}</span>
@@ -2598,6 +2601,24 @@ function renderOplog() {
         ${actions}
       </div>`;
   }).join('');
+}
+
+async function deleteOplogEntry(idx, event) {
+  if (event) event.stopPropagation();
+  const row = oplogData[idx];
+  if (!row) return;
+  const ts = (row.timestamp || '').slice(0, 19).replace('T', ' ');
+  const op = row.operation || '?';
+  const eid = row.entry_id || '';
+  if (!confirm(`Oplogエントリを削除しますか？\n\n[${op}] ${eid}\n${ts}`)) return;
+  try {
+    const res = await apiFetch(`/api/oplog/${idx}`, {method: 'DELETE'});
+    if (!res.ok) throw new Error(res.status);
+    oplogData.splice(idx, 1);
+    renderOplog();
+  } catch(e) {
+    alert('削除失敗: ' + e.message);
+  }
 }
 
 function _fmtOplogEntry(entry) {

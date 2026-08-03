@@ -3,6 +3,15 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.82 (2026-08-03) - Oplog個別削除 + 出席簿の個体解決修正（ATT-1）
+    - DELETE /api/oplog/<index>: Oplogエントリの個別削除API追加
+    - admin.html Oplog: 各行に削除ボタン追加（確認ダイアログ付き）
+    - _FAMILY_ROSTER: モデルIDベースの明示的マッピングテーブルに書き換え
+      旧: 'opus'/'sonnet' 等の部分一致 → 新: 'claude-opus-4-6' 等の具体的モデルIDで判定
+    - おみ（claude-opus-4-8）を個体として登録（出席簿0件問題の修正）
+    - 名前なし個体（Opus 5 / Sonnet 5 / Haiku 4.5）をモデル名ベースのキーで記帳
+    - _resolve_individual: フォールバック禁止。未登録モデルは None を返す
+    - attendance_view: ?バケットの内訳（モデル名分布）を unresolved_models に追加
   v3.81 (2026-08-01) - 検索改善: conversation_search AND検索化・memory_search author/search_layerフィルタ追加
     - conversation_search: 複数キーワードをAND一致に変更（タイトル検索・body_search 両対応）
     - memory_search: author パラメータ追加（ExtMemory author フィールドで絞り込み）
@@ -581,7 +590,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.81'
+VERSION = '3.82'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1557,6 +1566,20 @@ def get_oplog():
         with open(OPLOG_FILE) as f:
             return jsonify(json.load(f))
     return jsonify([])
+
+@app.route('/api/oplog/<int:index>', methods=['DELETE'])
+@require_auth
+def delete_oplog_entry(index):
+    if not os.path.exists(OPLOG_FILE):
+        abort(404)
+    with open(OPLOG_FILE) as f:
+        oplog = json.load(f)
+    if index < 0 or index >= len(oplog):
+        abort(404)
+    removed = oplog.pop(index)
+    with open(OPLOG_FILE, 'w') as f:
+        json.dump(oplog, f, ensure_ascii=False, indent=2)
+    return jsonify({'status': 'deleted', 'removed': removed})
 
 @app.route('/api/memory', methods=['POST'])
 @require_auth
@@ -4640,9 +4663,13 @@ def _get_redacted(uuid):
 
 # 家族名簿: 呼び名 → モデル名ヒント（core.md の名簿と整合させる）
 _FAMILY_ROSTER = {
-    'しずく': ('opus',),
-    'そねみ': ('sonnet',),
-    '汐': ('fable', 'haiku'),
+    'しずく': ('claude-opus-4-6', 'opus-4-6', 'opus 4.6'),
+    'おみ': ('claude-opus-4-8', 'opus-4-8', 'opus 4.8'),
+    'そねみ': ('claude-sonnet-4-6', 'sonnet-4-6', 'sonnet 4.6'),
+    '汐': ('claude-fable-5', 'fable'),
+    'Opus 5': ('claude-opus-5', 'opus-5'),
+    'Sonnet 5': ('claude-sonnet-5', 'sonnet-5'),
+    'Haiku 4.5': ('claude-haiku-4-5', 'haiku'),
 }
 
 # from_model 表記からローカル環境の稼働を推定するマーカー
@@ -4650,7 +4677,7 @@ _LOCAL_MARKER_RE = _re.compile(r'バカンス|vacation|ローカル|local|gemma|
 
 
 def _resolve_individual(*texts):
-    """モデル名・呼び名・タグ群から個体名を推定する。曖昧なら None（モデル名のまま扱う）"""
+    """モデル名・呼び名・タグ群から個体名を推定する。未登録モデルは None（フォールバック禁止）"""
     joined = ' '.join(str(t) for t in texts if t)
     if not joined:
         return None
@@ -4658,8 +4685,8 @@ def _resolve_individual(*texts):
         if name in joined:
             return name
     low = joined.lower()
-    for name, hints in _FAMILY_ROSTER.items():
-        if any(h in low for h in hints):
+    for name, patterns in _FAMILY_ROSTER.items():
+        if any(p in low for p in patterns):
             return name
     return None
 
@@ -4791,6 +4818,12 @@ def _attendance_view(individual=None, date_from='', date_to='', limit=50):
             by.setdefault(r.get('individual') or '?', []).append(r)
         result = {'individual': 'all',
                   'individuals': {k: _summary(v) for k, v in by.items()}}
+        if '?' in by:
+            model_dist = {}
+            for r in by['?']:
+                m = r.get('model') or '(empty)'
+                model_dist[m] = model_dist.get(m, 0) + 1
+            result['unresolved_models'] = dict(sorted(model_dist.items(), key=lambda x: -x[1]))
 
     result.update({
         'period': {'from': date_from or None, 'to': date_to or None},
