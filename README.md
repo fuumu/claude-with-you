@@ -48,7 +48,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.75","mcp_tool_count":34}
+# {"status":"ok","version":"3.82","mcp_tool_count":34}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -314,6 +314,11 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | POST | `/api/memory` | Create entry |
 | PATCH | `/api/memory/<id>` | Update entry |
 | DELETE | `/api/memory/<id>` | Soft-delete entry |
+| GET | `/api/memory/tags` | Tag-to-count map for all entries |
+| POST | `/api/memory/share/<id>` | Generate 24h share token for a memory entry |
+| POST | `/api/memory/dedup-scan` | Scan for duplicate `source_thread` entries (v3.77) |
+| POST | `/api/memory/cleanup-empty` | Bulk soft-delete empty memory entries (dry_run supported, v3.79) |
+| GET | `/api/share/<token>` | View shared memory entry (no auth, 24h expiry) |
 | GET | `/api/coremem` | List UserCoreMemory files |
 | GET | `/api/coremem/<name>` | Read UserCoreMemory file |
 | POST | `/api/coremem/<name>` | Save UserCoreMemory file |
@@ -329,6 +334,9 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | POST | `/api/conversations/<uuid>/redact/approve` | Approve redaction (v3.69) |
 | POST | `/api/conversations/<uuid>/redact/reject` | Reject redaction (v3.69) |
 | GET | `/api/conversations/redact-status` | List redaction statuses (v3.69) |
+| POST | `/api/conversations/share/<uuid>` | Generate 24h share URL for a conversation |
+| GET | `/api/conversations/view` | View shared conversation (no auth, token-based) |
+| POST | `/api/conversations/cleanup-empty` | Bulk-hide empty conversation logs (dry_run supported, v3.79) |
 | PATCH | `/api/conversations/<uuid>/rating` | Set conversation rating (safe/mature/adult, v3.56; accepts reason/source v3.68; clears skip_reason v3.70) |
 | GET | `/api/rating-batch/status` | Rating batch status (incl. pending, index_counts, skip_reasons, v3.68/v3.70) |
 | POST | `/api/rating-batch/start` | Start the rating batch (v3.68) |
@@ -347,6 +355,8 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | DELETE | `/api/friends/<seq_no>` | Delete completely (admin auth) |
 | POST | `/api/friends/activate` | Validate activation code (no auth) |
 | GET | `/api/friends/invitation` | Get invitation text (no auth) |
+| POST | `/api/friends/<seq_no>/send_email` | Resend activation email (admin auth) |
+| POST | `/api/friends/direct_register` | Admin direct registration — bypasses public flow (admin auth) |
 | GET | `/api/album/` | List album images (`?tag=...` to filter) |
 | GET | `/api/album/<id>` | Serve album image (browser-displayable) |
 | POST | `/api/album/upload` | Upload image (multipart/form-data or URL) |
@@ -361,7 +371,12 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/uploads/<id>` | Download uploaded file |
 | POST | `/api/uploads/` | Upload file (multipart/form-data) |
 | DELETE | `/api/uploads/<id>` | Delete uploaded file |
+| GET | `/api/conv-artifacts` | List files extracted from conversation tool-use blocks |
+| GET | `/api/conv-artifacts/<uuid>/<filename>` | Get a specific conversation artifact file |
 | GET | `/api/attendance` | Attendance ledger (`?individual=&date_from=&date_to=&limit=`, v3.74) |
+| GET | `/api/oplog` | Operation log (ExtMemory, CoreMem, Album, Uploads, rating changes) |
+| DELETE | `/api/oplog/<index>` | Delete a specific oplog entry (v3.82) |
+| GET | `/api/import-status` | Last ZIP import record |
 | GET | `/api/batch/status` | Summary layer batch status |
 | POST | `/api/batch/start` | Start summary layer batch |
 | GET | `/health` | Health check |
@@ -541,6 +556,9 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to `MIO_BASE_URL`) |
 | `MIO_SEED_LANG` | `ja` | Language of the CoreMem skeleton seeded into a new environment (`ja` / `en`); falls back to `ja` (v3.44) |
+| `MIO_NIGHTLY_BATCH_HOUR` | `3` | Hour (JST, 0-23) for nightly summary batch; `off` disables (v3.16) |
+| `MIO_NIGHTLY_BATCH_BACKEND` | `lmstudio` | Backend for the nightly batch (`lmstudio` / `anthropic`) |
+| `MIO_IMPORT_AUTO_BATCH` | *(on)* | Set to `off` to suppress auto-start of summary/rating batches after import (v3.80) |
 | `MIO_SEED_WELCOME` | `on` | On a fresh seed, add `welcome.md` + a one-time persistent inbox help message; `off` suppresses both (v3.45) |
 
 ---

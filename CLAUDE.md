@@ -55,7 +55,7 @@ All persistent data lives in `memory/data/` (gitignored, mounted as `/data` in t
 
 3. **MCP Streamable HTTP transport** (`/mcp`) — implements the MCP 2025-11-25 spec. POST handles JSON-RPC messages (single and batch). GET opens an SSE keepalive stream for clients that need it. DELETE signals session close. Legacy SSE endpoints `/mcp/sse` and `/mcp/messages` remain for backward compatibility.
 
-**MCP tools exposed (v3.75 — 34 regular-session tools):**
+**MCP tools exposed (v3.82 — 34 regular-session tools):**
 
 All MCP tool responses carry `server_time` (JST) and `server_version` (v3.20+) — clients use `server_version` to auto-switch behavior.
 
@@ -103,7 +103,7 @@ Friend sessions (6 tools, exposed when `/mcp?token=<friend_token>` is used):
 
 **Friend system (v3.9–v3.12):**
 - Registration flow: `POST /api/friends/register` (no auth) → admin approves via admin.html → SendGrid sends activation code email → friend visits `/activate` and gets their token
-- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (6 tools) instead of the normal 19 tools
+- Friend token auth: `GET /mcp?token=<friend_token>` — bypasses `MIO_API_TOKEN`, validated against `/data/friends/registry.json`; friend sessions get `_FRIEND_MCP_TOOLS` (6 tools) instead of the normal 34 tools
 - Per-friend memory: stored at `/data/friends/{seq_no:03d}/memory.md`; managed via `friend_memory_*` tools
 - Admin REST API: `/api/friends` (list), `/api/friends/<seq_no>/approve`, `/api/friends/<seq_no>/revoke`, `DELETE /api/friends/<seq_no>` (complete removal with shutil.rmtree)
 - Public pages: `/register` (registration form + invitation text from CoreMem `friend_invitation.md`), `/activate` (activation code entry)
@@ -144,6 +144,7 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to MIO_BASE_URL) |
 | `MIO_SEED_LANG` | `ja` | Language of the CoreMem skeleton seeded into a new environment (`ja` / `en`); falls back to `ja` if missing (v3.44) |
+| `MIO_IMPORT_AUTO_BATCH` | *(on)* | Set to `off` to suppress auto-start of summary/rating batches after import (v3.80) |
 | `MIO_SEED_WELCOME` | `on` | On a fresh seed, also add `welcome.md` + a one-time persistent inbox "ask the connected Claude for help" message; `off` suppresses both (v3.45) |
 
 ## 澪コードの定型フロー

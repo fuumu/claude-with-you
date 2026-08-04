@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.75","mcp_tool_count":34}
+# {"status":"ok","version":"3.82","mcp_tool_count":34}
 ```
 
 ### 5. Claude Code への登録
@@ -877,6 +877,11 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | POST | `/api/memory` | エントリ作成 |
 | PATCH | `/api/memory/<id>` | エントリ更新 |
 | DELETE | `/api/memory/<id>` | エントリ削除（論理削除） |
+| GET | `/api/memory/tags` | タグ別件数マップ |
+| POST | `/api/memory/share/<id>` | メモリエントリの24時間共有トークン生成 |
+| POST | `/api/memory/dedup-scan` | `source_thread` 重複エントリのスキャン（v3.77） |
+| POST | `/api/memory/cleanup-empty` | 空メモリエントリの一括論理削除（dry_run 対応・v3.79） |
+| GET | `/api/share/<token>` | 共有メモリエントリ閲覧（認証不要・24時間限定） |
 | GET | `/api/coremem` | UserCoreMemory 一覧 |
 | GET | `/api/coremem/<name>` | UserCoreMemory ファイル取得 |
 | POST | `/api/coremem/<name>` | UserCoreMemory ファイル保存 |
@@ -892,6 +897,9 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | POST | `/api/conversations/<uuid>/redact/approve` | 伏せ字版承認（v3.69） |
 | POST | `/api/conversations/<uuid>/redact/reject` | 伏せ字版差し戻し（v3.69） |
 | GET | `/api/conversations/redact-status` | 伏せ字対象ログ一覧（v3.69） |
+| POST | `/api/conversations/share/<uuid>` | 会話の24時間共有URL生成 |
+| GET | `/api/conversations/view` | 共有会話閲覧（認証不要・トークンベース） |
+| POST | `/api/conversations/cleanup-empty` | 空会話ログの一括非表示（dry_run 対応・v3.79） |
 | PATCH | `/api/conversations/<uuid>/rating` | 会話ログのレーティング設定（safe/mature/adult・v3.56。v3.68 で reason/source 受付・v3.70 で skip_reason クリア） |
 | GET | `/api/rating-batch/status` | レーティング判定バッチ状態（pending・index_counts・skip_reasons 込み・v3.68/v3.70） |
 | POST | `/api/rating-batch/start` | レーティング判定バッチ起動（v3.68） |
@@ -910,6 +918,8 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | DELETE | `/api/friends/<seq_no>` | 完全削除（admin認証） |
 | POST | `/api/friends/activate` | アクティベーションコード検証（認証不要） |
 | GET | `/api/friends/invitation` | 招待文取得（認証不要） |
+| POST | `/api/friends/<seq_no>/send_email` | アクティベーションメール再送（admin認証） |
+| POST | `/api/friends/direct_register` | 管理者による直接登録（admin認証） |
 | GET | `/api/album/` | アルバム画像一覧（`?tag=...` でフィルタ） |
 | GET | `/api/album/<id>` | アルバム画像返却（ブラウザ直接表示可） |
 | POST | `/api/album/upload` | 画像アップロード（multipart/form-data または URL指定） |
@@ -924,7 +934,12 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | GET | `/api/uploads/<id>` | アップロードファイルダウンロード |
 | POST | `/api/uploads/` | ファイルアップロード（multipart/form-data） |
 | DELETE | `/api/uploads/<id>` | アップロードファイル削除 |
+| GET | `/api/conv-artifacts` | 会話から抽出したファイル一覧 |
+| GET | `/api/conv-artifacts/<uuid>/<filename>` | 会話抽出ファイル取得 |
 | GET | `/api/attendance` | 出席簿（`?individual=&date_from=&date_to=&limit=`・v3.74） |
+| GET | `/api/oplog` | 操作ログ（ExtMemory・CoreMem・Album・Uploads・レーティング変更） |
+| DELETE | `/api/oplog/<index>` | 操作ログの個別エントリ削除（v3.82） |
+| GET | `/api/import-status` | 最終ZIPインポート記録 |
 | GET | `/api/batch/status` | 要約バッチ状態 |
 | POST | `/api/batch/start` | 要約バッチ起動 |
 | GET | `/health` | ヘルスチェック |
@@ -949,6 +964,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | `SENDGRID_FROM_EMAIL` | （空） | お友達システム：送信元メールアドレス |
 | `MIO_REGISTER_URL` | （空） | お友達システム：承認メール内アクティベーションリンクのベース URL（`/activate` を自動付与。省略時は MIO_BASE_URL を使用） |
 | `MIO_SEED_LANG` | `ja` | 新規環境にシードする CoreMem スケルトンの言語（`ja` / `en`）。無ければ `ja` にフォールバック（v3.44） |
+| `MIO_IMPORT_AUTO_BATCH` | （on） | `off` にするとインポート後の要約/レーティングバッチ自動起動を抑止（v3.80） |
 | `MIO_SEED_WELCOME` | `on` | 新規シード時に `welcome.md` と初回のみ常駐 inbox 案内を投入。`off` で両方抑止（v3.45） |
 
 ---
@@ -975,6 +991,7 @@ memory/data/          ← gitignored、コンテナ内は /data/
 ├── artifacts/        UserCoreMemory（ファイル + シンボリックリンク + _meta.json）
 ├── conversations/    会話全文（{uuid}.json + _index.json）
 ├── conv_artifacts/   会話から抽出したファイル
+├── annotations/      会話の追記注釈（{uuid}.json・append-only）
 ├── album/            アルバム画像（{id}.{ext} + {id}.json メタデータ）
 ├── uploads/          アップロードファイル（{id}.{ext} + {id}.json メタデータ）
 ├── inbox/            インボックスメッセージ
