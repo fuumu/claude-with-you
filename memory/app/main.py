@@ -4899,6 +4899,17 @@ def _lm_load_model(base_url, model_id):
     _log_info(f'LM loaded: {model_id}')
 
 
+def _match_ok_model(mid, ok_models):
+    """モデルIDをOKリストと照合する。インスタンス接尾辞(:N)を考慮。
+    マッチしたOKリスト上のモデル名を返す。不一致ならNone。"""
+    if mid in ok_models:
+        return mid
+    base_id = re.sub(r':\d+$', '', mid)
+    if base_id != mid and base_id in ok_models:
+        return base_id
+    return None
+
+
 def _ensure_lm_model(lm_host=None, lm_port=None):
     """LM Studioのロード済みモデルをLLM_OK_MODELSに基づいて管理し、使用モデル名を返す。
     LLM_OK_MODELS未設定時はMIO_LM_MODELをそのまま返す（従来互換）。"""
@@ -4922,26 +4933,28 @@ def _ensure_lm_model(lm_host=None, lm_port=None):
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
 
-        loaded = data.get('data', [])
-
         ok_loaded = []
-        not_ok = []
-        for m in loaded:
+        not_ok_loaded = []
+        for m in data.get('data', []):
+            instances = m.get('loaded_instances', [])
+            if not instances:
+                continue
             mid = m.get('id', '')
-            if mid in ok_models:
-                ok_loaded.append(m)
+            ok_name = _match_ok_model(mid, ok_models)
+            if ok_name:
+                ok_loaded.append((m, ok_name))
             else:
-                not_ok.append(m)
+                not_ok_loaded.append(m)
 
         if ok_loaded:
-            best = min(ok_loaded, key=lambda m: ok_models.index(m['id']))
-            for m in not_ok:
+            best_m, best_name = min(ok_loaded, key=lambda x: ok_models.index(x[1]))
+            for m in not_ok_loaded:
                 for inst in m.get('loaded_instances', []):
                     _lm_unload_instance(base, inst['id'], m.get('id', ''))
-            _log_info(f'LM using loaded OK model: {best["id"]}')
-            return best['id']
+            _log_info(f'LM using loaded OK model: {best_name}')
+            return best_name
 
-        for m in not_ok:
+        for m in not_ok_loaded:
             for inst in m.get('loaded_instances', []):
                 _lm_unload_instance(base, inst['id'], m.get('id', ''))
 
