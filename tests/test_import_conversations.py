@@ -234,3 +234,57 @@ def test_source_thread_absent_not_in_index(server):
     hit = [e for e in index if e['title'] == 'source_threadなしテスト']
     assert hit
     assert 'source_thread' not in hit[0]
+
+
+# ── 会話更新時の再処理 (v3.84) ──────────────────────────────────────
+
+def test_reimport_with_more_messages_updates_conversation(server, make_conv_zip):
+    """追加メッセージ付き再インポートで会話データが更新される（v3.84）"""
+    uid = new_uuid()
+    conv1 = make_conversation(uuid=uid, title='追加メッセージ会話',
+                              texts=['最初のメッセージ', '最初の返信'])
+    r1 = _import_zip(server, make_conv_zip, [conv1], name='upd1.zip')
+    assert r1['imported'] == 1
+
+    conv2 = make_conversation(uuid=uid, title='追加メッセージ会話',
+                              texts=['最初のメッセージ', '最初の返信',
+                                     '追加のメッセージ', '追加の返信'])
+    r2 = _import_zip(server, make_conv_zip, [conv2], name='upd2.zip')
+    assert r2['imported'] == 0
+    assert r2['conversations_updated'] == 1
+
+    body = server.tool('conversation_read', {'uuid': uid})
+    text = json.dumps(body, ensure_ascii=False)
+    assert '追加のメッセージ' in text
+
+
+def test_reimport_with_more_messages_remarks_entry(server, make_conv_zip):
+    """追加メッセージ付き再インポートでExtMemoryエントリが再処理対象になる（v3.84）"""
+    uid = new_uuid()
+    conv1 = make_conversation(uuid=uid, title='再処理テスト会話',
+                              texts=['挨拶', '返事'])
+    r1 = _import_zip(server, make_conv_zip, [conv1], name='rmk1.zip')
+    assert r1['imported'] == 1
+
+    entry = server.tool('memory_search', {'q': '再処理テスト会話'})
+    assert entry['total'] == 1
+    eid = entry['results'][0]['id']
+    assert 'raw' in entry['results'][0]['tags']
+
+    server.patch(f'/api/memory/{eid}', json={
+        'tags': ['会話ログ', 'summarized'],
+        'body': '## 2層: 要約\n古い要約\n\n## 3層: シンボリック圧縮\n旧',
+    })
+    got = server.tool('memory_read', {'id': eid})
+    assert 'summarized' in got['tags']
+    assert 'raw' not in got['tags']
+
+    conv2 = make_conversation(uuid=uid, title='再処理テスト会話',
+                              texts=['挨拶', '返事', '追加', '追加返事'])
+    r2 = _import_zip(server, make_conv_zip, [conv2], name='rmk2.zip')
+    assert r2.get('entries_remarked', 0) == 1
+
+    updated = server.tool('memory_read', {'id': eid})
+    assert 'raw' in updated['tags']
+    assert 'summarized' not in updated['tags']
+    assert '## 2層: 要約' not in updated.get('body', '')

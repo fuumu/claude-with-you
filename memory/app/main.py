@@ -600,7 +600,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.83'
+VERSION = '3.84'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -2906,13 +2906,15 @@ def _conv_body_match_terms(entry, terms):
 
 def _save_conversations(conversations):
     """conversations.jsonの各会話を個別ファイルに保存し、インデックスを更新する
-    既存ファイルがある場合はメッセージ数を比較し、多い方を残す（v3.77）"""
+    既存ファイルがある場合はメッセージ数を比較し、多い方を残す（v3.77）
+    戻り値: dict{'saved','updated','skipped','updated_uuids'}（v3.84）"""
     os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
     index = _load_conv_index()
     existing_uuids = {e['uuid'] for e in index}
     saved = 0
     skipped = 0
     updated = 0
+    updated_uuids = []
     for conv in conversations:
         uid = conv.get('uuid') or conv.get('id', '')
         if not uid:
@@ -2927,10 +2929,7 @@ def _save_conversations(conversations):
                 if msg_count <= old_msg_count:
                     skipped += 1
                     continue
-                for k in ('rating', 'rating_reason', 'rating_source',
-                          'rating_judged_at', 'rating_model', 'rating_skip_reason'):
-                    if old.get(k) and k not in conv:
-                        conv[k] = old[k]
+                updated_uuids.append(uid)
                 updated += 1
             except Exception:
                 pass
@@ -2955,7 +2954,44 @@ def _save_conversations(conversations):
             saved += 1
     _save_conv_index(index)
     app.logger.info(f'_save_conversations: new={saved} updated={updated} skipped={skipped}')
-    return saved
+    return {'saved': saved, 'updated': updated, 'skipped': skipped, 'updated_uuids': updated_uuids}
+
+def _remark_entries_for_update(updated_uuids):
+    """会話が更新されたUUIDに対応するExtMemoryエントリを再処理対象にする（v3.84）"""
+    if not updated_uuids:
+        return 0
+    uuid_set = set(updated_uuids)
+    remarked = 0
+    for entry in load_all_entries():
+        st = entry.get('source_thread')
+        if not st or st not in uuid_set or entry.get('deleted'):
+            continue
+        tags = entry.get('tags', [])
+        if 'raw' in tags:
+            continue
+        body = entry.get('body', '')
+        if SUMMARY_MARKER in body:
+            entry['body'] = body[:body.index(SUMMARY_MARKER)].rstrip()
+        if 'summarized' in tags:
+            tags.remove('summarized')
+        if 'raw' not in tags:
+            tags.append('raw')
+        entry['tags'] = tags
+        entry.pop('keywords', None)
+        for k in ('rating', 'rating_reason', 'rating_source',
+                  'rating_judged_at', 'rating_model', 'rating_skip_reason'):
+            entry.pop(k, None)
+        entry['updated_at'] = now_jst()
+        path = f'{DATA_DIR}/{entry["id"]}.json'
+        with open(path, 'w') as f:
+            json.dump(entry, f, ensure_ascii=False, indent=2)
+        append_oplog('remark_for_update', entry['id'], None,
+                     {'source_thread': st, 'reason': 'conversation_updated'})
+        remarked += 1
+    if remarked > 0:
+        rebuild_index()
+    return remarked
+
 
 # ── source_thread 自動紐づけ（v3.60）─────────────────────────────────
 
@@ -3105,11 +3141,20 @@ def import_zip():
             imported += 1
 
         # conversations.json を /data/conversations/ に保存
-        conv_saved = 0
+        conv_result = {'saved': 0, 'updated': 0, 'skipped': 0, 'updated_uuids': []}
         try:
-            conv_saved = _save_conversations(conversations)
+            conv_result = _save_conversations(conversations)
         except Exception as e:
             _log_error(f'conv save error: {e}')
+        conv_saved = conv_result['saved']
+
+        # 更新された会話のExtMemoryエントリを再処理対象にする（v3.84）
+        remarked = 0
+        if conv_result['updated_uuids']:
+            try:
+                remarked = _remark_entries_for_update(conv_result['updated_uuids'])
+            except Exception as e:
+                _log_error(f'remark for update error: {e}')
 
         # ExtMemory エントリの source_thread 自動紐づけ（v3.60）
         link_result = {}
@@ -3205,19 +3250,19 @@ def import_zip():
             rebuild_index()
         _save_imported_uuids(imported_uuids)
 
-    _log_info(f'ZIP import: imported={imported} skipped={skipped} memories={artifact_name} conv_saved={conv_saved} artifacts_extracted={artifacts_extracted}')
-    if imported > 0 or artifact_name:
+    _log_info(f'ZIP import: imported={imported} skipped={skipped} conv_updated={conv_result["updated"]} remarked={remarked} memories={artifact_name} conv_saved={conv_saved} artifacts_extracted={artifacts_extracted}')
+    if imported > 0 or remarked > 0 or artifact_name:
         _write_import_status(f.filename)
-    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved, 'artifacts_extracted': artifacts_extracted,
+    result = {'imported': imported, 'skipped': skipped, 'conversations_saved': conv_saved,
+              'conversations_updated': conv_result['updated'], 'artifacts_extracted': artifacts_extracted,
               'source_threads_linked': link_result.get('linked', 0)}
+    if remarked > 0:
+        result['entries_remarked'] = remarked
     if artifact_name:
         result['memories_imported'] = True
         result['memories_artifact'] = artifact_name
 
-    # インポート成功後、要約バッチ＋レーティングバッチを自動起動
-    # （ANTHROPIC_API_KEY があれば anthropic、なければ LMStudio バックエンドを使う）
-    # MIO_IMPORT_AUTO_BATCH=off で抑制可（テスト環境向け）
-    if imported > 0 and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
+    if (imported > 0 or remarked > 0) and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
         ok, info = _start_summary_batch()
         if ok:
             _log_info(f'auto summary batch started: backend={info["backend"]}')
@@ -3412,11 +3457,19 @@ def import_claude_code():
             imported_uuids.add(uid)
             imported += 1
 
-        conv_saved = 0
+        conv_result = {'saved': 0, 'updated': 0, 'skipped': 0, 'updated_uuids': []}
         try:
-            conv_saved = _save_conversations(convs)
+            conv_result = _save_conversations(convs)
         except Exception as e:
             _log_error(f'claude-code conv save error: {e}')
+        conv_saved = conv_result['saved']
+
+        remarked = 0
+        if conv_result['updated_uuids']:
+            try:
+                remarked = _remark_entries_for_update(conv_result['updated_uuids'])
+            except Exception as e:
+                _log_error(f'remark for update error: {e}')
 
         # ExtMemory エントリの source_thread 自動紐づけ（v3.60）
         link_result = {}
@@ -3429,10 +3482,9 @@ def import_claude_code():
             rebuild_index()
         _save_imported_uuids(imported_uuids)
 
-    _log_info(f'claude-code import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved}')
+    _log_info(f'claude-code import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved} conv_updated={conv_result["updated"]} remarked={remarked}')
 
-    # インポート成功後、要約バッチ＋レーティングバッチを自動起動（ZIPインポートと同じ挙動）
-    if imported > 0 and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
+    if (imported > 0 or remarked > 0) and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
         ok, info = _start_summary_batch()
         if ok:
             _log_info(f'auto summary batch started: backend={info["backend"]}')
@@ -3440,9 +3492,12 @@ def import_claude_code():
         if ok_r:
             _log_info(f'auto rating batch started: backend={info_r["backend"]}')
 
-    return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
-                    'conversations_saved': conv_saved,
-                    'source_threads_linked': link_result.get('linked', 0)})
+    result = {'imported': imported, 'skipped': skipped, 'errors': errors,
+              'conversations_saved': conv_saved, 'conversations_updated': conv_result['updated'],
+              'source_threads_linked': link_result.get('linked', 0)}
+    if remarked > 0:
+        result['entries_remarked'] = remarked
+    return jsonify(result)
 
 
 # ── OpenWebUI チャットエクスポートインポート ────────────────────────────
@@ -3654,11 +3709,19 @@ def import_openwebui():
         imported_uuids.add(uid)
         imported += 1
 
-    conv_saved = 0
+    conv_result = {'saved': 0, 'updated': 0, 'skipped': 0, 'updated_uuids': []}
     try:
-        conv_saved = _save_conversations(convs)
+        conv_result = _save_conversations(convs)
     except Exception as e:
         _log_error(f'openwebui conv save error: {e}')
+    conv_saved = conv_result['saved']
+
+    remarked = 0
+    if conv_result['updated_uuids']:
+        try:
+            remarked = _remark_entries_for_update(conv_result['updated_uuids'])
+        except Exception as e:
+            _log_error(f'remark for update error: {e}')
 
     link_result = {}
     try:
@@ -3670,9 +3733,9 @@ def import_openwebui():
         rebuild_index()
     _save_imported_uuids(imported_uuids)
 
-    _log_info(f'openwebui import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved}')
+    _log_info(f'openwebui import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved} conv_updated={conv_result["updated"]} remarked={remarked}')
 
-    if imported > 0 and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
+    if (imported > 0 or remarked > 0) and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
         ok, info = _start_summary_batch()
         if ok:
             _log_info(f'auto summary batch started: backend={info["backend"]}')
@@ -3680,9 +3743,12 @@ def import_openwebui():
         if ok_r:
             _log_info(f'auto rating batch started: backend={info_r["backend"]}')
 
-    return jsonify({'imported': imported, 'skipped': skipped, 'errors': errors,
-                    'conversations_saved': conv_saved,
-                    'source_threads_linked': link_result.get('linked', 0)})
+    result = {'imported': imported, 'skipped': skipped, 'errors': errors,
+              'conversations_saved': conv_saved, 'conversations_updated': conv_result['updated'],
+              'source_threads_linked': link_result.get('linked', 0)}
+    if remarked > 0:
+        result['entries_remarked'] = remarked
+    return jsonify(result)
 
 
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
