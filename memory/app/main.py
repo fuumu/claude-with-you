@@ -4873,7 +4873,7 @@ _SUBLIMATION_PROMPT_TEMPLATE = """あなたはテキストの「昇華」変換�
 def _lm_unload_instance(base_url, instance_id, model_id=''):
     """LM Studioから特定インスタンスをアンロードする"""
     import urllib.request
-    body = json.dumps({"id": instance_id}).encode()
+    body = json.dumps({"instance_id": instance_id}).encode()
     req = urllib.request.Request(
         f'{base_url}/api/v1/models/unload',
         data=body, method='POST',
@@ -4935,11 +4935,11 @@ def _ensure_lm_model(lm_host=None, lm_port=None):
 
         ok_loaded = []
         not_ok_loaded = []
-        for m in data.get('data', []):
+        for m in data.get('models', data.get('data', [])):
             instances = m.get('loaded_instances', [])
             if not instances:
                 continue
-            mid = m.get('id', '')
+            mid = m.get('key', m.get('id', ''))
             ok_name = _match_ok_model(mid, ok_models)
             if ok_name:
                 ok_loaded.append((m, ok_name))
@@ -4950,13 +4950,13 @@ def _ensure_lm_model(lm_host=None, lm_port=None):
             best_m, best_name = min(ok_loaded, key=lambda x: ok_models.index(x[1]))
             for m in not_ok_loaded:
                 for inst in m.get('loaded_instances', []):
-                    _lm_unload_instance(base, inst['id'], m.get('id', ''))
+                    _lm_unload_instance(base, inst['id'], m.get('key', m.get('id', '')))
             _log_info(f'LM using loaded OK model: {best_name}')
             return best_name
 
         for m in not_ok_loaded:
             for inst in m.get('loaded_instances', []):
-                _lm_unload_instance(base, inst['id'], m.get('id', ''))
+                _lm_unload_instance(base, inst['id'], m.get('key', m.get('id', '')))
 
         _lm_load_model(base, ok_models[0])
         return ok_models[0]
