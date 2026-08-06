@@ -138,6 +138,7 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 | `LM_STUDIO_HOST` | `192.168.10.32` | LMStudio host for manual batch runs |
 | `LM_STUDIO_PORT` | `1234` | LMStudio port |
 | `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | LMStudio model for local LLM work — summary batch and conversation digest (v3.65) |
+| `LLM_OK_MODELS` | *(empty)* | Comma-separated list of acceptable models for digest/rating/sublimate; when set, auto-manages LM Studio model loading (unload others, load preferred); first entry is default; unset = use MIO_LM_MODEL as-is (v3.83) |
 | `MIO_NIGHTLY_BATCH_HOUR` | `3` | Hour (JST, 0-23) for nightly summary batch; `off` disables |
 | `MIO_NIGHTLY_BATCH_BACKEND` | `lmstudio` | Backend for the nightly batch (`lmstudio` / `anthropic`) |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails |

@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.83 (2026-08-06) - LM Studioモデル自動管理（LLM-MGR1）
+    - LLM_OK_MODELS 環境変数でダイジェスト等に使ってよいモデルのカンマ区切りリストを指定可能
+    - ローカルLLM呼び出し前にロード中モデルを確認し、不要モデルをアンロード→目的モデルをロード
+    - _lm_client() にモデル管理ロジックを集約。conversation_digest, batch_run_summary_layers,
+      batch_run_rating, _generate_redacted の各箇所でインラインだったLMStudioクライアント生成を統一
+    - LLM_OK_MODELS 未設定時は従来通り MIO_LM_MODEL をそのまま使用（後方互換）
   v3.82 (2026-08-03) - Oplog個別削除 + 出席簿の個体解決修正（ATT-1）
     - DELETE /api/oplog/<index>: Oplogエントリの個別削除API追加
     - admin.html Oplog: 各行に削除ボタン追加（確認ダイアログ付き）
@@ -594,7 +600,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.82'
+VERSION = '3.83'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -3895,9 +3901,7 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
     try:
         import anthropic as _anthropic
         if backend == 'lmstudio':
-            client = _anthropic.Anthropic(
-                base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-            model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+            client, model = _lm_client()
         else:
             client = _anthropic.Anthropic(api_key=api_key)
             model  = 'claude-haiku-4-5-20251001'
@@ -4208,9 +4212,7 @@ def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
     try:
         import anthropic as _anthropic
         if backend == 'lmstudio':
-            client = _anthropic.Anthropic(
-                base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-            model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+            client, model = _lm_client()
         else:
             client = _anthropic.Anthropic(api_key=api_key)
             model = 'claude-haiku-4-5-20251001'
@@ -4511,12 +4513,7 @@ def _generate_redacted(uuid, force=False):
     body_hash = _conv_body_hash(messages)
     rating_reason = conv.get('rating_reason', '')
 
-    import anthropic as _anthropic
-    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
-    client = _anthropic.Anthropic(
-        base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-    model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+    client, model = _lm_client()
 
     all_sids = sorted(sentence_map.keys(),
                       key=lambda s: (int(s.split('-')[0][1:]), int(s.split('-')[1][1:])))
@@ -4873,14 +4870,99 @@ _SUBLIMATION_PROMPT_TEMPLATE = """あなたはテキストの「昇華」変換�
 """
 
 
+def _lm_unload_instance(base_url, instance_id, model_id=''):
+    """LM Studioから特定インスタンスをアンロードする"""
+    import urllib.request
+    body = json.dumps({"id": instance_id}).encode()
+    req = urllib.request.Request(
+        f'{base_url}/api/v1/models/unload',
+        data=body, method='POST',
+        headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+        _log_info(f'LM unloaded: {model_id} (instance: {instance_id})')
+    except Exception as e:
+        _log_info(f'LM unload failed for {instance_id}: {e}')
+
+
+def _lm_load_model(base_url, model_id):
+    """LM Studioにモデルをロードする（完了まで待つ）"""
+    import urllib.request
+    body = json.dumps({"model": model_id}).encode()
+    req = urllib.request.Request(
+        f'{base_url}/api/v1/models/load',
+        data=body, method='POST',
+        headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        resp.read()
+    _log_info(f'LM loaded: {model_id}')
+
+
+def _ensure_lm_model(lm_host=None, lm_port=None):
+    """LM Studioのロード済みモデルをLLM_OK_MODELSに基づいて管理し、使用モデル名を返す。
+    LLM_OK_MODELS未設定時はMIO_LM_MODELをそのまま返す（従来互換）。"""
+    import urllib.request
+
+    lm_host = lm_host or os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = lm_port or os.environ.get('LM_STUDIO_PORT', '1234')
+    base = f'http://{lm_host}:{lm_port}'
+    default_model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+
+    ok_str = os.environ.get('LLM_OK_MODELS', '')
+    if not ok_str:
+        return default_model
+
+    ok_models = [m.strip() for m in ok_str.split(',') if m.strip()]
+    if not ok_models:
+        return default_model
+
+    try:
+        req = urllib.request.Request(f'{base}/api/v1/models')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+
+        loaded = data.get('data', [])
+
+        ok_loaded = []
+        not_ok = []
+        for m in loaded:
+            mid = m.get('id', '')
+            if mid in ok_models:
+                ok_loaded.append(m)
+            else:
+                not_ok.append(m)
+
+        if ok_loaded:
+            best = min(ok_loaded, key=lambda m: ok_models.index(m['id']))
+            for m in not_ok:
+                for inst in m.get('loaded_instances', []):
+                    _lm_unload_instance(base, inst['id'], m.get('id', ''))
+            _log_info(f'LM using loaded OK model: {best["id"]}')
+            return best['id']
+
+        for m in not_ok:
+            for inst in m.get('loaded_instances', []):
+                _lm_unload_instance(base, inst['id'], m.get('id', ''))
+
+        _lm_load_model(base, ok_models[0])
+        return ok_models[0]
+
+    except Exception as e:
+        _log_info(f'LM model management failed, fallback to MIO_LM_MODEL: {e}')
+        return default_model
+
+
 def _lm_client():
-    """ローカルLLM（LMStudio）クライアントと使用モデル名を返す"""
+    """ローカルLLM（LMStudio）クライアントと使用モデル名を返す。
+    LLM_OK_MODELS設定時はモデルの自動管理（アンロード/ロード）を行う。"""
     import anthropic as _anthropic
     lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
     lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
     client = _anthropic.Anthropic(
         base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-    return client, os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+    model = _ensure_lm_model(lm_host, lm_port)
+    return client, model
 
 
 def _sublimate_chunk(client, model, text):
@@ -5114,12 +5196,7 @@ def _conversation_digest(uuid, force=False, safe_mode=False):
     chunk_size = 20
     chunks = [turns[i:i + chunk_size] for i in range(0, len(turns), chunk_size)]
 
-    import anthropic as _anthropic
-    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
-    client = _anthropic.Anthropic(
-        base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-    model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+    client, model = _lm_client()
 
     # v3.71: safe_mode は昇華文体（_SUBLIMATION_STYLE_RULES と同源。基準は一枚に）
     safe_instruction = ('\n\n※重要：昇華文体で書くこと。昇華とは体験の温度・感情・意味を保ったまま、'
