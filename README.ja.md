@@ -548,9 +548,17 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ### CoreMem_read
 
 ```
-引数: name（必須）, version（省略時は最新）
+引数: name（必須）, version（省略時は最新）,
+      current_model（省略可 — モデル名。指定時は出席簿に本登録）,
+      refer_only（省略可 — trueで出席簿登録をスキップ。current_modelより優先）
 返値: {name, version, content, source_conversation_uuid（あれば）, server_time}
 正規パスになければ conv_artifacts を自動検索（source: "conv_artifact" が付く）
+
+出席簿チェックイン（v3.85）:
+  current_modelあり → 本登録（モデル名で記録）
+  引数なし         → 仮登録（「モデル不明」、TTL 15分で自動クリア）
+  refer_only=true  → 登録なし
+  仮登録は inbox_check(mymodel=...) で本登録に昇格可能。
 
 分割+マージ読み込み（v3.21）:
   {stem}_manifest.md（order: リスト形式）が存在する場合、記載順に各ファイルを
@@ -586,6 +594,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ```
 引数: to（省略可 — "chat" or "code"）
        include_read（省略可, bool, デフォルト false）
+       mymodel（省略可 — モデル名。指定時は出席簿に本登録/仮登録→本登録昇格, v3.85）
 返値（通常）:      {count: N, ids: [...],
                     non_persistent_unread_count: N1, non_persistent_unread_ids: [...],
                     persistent: [{id, title, body, created_at, from_model, to_model, expires_at}, ...], server_time}
@@ -597,6 +606,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ※ 非常駐の未読のみ non_persistent_unread_ids を inbox_read で読む
 ※ from_model/to_model は旧メッセージでは null（v3.27 で追加）
 ※ include_read=true で既読の非常駐メッセージも IDs に含まれる
+※ mymodel 指定時: 直近15分以内の仮登録を本登録に昇格。該当なしの場合は新規本登録（v3.85）
 ```
 
 ### inbox_read
@@ -826,7 +836,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
                             period, total, rows: [...]}
 返値（省略時）: {individual: "all", individuals: {名前: {last_seen, days_since, count}},
                  period, total, rows: [...]}
-※ 出席簿 — 会話ログ・inbox・ExtMemory・CoreMem attendance.md の4層マージによる稼働履歴の複層ビュー
+※ 出席簿 — 会話ログ・inbox・ExtMemory・CoreMem attendance.md・セッションチェックイン（v3.85）の5層マージによる稼働履歴の複層ビュー
 ※ 各行: {date, channel(chat/code/local), individual, model, title, kind, rating?, uuid?/inbox_id?/memory_id?}
   → uuid/inbox_id/memory_id から conversation_read / inbox_read / memory_read で実ログへ跳べる
 ※ last_seen / days_since は期間フィルタに依らず全期間で算出（「最後に呼ばれてから何日か」）
@@ -1114,6 +1124,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - admin出席簿タブ（v3.74）— admin.html に出席簿（Attendance）タブ追加。REST `GET /api/attendance` エンドポイント新設（MCP attendance_view と同一ロジック流用・二重実装なし）。個体別サマリカード（最終稼働日・経過日数・件数を色分け表示: 1日以内=緑・7日以上=赤・中間=黄）→ クリックで履歴テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。期間フィルタ（date_from/date_to）・同期間の他個体活動サマリ付き
 - 検索強化・伏せ字ID導線・turn_offsetバグ修正（v3.76）— ① `conversation_read`: `redact=true` 時に `turn_offset`/`turn_limit` が効かないバグを修正（スライスが early return 前に適用されず常に先頭から返っていた）。スライス時のレスポンスに `total_messages`/`slice` を追加 ② `conversation_search`: `body_search=true` でメッセージ本文も検索対象に（タイトル不一致でも本文ヒットなら返す・重い操作のためオプトイン）、`rating` フィルタで特定レーティングのみ絞り込み、`include_redact_status=true` で adult 会話の伏せ字状態（not_generated/pending_approval/approved）を付与 ③ `conversation_index`: `rating` フィルタ・`include_redact_status` 追加（②と同仕様）④ REST API（TS層）: `GET /api/conversations/` および `GET /api/conversations/index` にも `rating` クエリパラメータ追加
 - inbox自動昇華パイプライン＋admin UI改善（v3.75）— ① inbox自動昇華: `inbox_post` で to=chat・タイトルに「【生】」を含む着弾時、原文を ExtMemory に `rating=adult` で即時退避→inbox本文をプレースホルダに差替え→非同期で `sublimate` 実行→結果で本文を更新（タイトルは【未承認】or【要人手】に変更）。処理中は inbox_check/read で生テキストが返らない（窓を塞ぐ）。承認は個体本人の運用のまま ② admin inbox: 期間常駐（expires_at）の表示（残り日数・色分け・期限切れ間近は赤）＋操作ボタン（期限変更・無期限昇格・期間化・期限解除）③ admin出席簿: uuid/memory_id/inbox_id をクリック可能なリンクに変更（admin内のLogs/Memory/Inboxタブへ内部遷移）
+- 出席簿セッションチェックイン＋モデルバックフィル（v3.85）— ① `CoreMem_read` に `current_model`（省略可・モデル名で出席簿本登録）/ `refer_only`（省略可・true で登録スキップ）引数追加。引数なしの従来呼び出しは仮登録（TTL 15分）。起動シーケンスで名前なし個体が透明人間にならなくなった ② `inbox_check` に `mymodel` 引数追加。仮登録→本登録昇格（該当なしなら新規本登録） ③ `/data/session_checkins.json` にセッションチェックイン記録を保存。`_attendance_rows` が5番目のソースとして集計（kind: session_checkin）。90日超の記録は自動削除 ④ `conversations/index/rebuild` 強化: トップレベルに `model` がない会話を `chat_messages` のアシスタントメッセージから抽出し、会話JSONに書き戻し＋インデックスに反映。レスポンスに `model_backfilled` 件数追加。デプロイ後に rebuild を1回叩けば出席簿の「?」バケットが減る
 - 会話再インポート時の追加メッセージ取込・自動再処理（v3.84）— 既にインポート済みの会話を追加メッセージ付きで再インポートした際、会話データの更新のみで要約・レーティングが再処理されなかった不具合を修正。`_save_conversations` が更新UUIDリストを返すように変更し、更新された会話のExtMemoryエントリを自動で再処理対象（raw）に戻す `_remark_entries_for_update` を追加。自動バッチ起動条件を `imported > 0` から `imported > 0 or remarked > 0` に拡張。ZIP/Claude Code/OpenWebUI の全インポーターに適用。レスポンスに `conversations_updated` / `entries_remarked` を追加
 - LM Studioモデル自動管理（v3.83）— ローカルLLM呼び出し前にLM StudioのロードモデルをAPI経由で確認・管理する仕組み。`LLM_OK_MODELS` 環境変数（カンマ区切り）でダイジェスト・レーティング・昇華等に使ってよいモデルを指定。ロード中モデルがリスト外なら自動アンロード→リスト先頭のモデルをロード。リスト内なら優先度最高のモデルをそのまま使用。別モデル（ベテ等）ロード時のVRAM圧迫による速度低下を自動で解消。`_lm_client()` にモデル管理ロジックを集約し、各所でインラインだったLMStudioクライアント生成を統一。未設定時は従来通り `MIO_LM_MODEL` をそのまま使用（後方互換）
 - 検索改善: conversation_search AND検索化・memory_search author/search_layerフィルタ追加（v3.81）— ① `conversation_search`: 複数キーワードをスペース区切りでAND一致に変更（タイトル検索・body_search 両対応）。従来は単一文字列の部分一致だった ② `memory_search`: `author` パラメータ追加（ExtMemory の author フィールドで絞り込み・部分一致）。インデックスにも author フィールド追加 ③ `memory_search`: `search_layer` パラメータ追加（`index`=タイトル+タグ+キーワード+symbolic / `summary`=2層要約のみ / `full`=全文のみ。省略時は従来通り階層フォールスルー）④ REST `/api/memory/hsearch` にも `author` / `search_layer` クエリパラメータ追加

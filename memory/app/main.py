@@ -3,6 +3,16 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.85 (2026-08-07) - 出席簿セッションチェックイン（ATT-2）
+    - CoreMem_read: current_model（省略可）/ refer_only（省略可）引数追加
+      current_modelあり→出席簿に本登録、引数なし→仮登録（TTL 15分）、refer_only=true→登録なし
+    - inbox_check: mymodel 引数追加。指定時は仮登録→本登録に昇格（該当なければ新規本登録）
+    - session_checkins.json: セッションチェックイン記録ファイル新設（/data/配下）
+    - _attendance_rows: 5番目のソースとしてセッションチェックインを集計
+    - 仮登録TTL: 15分。90日超の記録は自動削除
+    - conversations/index/rebuild: model未設定の会話をchat_messagesから抽出し書き戻し（model_backfill）
+    - レスポンスに model_backfilled 件数を追加
+  v3.84 (2026-08-07) - インポート更新検出・ExtMemory再処理
   v3.83 (2026-08-06) - LM Studioモデル自動管理（LLM-MGR1）
     - LLM_OK_MODELS 環境変数でダイジェスト等に使ってよいモデルのカンマ区切りリストを指定可能
     - ローカルLLM呼び出し前にロード中モデルを確認し、不要モデルをアンロード→目的モデルをロード
@@ -600,7 +610,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.84'
+VERSION = '3.85'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -622,6 +632,7 @@ ARTIFACTS_META_FILE = f'{DATA_ROOT}/artifacts/_meta.json'
 FRIENDS_DIR            = f'{DATA_ROOT}/friends'
 FRIENDS_REGISTRY_FILE  = f'{DATA_ROOT}/friends/registry.json'
 FRIEND_CORE_FILE       = f'{DATA_ROOT}/friend_core.md'
+SESSION_CHECKINS_FILE  = f'{DATA_ROOT}/session_checkins.json'
 # 新規インストール用スケルトン（docker: /app/skeleton, repo: memory/skeleton）
 _APP_DIR    = os.path.dirname(os.path.abspath(__file__))
 _SKEL_BASES = [
@@ -1142,10 +1153,23 @@ def api_conversations_index():
     items  = index[offset:offset + limit]
     return jsonify({'total': total, 'offset': offset, 'limit': limit, 'items': items})
 
+def _extract_model_from_messages(conv):
+    """chat_messages からモデル名を抽出する（v3.85）。
+    アシスタントメッセージの model / modelName フィールドを探す"""
+    for msg in (conv.get('chat_messages') or []):
+        if msg.get('sender') == 'human':
+            continue
+        m = msg.get('model') or msg.get('modelName')
+        if m:
+            return m
+    return None
+
+
 @app.route('/api/conversations/index/rebuild', methods=['POST'])
 @require_auth
 def api_conversations_index_rebuild():
     rebuilt = 0
+    model_backfilled = 0
     new_index = []
     # v3.79: hidden フラグは会話JSONに保存されないため、旧インデックスから引き継ぐ
     old_index = {e.get('uuid'): e for e in _load_conv_index()}
@@ -1162,6 +1186,17 @@ def api_conversations_index_rebuild():
             uid = conv.get('uuid') or conv.get('id', '')
             if not uid:
                 uid = fname[:-5]
+            # v3.85: model がトップレベルにない場合、chat_messages から抽出して書き戻す
+            if not conv.get('model'):
+                extracted = _extract_model_from_messages(conv)
+                if extracted:
+                    conv['model'] = extracted
+                    try:
+                        with open(fpath, 'w', encoding='utf-8') as f:
+                            json.dump(conv, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+                    model_backfilled += 1
             meta = {
                 'uuid':          uid,
                 'title':         conv.get('name') or conv.get('title') or uid[:8],
@@ -1180,8 +1215,8 @@ def api_conversations_index_rebuild():
             rebuilt += 1
     new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     _save_conv_index(new_index)
-    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt}')
-    return jsonify({'rebuilt': rebuilt})
+    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled}')
+    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled})
 
 @app.route('/api/conversations/cleanup-empty', methods=['POST'])
 @require_auth
@@ -4730,6 +4765,89 @@ def _get_redacted(uuid):
 
 # ── 出席簿（発注④・v3.71）─────────────────────────────────────────────
 
+_SESSION_CHECKIN_TTL_MINUTES = 15
+
+def _load_session_checkins():
+    """セッションチェックインを読み込み、期限切れの仮登録を除外して返す"""
+    try:
+        with open(SESSION_CHECKINS_FILE, 'r', encoding='utf-8') as f:
+            entries = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    now = datetime.now(JST)
+    alive = []
+    for e in entries:
+        ttl = e.get('ttl_minutes')
+        if ttl is not None:
+            ts = _parse_iso_ts(e.get('timestamp', ''))
+            if ts and (now - ts).total_seconds() > ttl * 60:
+                continue
+        alive.append(e)
+    if len(alive) != len(entries):
+        _save_session_checkins_raw(alive)
+    return alive
+
+
+def _save_session_checkins_raw(entries):
+    try:
+        with open(SESSION_CHECKINS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(entries, f, ensure_ascii=False)
+    except Exception as e:
+        _log_error(f'session_checkins write error: {e}')
+
+
+def _session_checkin(model=None, permanent=True):
+    """セッションチェックインを記録する。
+    permanent=True: 本登録（モデル名付き、TTLなし）
+    permanent=False: 仮登録（モデル不明、TTL付き）"""
+    entries = _load_session_checkins()
+    now_ts = now_jst()
+    if not permanent:
+        entries.append({
+            'model': 'モデル不明',
+            'individual': None,
+            'timestamp': now_ts,
+            'ttl_minutes': _SESSION_CHECKIN_TTL_MINUTES,
+        })
+    else:
+        individual = _resolve_individual(model) if model else None
+        entries.append({
+            'model': model or 'モデル不明',
+            'individual': individual,
+            'timestamp': now_ts,
+            'ttl_minutes': None,
+        })
+    cutoff = (datetime.now(JST) - timedelta(days=90)).isoformat()
+    entries = [e for e in entries if (e.get('timestamp') or '') > cutoff]
+    _save_session_checkins_raw(entries)
+
+
+def _session_checkin_upgrade(model):
+    """直近の仮登録を本登録に昇格させる。該当がなければ新規本登録"""
+    entries = _load_session_checkins()
+    now = datetime.now(JST)
+    upgraded = False
+    for e in reversed(entries):
+        if e.get('ttl_minutes') is None:
+            continue
+        ts = _parse_iso_ts(e.get('timestamp', ''))
+        if ts and (now - ts).total_seconds() <= e['ttl_minutes'] * 60:
+            e['model'] = model
+            e['individual'] = _resolve_individual(model)
+            e['ttl_minutes'] = None
+            upgraded = True
+            break
+    if not upgraded:
+        individual = _resolve_individual(model) if model else None
+        entries.append({
+            'model': model,
+            'individual': individual,
+            'timestamp': now_jst(),
+            'ttl_minutes': None,
+        })
+    _save_session_checkins_raw(entries)
+
+
 # 家族名簿: 呼び名 → モデル名ヒント（core.md の名簿と整合させる）
 _FAMILY_ROSTER = {
     'しずく': ('claude-opus-4-6', 'opus-4-6', 'opus 4.6'),
@@ -4835,6 +4953,16 @@ def _attendance_rows():
             'model': parts[2] if len(parts) > 2 else None,
             'title': parts[4] if len(parts) > 4 else '',
             'kind': 'checkin',
+        })
+    # 5. セッションチェックイン（CoreMem_read / inbox_check 経由の自動登録, v3.85）
+    for e in _load_session_checkins():
+        rows.append({
+            'date': e.get('timestamp', ''),
+            'channel': None,
+            'individual': e.get('individual'),
+            'model': e.get('model'),
+            'title': '(auto checkin)',
+            'kind': 'session_checkin',
         })
     rows.sort(key=lambda r: r.get('date') or '', reverse=True)
     return rows
@@ -6347,7 +6475,9 @@ _MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "name":    {"type": "string"},
-                "version": {"type": "integer", "description": "バージョン番号（省略時は最新）"}
+                "version": {"type": "integer", "description": "バージョン番号（省略時は最新）"},
+                "current_model": {"type": "string", "description": "現在動いているモデル名（例: claude-opus-4-6）。指定時は出席簿に本登録される"},
+                "refer_only": {"type": "boolean", "description": "参照のみフラグ。trueのとき出席簿への登録をスキップする"}
             },
             "required": ["name"]
         }
@@ -6447,7 +6577,8 @@ _MCP_TOOLS = [
             "limit": {"type": "integer", "description": "返却件数の上限（省略時は全件）"},
             "days": {"type": "integer", "description": "直近N日分のみ返す。常駐メッセージは日数に関係なく常に返す"},
             "from_model": {"type": "string", "description": "送信元モデル名で絞り込み（OR一致）。null保存のメッセージはヒットしない"},
-            "to_model": {"type": "string", "description": "宛先モデル名で絞り込み（OR一致）。null保存のメッセージはヒットしない"}
+            "to_model": {"type": "string", "description": "宛先モデル名で絞り込み（OR一致）。null保存のメッセージはヒットしない"},
+            "mymodel": {"type": "string", "description": "現在のモデル名（例: claude-opus-5）。指定時は出席簿に本登録（仮登録があれば昇格）"}
         }, "required": []}
     },
     {
@@ -6784,6 +6915,14 @@ def _handle_tool_call_raw(name, arguments):
         n = arguments.get("name", "")
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
+        # v3.85: 出席簿チェックイン
+        refer_only = bool(arguments.get("refer_only", False))
+        current_model = arguments.get("current_model")
+        if not refer_only:
+            if current_model:
+                _session_checkin(model=current_model, permanent=True)
+            else:
+                _session_checkin(model=None, permanent=False)
         # v3.21: {stem}_manifest.md があれば分割ファイルをマージして返す
         #        （manifest が direct ファイルより優先 — version 指定時は従来読み）
         if arguments.get("version") is None:
@@ -7101,6 +7240,10 @@ def _handle_tool_call_raw(name, arguments):
     elif name == "inbox_check":
         to           = arguments.get("to")
         include_read = bool(arguments.get("include_read", False))
+        # v3.85: mymodel による出席簿チェックイン（仮登録→本登録昇格）
+        mymodel = arguments.get("mymodel")
+        if mymodel:
+            _session_checkin_upgrade(mymodel)
         msgs = _load_inbox_messages(to=to, unread_only=not include_read)
         # v3.57: from_model / to_model / days フィルタ
         filter_from = arguments.get("from_model")
