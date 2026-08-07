@@ -1153,15 +1153,40 @@ def api_conversations_index():
     items  = index[offset:offset + limit]
     return jsonify({'total': total, 'offset': offset, 'limit': limit, 'items': items})
 
-def _extract_model_from_messages(conv):
-    """chat_messages からモデル名を抽出する（v3.85）。
-    アシスタントメッセージの model / modelName フィールドを探す"""
+_MODEL_HINT_RE = re.compile(
+    r'(?:You are powered by the model named|powered by)\s+([\w. ]+?)[\.\s,]',
+    re.IGNORECASE,
+)
+
+def _extract_model_from_conv(conv):
+    """会話JSONからモデル名を推定する（v3.85）。
+    優先順: 1) chat_messages の model/modelName フィールド
+            2) メッセージ本文中の "powered by the model named X" パターン
+            3) 会話タイトルから家族名簿でマッチ"""
+    # 1. per-message model field
     for msg in (conv.get('chat_messages') or []):
         if msg.get('sender') == 'human':
             continue
         m = msg.get('model') or msg.get('modelName')
         if m:
             return m
+    # 2. system prompt / message text pattern
+    for msg in (conv.get('chat_messages') or [])[:5]:
+        text = msg.get('text') or ''
+        if not text:
+            for block in (msg.get('content') or []):
+                if isinstance(block, dict) and block.get('type') == 'text':
+                    text = block.get('text', '')
+                    break
+        hit = _MODEL_HINT_RE.search(text)
+        if hit:
+            return hit.group(1).strip()
+    # 3. title-based inference via family roster
+    title = conv.get('name') or conv.get('title') or ''
+    individual = _resolve_individual(title)
+    if individual:
+        patterns = _FAMILY_ROSTER.get(individual, ())
+        return patterns[0] if patterns else individual
     return None
 
 
@@ -1188,7 +1213,7 @@ def api_conversations_index_rebuild():
                 uid = fname[:-5]
             # v3.85: model がトップレベルにない場合、chat_messages から抽出して書き戻す
             if not conv.get('model'):
-                extracted = _extract_model_from_messages(conv)
+                extracted = _extract_model_from_conv(conv)
                 if extracted:
                     conv['model'] = extracted
                     try:
