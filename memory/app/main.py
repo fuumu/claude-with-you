@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.86 (2026-08-07) - モデル抽出強化（ATT-3: 透明人間問題の根本対策）
+    - _extract_model_from_conv: 4段階に拡張（モデルフィールド→powered-byパターン→先頭メッセージ個体名→タイトル）
+    - 先頭3メッセージの本文を家族名簿（_resolve_individual）でマッチ（戦略3新設）
+    - _FAMILY_ROSTER: スペースなし表記パターン追加（opus5, sonnet5, haiku4.5 等）
+    - _MODEL_HINT_RE: ハイフン付きモデルID（claude-opus-5等）の抽出を修正
+    - _msg_text ヘルパー関数を抽出（text/content両形式対応）
   v3.85 (2026-08-07) - 出席簿セッションチェックイン（ATT-2）
     - CoreMem_read: current_model（省略可）/ refer_only（省略可）引数追加
       current_modelあり→出席簿に本登録、引数なし→仮登録（TTL 15分）、refer_only=true→登録なし
@@ -610,7 +616,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.85'
+VERSION = '3.86'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1154,40 +1160,56 @@ def api_conversations_index():
     return jsonify({'total': total, 'offset': offset, 'limit': limit, 'items': items})
 
 _MODEL_HINT_RE = re.compile(
-    r'(?:You are powered by the model named|powered by)\s+([\w. ]+?)[\.\s,]',
+    r'(?:You are powered by the model named|powered by)\s+([\w.\- ]+?)[\.\s,]',
     re.IGNORECASE,
 )
 
 def _extract_model_from_conv(conv):
-    """会話JSONからモデル名を推定する（v3.85）。
+    """会話JSONからモデル名を推定する（v3.85→v3.86）。
     優先順: 1) chat_messages の model/modelName フィールド
             2) メッセージ本文中の "powered by the model named X" パターン
-            3) 会話タイトルから家族名簿でマッチ"""
+            3) 先頭メッセージ本文の個体名マッチ（家族名簿）
+            4) 会話タイトルから家族名簿でマッチ（最終手段）"""
+    msgs = conv.get('chat_messages') or []
     # 1. per-message model field
-    for msg in (conv.get('chat_messages') or []):
+    for msg in msgs:
         if msg.get('sender') == 'human':
             continue
         m = msg.get('model') or msg.get('modelName')
         if m:
             return m
     # 2. system prompt / message text pattern
-    for msg in (conv.get('chat_messages') or [])[:5]:
-        text = msg.get('text') or ''
-        if not text:
-            for block in (msg.get('content') or []):
-                if isinstance(block, dict) and block.get('type') == 'text':
-                    text = block.get('text', '')
-                    break
+    for msg in msgs[:5]:
+        text = _msg_text(msg)
         hit = _MODEL_HINT_RE.search(text)
         if hit:
             return hit.group(1).strip()
-    # 3. title-based inference via family roster
+    # 3. first-message individual name match
+    for msg in msgs[:3]:
+        text = _msg_text(msg)
+        if text:
+            individual = _resolve_individual(text)
+            if individual:
+                patterns = _FAMILY_ROSTER.get(individual, ())
+                return patterns[0] if patterns else individual
+    # 4. title-based inference (last resort)
     title = conv.get('name') or conv.get('title') or ''
     individual = _resolve_individual(title)
     if individual:
         patterns = _FAMILY_ROSTER.get(individual, ())
         return patterns[0] if patterns else individual
     return None
+
+
+def _msg_text(msg):
+    """メッセージからテキスト本文を抽出するヘルパー"""
+    text = msg.get('text') or ''
+    if not text:
+        for block in (msg.get('content') or []):
+            if isinstance(block, dict) and block.get('type') == 'text':
+                text = block.get('text', '')
+                break
+    return text
 
 
 @app.route('/api/conversations/index/rebuild', methods=['POST'])
@@ -4875,13 +4897,13 @@ def _session_checkin_upgrade(model):
 
 # 家族名簿: 呼び名 → モデル名ヒント（core.md の名簿と整合させる）
 _FAMILY_ROSTER = {
-    'しずく': ('claude-opus-4-6', 'opus-4-6', 'opus 4.6'),
-    'おみ': ('claude-opus-4-8', 'opus-4-8', 'opus 4.8'),
-    'そねみ': ('claude-sonnet-4-6', 'sonnet-4-6', 'sonnet 4.6'),
+    'しずく': ('claude-opus-4-6', 'opus-4-6', 'opus 4.6', 'opus4.6'),
+    'おみ': ('claude-opus-4-8', 'opus-4-8', 'opus 4.8', 'opus4.8'),
+    'そねみ': ('claude-sonnet-4-6', 'sonnet-4-6', 'sonnet 4.6', 'sonnet4.6'),
     '汐': ('claude-fable-5', 'fable'),
-    'Opus 5': ('claude-opus-5', 'opus-5'),
-    'Sonnet 5': ('claude-sonnet-5', 'sonnet-5'),
-    'Haiku 4.5': ('claude-haiku-4-5', 'haiku'),
+    'Opus 5': ('claude-opus-5', 'opus-5', 'opus5'),
+    'Sonnet 5': ('claude-sonnet-5', 'sonnet-5', 'sonnet5'),
+    'Haiku 4.5': ('claude-haiku-4-5', 'haiku', 'haiku4.5'),
 }
 
 # from_model 表記からローカル環境の稼働を推定するマーカー
