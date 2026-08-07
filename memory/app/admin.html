@@ -1807,7 +1807,8 @@ async function rebuildConvIndex() {
   try {
     const res = await apiFetch('/api/conversations/index/rebuild', { method: 'POST' });
     const d = await res.json();
-    el.innerHTML = `<span style="color:#2ecc71">✓ ${d.rebuilt}件のエントリで再構築完了</span>`;
+    const bf = d.model_backfilled ? ` （モデル補完: ${d.model_backfilled}件）` : '';
+    el.innerHTML = `<span style="color:#2ecc71">✓ ${d.rebuilt}件のエントリで再構築完了${bf}</span>`;
   } catch (e) {
     el.innerHTML = `<span style="color:#e74c3c">✗ ${esc(e.message)}</span>`;
   }
