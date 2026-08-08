@@ -781,6 +781,7 @@
   <div style="margin:.75rem 0 0;display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:#7a8a9a">
     <input type="checkbox" id="import-overwrite" style="accent-color:#7ec8e3;cursor:pointer">
     <label for="import-overwrite" style="cursor:pointer">上書きモード（既にインポート済みの会話も再処理する）</label>
+    <button class="btn btn-secondary" style="margin-left:auto;font-size:.8rem;padding:.2rem .6rem" onclick="handleCompare()">比較（dry-run）</button>
   </div>
   <div id="import-result"></div>
 
@@ -1689,6 +1690,35 @@ async function handleFile(file) {
     } else {
       showResult(`<span class="result-err">エラー: ${esc(String(data.error || res.status))}</span>`);
     }
+  } catch(e) {
+    if (e.message !== '401') showResult('<span class="result-err">通信エラー</span>');
+  }
+}
+
+async function handleCompare() {
+  const file = document.getElementById('file-input').files[0];
+  if (!file || !file.name.toLowerCase().endsWith('.zip')) {
+    showResult('<span class="result-err">先にZIPファイルを選択してください</span>');
+    return;
+  }
+  showResult('<span class="spinner"></span>比較中...');
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch('/api/import/compare', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) { showResult(`<span class="result-err">エラー: ${esc(String(data.error))}</span>`); return; }
+    let html = `<span class="result-ok">ZIP内: ${data.total_in_zip}件 — 新規: ${data.new} / 更新可: ${data.updatable} / スキップ: ${data.skip}</span>`;
+    const interesting = data.conversations.filter(c => c.action !== 'skip' || c.local_msgs > 0);
+    if (interesting.length > 0) {
+      html += '<table style="margin-top:.5rem;font-size:.8rem;width:100%;border-collapse:collapse"><tr><th style="text-align:left">タイトル</th><th>ZIP</th><th>Local</th><th>差分</th><th>状態</th></tr>';
+      for (const c of interesting.slice(0, 30)) {
+        const color = c.action === 'update' ? '#4caf50' : c.action === 'new' ? '#2196f3' : '#888';
+        html += `<tr><td style="text-align:left;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.uuid)}">${esc(c.title)}</td><td>${c.zip_msgs}</td><td>${c.local_msgs}</td><td style="color:${color}">${c.diff > 0 ? '+' : ''}${c.diff}</td><td style="color:${color}">${esc(c.action)}</td></tr>`;
+      }
+      html += '</table>';
+    }
+    showResult(html);
   } catch(e) {
     if (e.message !== '401') showResult('<span class="result-err">通信エラー</span>');
   }
