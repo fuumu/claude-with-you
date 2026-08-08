@@ -1681,8 +1681,9 @@ async function handleFile(file) {
     const data = await res.json();
     if (res.ok) {
       const convPart = data.conversations_saved != null ? ` / 会話保存: ${data.conversations_saved}件` : '';
+      const convUpdPart = data.conversations_updated ? ` / 会話更新: ${data.conversations_updated}件` : '';
       const artPart  = data.artifacts_extracted  != null ? ` / 抽出ファイル: ${data.artifacts_extracted}件` : '';
-      showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件${convPart}${artPart}</span>`);
+      showResult(`<span class="result-ok">✓ imported: ${data.imported}件 / skipped: ${data.skipped}件${convPart}${convUpdPart}${artPart}</span>`);
       // Poll batch status (auto-batch may have started)
       setTimeout(pollBatchStatus, 1500);
     } else {

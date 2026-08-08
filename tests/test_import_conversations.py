@@ -288,3 +288,54 @@ def test_reimport_with_more_messages_remarks_entry(server, make_conv_zip):
     assert 'raw' in updated['tags']
     assert 'summarized' not in updated['tags']
     assert '## 2層: 要約' not in updated.get('body', '')
+
+
+def test_reimport_preserves_rating_on_update(server, make_conv_zip):
+    """会話更新時にサーバ側のrating等のメタデータが保持される（v3.87）"""
+    uid = new_uuid()
+    conv1 = make_conversation(uuid=uid, title='rating保持テスト',
+                              texts=['最初', '返信'])
+    _import_zip(server, make_conv_zip, [conv1], name='rp1.zip')
+
+    r = server.patch(f'/api/conversations/{uid}/rating',
+                     json={'rating': 'mature', 'rating_reason': 'テスト用'})
+    assert r.status_code == 200
+
+    conv2 = make_conversation(uuid=uid, title='rating保持テスト',
+                              texts=['最初', '返信', '追加', '追加返信'])
+    r2 = _import_zip(server, make_conv_zip, [conv2], name='rp2.zip')
+    assert r2['conversations_updated'] == 1
+
+    body = server.tool('conversation_read', {'uuid': uid, 'include_raw': True})
+    text = json.dumps(body, ensure_ascii=False)
+    assert '追加' in text
+
+    idx = server.tool('conversation_index', {'search': 'rating保持テスト'})
+    hit = [c for c in idx['items'] if c['uuid'] == uid]
+    assert hit
+    assert hit[0].get('rating') == 'mature'
+
+
+def test_import_compare_endpoint(server, make_conv_zip):
+    """POST /api/import/compare でZIPとLogStoreの差分を比較できる（v3.87）"""
+    uid = new_uuid()
+    conv1 = make_conversation(uuid=uid, title='比較テスト会話',
+                              texts=['最初', '返信'])
+    _import_zip(server, make_conv_zip, [conv1], name='cmp1.zip')
+
+    conv2 = make_conversation(uuid=uid, title='比較テスト会話',
+                              texts=['最初', '返信', '追加', '追加返信'])
+    uid_new = new_uuid()
+    conv3 = make_conversation(uuid=uid_new, title='新規会話')
+    zp = make_conv_zip([conv2, conv3], name='cmp2.zip')
+    with open(zp, 'rb') as f:
+        r = server.post('/api/import/compare',
+                        files={'file': ('cmp2.zip', f, 'application/zip')})
+    assert r.status_code == 200
+    d = r.json()
+    assert d['updatable'] == 1
+    assert d['new'] == 1
+    hits = {c['uuid']: c for c in d['conversations']}
+    assert hits[uid]['action'] == 'update'
+    assert hits[uid]['diff'] == 2
+    assert hits[uid_new]['action'] == 'new'

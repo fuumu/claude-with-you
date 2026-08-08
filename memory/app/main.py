@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.87 (2026-08-08) - ZIP再インポート時の会話更新改善
+    - _save_conversations: 更新時にサーバ側メタデータ（rating, model等）を保持するよう修正
+    - _save_conversations: インデックス更新時にも旧エントリのrating/hidden等を引き継ぎ
+    - _save_conversations: 更新検出時に旧→新メッセージ数をログ出力
+    - POST /api/import/compare: ZIP内のconversations.jsonとLogStoreの差分比較（dry-run）
+    - admin.html: ZIPインポート結果に「会話更新」件数を表示
   v3.86 (2026-08-07) - モデル抽出強化（ATT-3: 透明人間問題の根本対策）
     - _extract_model_from_conv: 4段階に拡張（モデルフィールド→powered-byパターン→先頭メッセージ個体名→タイトル）
     - 先頭3メッセージの本文を家族名簿（_resolve_individual）でマッチ（戦略3新設）
@@ -2986,13 +2992,19 @@ def _conv_body_match_terms(entry, terms):
     return False
 
 
+_CONV_SERVER_FIELDS = ('rating', 'rating_reason', 'rating_source',
+                       'rating_judged_at', 'rating_model', 'rating_skip_reason',
+                       'model', 'source')
+
 def _save_conversations(conversations):
     """conversations.jsonの各会話を個別ファイルに保存し、インデックスを更新する
     既存ファイルがある場合はメッセージ数を比較し、多い方を残す（v3.77）
+    更新時はサーバ側メタデータ（rating等）を保持する（v3.87）
     戻り値: dict{'saved','updated','skipped','updated_uuids'}（v3.84）"""
     os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
     index = _load_conv_index()
-    existing_uuids = {e['uuid'] for e in index}
+    existing_index = {e['uuid']: e for e in index}
+    existing_uuids = set(existing_index.keys())
     saved = 0
     skipped = 0
     updated = 0
@@ -3003,6 +3015,7 @@ def _save_conversations(conversations):
             continue
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
         msg_count = len(conv.get('chat_messages') or [])
+        old = None
         if os.path.exists(fpath):
             try:
                 with open(fpath, encoding='utf-8') as ef:
@@ -3011,10 +3024,15 @@ def _save_conversations(conversations):
                 if msg_count <= old_msg_count:
                     skipped += 1
                     continue
+                _log_info(f'conv update: {uid[:8]} msgs {old_msg_count}->{msg_count} (+{msg_count - old_msg_count})')
                 updated_uuids.append(uid)
                 updated += 1
             except Exception:
                 pass
+        if old is not None:
+            for k in _CONV_SERVER_FIELDS:
+                if k in old and k not in conv:
+                    conv[k] = old[k]
         with open(fpath, 'w', encoding='utf-8') as f:
             json.dump(conv, f, ensure_ascii=False, indent=2)
         meta = {
@@ -3024,11 +3042,16 @@ def _save_conversations(conversations):
             'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
             'message_count': msg_count,
         }
-        for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason',
-                  'model', 'source'):
+        for k in _CONV_SERVER_FIELDS:
             if conv.get(k):
                 meta[k] = conv[k]
-        if uid in existing_uuids:
+        old_idx = existing_index.get(uid)
+        if old_idx:
+            for k in _CONV_SERVER_FIELDS:
+                if k in old_idx and k not in meta:
+                    meta[k] = old_idx[k]
+            if old_idx.get('hidden'):
+                meta['hidden'] = True
             index = [m if m['uuid'] != uid else meta for m in index]
         else:
             index.append(meta)
@@ -3357,6 +3380,76 @@ def import_zip():
             _log_info(f'auto rating batch not started: {info_r.get("error")}')
 
     return jsonify(result)
+
+
+@app.route('/api/import/compare', methods=['POST'])
+@require_auth
+def import_compare():
+    """ZIPのconversations.jsonとLogStoreを比較し、差分を返す（データ変更なし）"""
+    if 'file' not in request.files:
+        abort(400)
+    f = request.files['file']
+    if not f.filename.lower().endswith('.zip'):
+        return jsonify({'error': 'zip file required'}), 400
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, 'upload.zip')
+        f.save(zip_path)
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(tmpdir)
+
+        conv_file = None
+        for root, _dirs, files in os.walk(tmpdir):
+            for fname in files:
+                if fname == 'conversations.json':
+                    conv_file = os.path.join(root, fname)
+                    break
+            if conv_file:
+                break
+        if not conv_file:
+            return jsonify({'error': 'conversations.json not found in zip'}), 400
+
+        with open(conv_file, encoding='utf-8') as cf:
+            conversations = json.load(cf)
+
+    results = []
+    for conv in conversations:
+        uid = conv.get('uuid') or conv.get('id', '')
+        if not uid:
+            continue
+        zip_count = len(conv.get('chat_messages') or [])
+        fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
+        title = conv.get('name') or conv.get('title') or uid[:8]
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, encoding='utf-8') as ef:
+                    old = json.load(ef)
+                local_count = len(old.get('chat_messages') or [])
+            except Exception:
+                local_count = -1
+            diff = zip_count - local_count
+            action = 'update' if diff > 0 else ('skip' if diff == 0 else 'skip (local has more)')
+            results.append({
+                'uuid': uid, 'title': title,
+                'zip_msgs': zip_count, 'local_msgs': local_count,
+                'diff': diff, 'action': action,
+            })
+        else:
+            results.append({
+                'uuid': uid, 'title': title,
+                'zip_msgs': zip_count, 'local_msgs': 0,
+                'diff': zip_count, 'action': 'new',
+            })
+
+    updatable = [r for r in results if r['action'] in ('update', 'new')]
+    return jsonify({
+        'total_in_zip': len(results),
+        'new': len([r for r in results if r['action'] == 'new']),
+        'updatable': len([r for r in results if r['action'] == 'update']),
+        'skip': len([r for r in results if r['action'].startswith('skip')]),
+        'conversations': results,
+    })
+
 
 # ── Claude Code ログインポート（M-LOCAL-6） ───────────────────────────
 
