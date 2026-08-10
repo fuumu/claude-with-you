@@ -184,7 +184,7 @@ mio-memory は**空でも起動するが**、アシスタントの「自分は�
 1. `core_stable.md`（アイデンティティ）・`core_infra.md`（host/URL/version）の `<...>` を自分の環境に書き換える
    - admin.html の CoreMem タブ、または MCP `CoreMem_save` で編集
 2. `core_rules.md` の運用ルールを必要に応じて調整
-3. `protocol_guide.md`（MCPツール全34本ガイド）はそのまま使える（install 非依存）
+3. `protocol_guide.md`（MCPツール全35本ガイド）はそのまま使える（install 非依存）
 
 > スケルトンの中身・方針の詳細は `memory/skeleton/README.md` を参照。
 

@@ -603,10 +603,11 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Files | 4 | file_upload, file_read, file_list, file_delete |
 | Attendance | 1 | attendance_view |
 | Sublimation | 1 | sublimate |
-| **Regular session total** | **34** | |
+| Operation log | 1 | oplog_list |
+| **Regular session total** | **35** | |
 | **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 34 tools are unavailable there.
+※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 35 tools are unavailable there.
 
 ### Conversation log annotations (log_annotate, v3.22)
 
@@ -1261,7 +1262,7 @@ behavior. Valuable on its own as a regression suite.
 
 ### Coverage (53 tests)
 
-Auth (Bearer/query/401), OAuth discovery, MCP transport (initialize / 34-tool list /
+Auth (Bearer/query/401), OAuth discovery, MCP transport (initialize / 35-tool list /
 notification 202 / unknown method -32601), 6 ExtMemory tools + REST CRUD, rating
 protection, 4 CoreMem tools (versioning, append, manifest merge, `__del__` exclusion,
 rename), 5 inbox tools (incl. peek), import (ZIP/claude-code, dedup, resilience to

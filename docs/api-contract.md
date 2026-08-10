@@ -93,7 +93,7 @@ command in `tests/conftest.py`.
 - No id (notification) → **202 Accepted** (empty body)
 - If `Accept` includes `text/event-stream`, the response is SSE (`event: message` + `data: <json>`); otherwise `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions` (includes the CoreMem_read("core.md") prompt) / issues `Mcp-Session-Id` header
-- `tools/list` → **34 tools** for regular sessions (v3.71)
+- `tools/list` → **35 tools** for regular sessions (v3.88)
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON string>"}`; image tools use `_mcp_content` (type:"image", base64)
 - `ping` → `{}`
 - Unknown method → JSON-RPC error `-32601`
@@ -112,7 +112,7 @@ The new-spec contract is pinned in `tests/test_mcp_2026.py` (skipped in Python-o
 - `subscriptions/listen` → SSE (`notifications/subscriptions/acknowledged` + keep-alive comments)
 - OAuth hardening: `iss` on the authorization redirect (RFC 9207) / `application_type` accepted in DCR (default `web`) / `grant_type=refresh_token` (issued, rotated on every use, reuse → `invalid_grant`, scope narrowing allowed) / `/.well-known/oauth-authorization-server/<suffix>` answered, `grant_types_supported` includes `refresh_token`
 
-## 5. MCP tools (34): response shapes (essentials)
+## 5. MCP tools (35): response shapes (essentials)
 
 For argument details see README.md / CoreMem `protocol_guide_detail.md`. Below are the
 response shapes pinned by tests.
@@ -142,6 +142,7 @@ response shapes pinned by tests.
 | `album_*` / `file_*` | Same metadata shapes as REST; `album_read` returns MCP image content; `album_save` accepts `rating`/`guard_message` (v3.77); `album_read` with `rating=adult`: hidden by default (`include_adult=true`), `guard_message` triggers two-step reveal (`acknowledged=true` to view, logs `viewer` to `view_log`); `album_list` excludes adult by default (`include_adult=true`) |
 | `attendance_view` | With `individual`: `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}`; without: `{individual:"all",individuals{},period,total,rows[]}`; rows are date-descending with `kind` (conversation/inbox/memory/checkin) + real-log refs (uuid/inbox_id/memory_id) (v3.71) |
 | `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`; exactly one of `text`/`uuid` required (both → `{error}` exclusive); unreachable LLM → `{error:"sublimation failed: ..."}` (v3.71) |
+| `oplog_list` | `{total, rows:[{timestamp, operation, target_id}]}`; descending (newest first); `operation`/`date_from`/`date_to`/`limit` (default 50, max 500) filters (v3.88) |
 
 ## 6. Import (includes the v3.60 contract)
 

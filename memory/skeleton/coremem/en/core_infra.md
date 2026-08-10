@@ -11,8 +11,8 @@
 
 | Item | Value |
 |------|-------|
-| mio-memory version | v3.71 |
-| MCP tool count | 34 (regular session) |
+| mio-memory version | v3.88 |
+| MCP tool count | 35 (regular session) |
 | Host / server | <e.g. NAS-name / 192.168.x.x> |
 | Data path | <e.g. /volume1/docker/mio/memory/data/> |
 | Public URL | <e.g. https://memory.example.com> |
@@ -22,7 +22,7 @@
 
 ---
 
-## MCP tool list (34, regular session)
+## MCP tool list (35, regular session)
 
 For each tool's purpose / arguments / cost, see **`protocol_guide.md`**.
 

@@ -604,10 +604,11 @@ conversation_share(uuid: str)
 | ファイル | 4 | file_upload, file_read, file_list, file_delete |
 | 出席簿 | 1 | attendance_view |
 | 昇華 | 1 | sublimate |
-| **通常セッション合計** | **34** | |
+| 操作ログ | 1 | oplog_list |
+| **通常セッション合計** | **35** | |
 | **友達セッション** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の34ツールは使用不可。
+※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の35ツールは使用不可。
 
 ### 会話ログ注記（log_annotate, v3.22）
 
@@ -1248,7 +1249,7 @@ TS-1（TypeScript移行・ストラングラー方式）の前提となる「現
 
 ### カバレッジ（53テスト）
 
-認証（Bearer/クエリ/401）・OAuthディスカバリ・MCPトランスポート（initialize/tools一覧34本/
+認証（Bearer/クエリ/401）・OAuthディスカバリ・MCPトランスポート（initialize/tools一覧35本/
 notification 202/未知メソッド -32601）・ExtMemory 6ツール＋REST CRUD・レーティング保護・
 CoreMem 4ツール（バージョン管理・append・manifestマージ・`__del__`除外・リネーム）・
 inbox 5ツール（peek含む）・インポート（ZIP/claude-code・重複チェック・imported_uuids欠落耐性・
