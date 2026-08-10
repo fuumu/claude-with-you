@@ -3,6 +3,11 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.88 (2026-08-10) - oplog_list MCPツール新設
+    - 操作ログ（oplog）をMCPツール経由で取得可能に
+    - operation / date_from / date_to / limit でフィルタリング
+    - Admin画面のOplogタブと同一データをAPI経由で返す
+
   v3.87 (2026-08-08) - ZIP再インポート時の会話更新改善
     - _save_conversations: 更新時にサーバ側メタデータ（rating, model等）を保持するよう修正
     - _save_conversations: インデックス更新時にも旧エントリのrating/hidden等を引き継ぎ
@@ -622,7 +627,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.86'
+VERSION = '3.88'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -6878,6 +6883,16 @@ _MCP_TOOLS = [
             "msg_from": {"type": "integer", "description": "uuid指定時: 開始メッセージ通番（1始まり・conversation_read の [No.X] と同じ）"},
             "msg_to":   {"type": "integer", "description": "uuid指定時: 終了メッセージ通番（両端含む・省略時は最後まで）"}
         }, "required": []}
+    },
+    {
+        "name": "oplog_list",
+        "description": "操作ログ（oplog）を取得する。ExtMemory CRUD・CoreMem保存・Album操作・会話レーティング変更等の操作履歴を新しい順で返す。Admin画面のOplogタブと同一データ",
+        "inputSchema": {"type": "object", "properties": {
+            "operation": {"type": "string", "description": "操作種別でフィルタ。値: create / update / delete / import / upsert / restore / dedup_delete / batch_empty_delete / cleanup_empty_delete / coremem_save / coremem_rename / coremem_delete / album_save / album_update / album_delete / file_upload / file_delete / conv_rating / conv_rating_auto / link_source_thread / remark_for_update 等"},
+            "date_from": {"type": "string", "description": "期間開始日（ISO 8601 例: 2026-08-01）"},
+            "date_to":   {"type": "string", "description": "期間終了日（同・両端含む）"},
+            "limit":     {"type": "integer", "description": "最大取得件数（デフォルト50、最大500）"}
+        }, "required": []}
     }
 ]
 
@@ -7631,6 +7646,30 @@ def _handle_tool_call_raw(name, arguments):
         except Exception as e:
             _log_error(f'attendance_view error: {e}')
             return {"error": f"attendance_view failed: {e}"}
+
+    elif name == "oplog_list":
+        try:
+            oplog = []
+            if os.path.exists(OPLOG_FILE):
+                with open(OPLOG_FILE) as f:
+                    oplog = json.load(f)
+            op_filter = arguments.get("operation")
+            d_from = str(arguments.get("date_from") or '')
+            d_to = str(arguments.get("date_to") or '')
+            lim = min(int(arguments.get("limit", 50)), 500)
+            if op_filter:
+                oplog = [e for e in oplog if e.get('operation') == op_filter]
+            if d_from:
+                oplog = [e for e in oplog if e.get('timestamp', '') >= d_from]
+            if d_to:
+                d_to_end = d_to + 'T23:59:59' if len(d_to) <= 10 else d_to
+                oplog = [e for e in oplog if e.get('timestamp', '') <= d_to_end]
+            rows = [{"timestamp": e.get("timestamp"), "operation": e.get("operation"),
+                     "target_id": e.get("entry_id")} for e in reversed(oplog)]
+            return {"total": len(rows), "rows": rows[:lim]}
+        except Exception as e:
+            _log_error(f'oplog_list error: {e}')
+            return {"error": f"oplog_list failed: {e}"}
 
     elif name == "sublimate":
         text = arguments.get("text")

@@ -18,7 +18,7 @@ def test_tools_list_34_tools(server):
     res = server.mcp('tools/list')
     tools = res['result']['tools']
     names = {t['name'] for t in tools}
-    assert len(tools) == 34, f'expected 34 tools, got {len(tools)}'
+    assert len(tools) == 35, f'expected 35 tools, got {len(tools)}'
     for expected in ('memory_read_index', 'memory_read', 'memory_write', 'memory_upsert',
                      'memory_search', 'memory_share',
                      'CoreMem_save', 'CoreMem_read', 'CoreMem_list', 'CoreMem_delete',
@@ -28,7 +28,7 @@ def test_tools_list_34_tools(server):
                      'batch_run_summary_layers', 'batch_run_rating',
                      'album_save', 'album_read', 'album_list', 'album_share', 'album_delete',
                      'file_upload', 'file_read', 'file_list', 'file_delete',
-                     'attendance_view', 'sublimate'):
+                     'attendance_view', 'sublimate', 'oplog_list'):
         assert expected in names, expected
 
 
@@ -209,3 +209,22 @@ def test_memory_share_creates_24h_url(server):
     r = server.anon().get(f"{server.base_url}/api/share/{d['token']}", timeout=10)
     assert r.status_code == 200
     assert r.json()['title'] == '共有テスト'
+
+
+def test_oplog_list_basic(server):
+    """oplog_list はメモリ操作後にログが記録され、フィルタが効く"""
+    server.tool('memory_write', {'title': 'oplog test', 'body': 'x', 'tags': ['ts0']})
+    d = server.tool('oplog_list', {})
+    assert 'rows' in d and 'total' in d
+    assert d['total'] >= 1
+    row = d['rows'][0]
+    assert 'timestamp' in row and 'operation' in row and 'target_id' in row
+
+    d2 = server.tool('oplog_list', {'operation': 'create'})
+    assert all(r['operation'] == 'create' for r in d2['rows'])
+
+    d3 = server.tool('oplog_list', {'limit': 1})
+    assert len(d3['rows']) <= 1
+
+    d4 = server.tool('oplog_list', {'date_from': '2099-01-01'})
+    assert d4['total'] == 0
