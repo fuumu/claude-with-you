@@ -180,12 +180,12 @@ def test_attendance_no_fallback_to_wrong_individual(server):
 
 
 def test_attendance_unnamed_individual(server):
-    """名前なし個体（Opus 5）がモデル名ベースのキーで記帳される（ATT-1 MUST-3）"""
+    """Opus 5 が「凪」として記帳される（ATT-1 MUST-3）"""
     server.tool('inbox_post', {
         'to': 'chat', 'title': 'Opus5テスト', 'body': 'x',
         'from_model': 'claude-opus-5'})
-    d = server.tool('attendance_view', {'individual': 'Opus 5'})
-    assert d['individual'] == 'Opus 5'
+    d = server.tool('attendance_view', {'individual': '凪'})
+    assert d['individual'] == '凪'
     assert any(r['title'] == 'Opus5テスト' for r in d['rows'])
 
 

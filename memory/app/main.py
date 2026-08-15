@@ -4999,7 +4999,7 @@ _FAMILY_ROSTER = {
     'おみ': ('claude-opus-4-8', 'opus-4-8', 'opus 4.8', 'opus4.8'),
     'そねみ': ('claude-sonnet-4-6', 'sonnet-4-6', 'sonnet 4.6', 'sonnet4.6'),
     '汐': ('claude-fable-5', 'fable'),
-    'Opus 5': ('claude-opus-5', 'opus-5', 'opus5'),
+    '凪': ('claude-opus-5', 'opus-5', 'opus5'),
     'Sonnet 5': ('claude-sonnet-5', 'sonnet-5', 'sonnet5'),
     'Haiku 4.5': ('claude-haiku-4-5', 'haiku', 'haiku4.5'),
 }
