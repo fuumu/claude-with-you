@@ -101,11 +101,12 @@ python -m venv .venv
 新仕様の契約は `tests/test_mcp_2026.py` に固定（Python 単体モードでは skip — main.py は 2025-11-25 のまま）。デュアル時代サーバーとして、レガシー（initialize + `Mcp-Session-Id`）と同一エンドポイントで共存する。
 
 - モダン判定: `params._meta["io.modelcontextprotocol/protocolVersion"]` または `MCP-Protocol-Version` ヘッダが 2026-07-28（または未知の版）を宣言したリクエスト。セッションIDは発行も参照もしない
-- `server/discover`（MUST）→ `result.{resultType, supportedVersions, capabilities, serverInfo, instructions, ttlMs, cacheScope}`。版宣言なしのプローブにも応答
+- `server/discover`（MUST）→ `result.{resultType, supportedVersions, capabilities, instructions, ttlMs, cacheScope, _meta["io.modelcontextprotocol/serverInfo"]}`。`serverInfo` はトップレベルではなく `result._meta` に配置。版宣言なしのプローブにも応答
+- `clientCapabilities` 必須: モダンリクエストは `params._meta["io.modelcontextprotocol/clientCapabilities"]` が必須。欠落 → **400** + error `-32602`（Invalid params）。`server/discover` のヘッダなしプローブ（版宣言なし）は免除
 - 必須ヘッダ検証（2026-07-28 宣言時）: `MCP-Protocol-Version` / `Mcp-Method` /（tools/call は）`Mcp-Name` がボディと不一致・欠落 → **400** + error `-32020`（HeaderMismatch）。`Mcp-Name` は `=?base64?...?=` センチネルをデコードして比較
 - 未対応の版 → **400** + error `-32022`（`data.supported` / `data.requested` 付き）
 - 廃止メソッド（`ping`・`initialize` をモダン宣言で呼ぶ等）→ **404** + `-32601`
-- 全結果に `resultType: "complete"`、`tools/list` に `ttlMs` / `cacheScope` を注入（tools/* の中身は従来どおり Python 転送）
+- 全結果に `resultType: "complete"`、`tools/list` に `ttlMs` / `cacheScope`、全モダンレスポンスの `result._meta` に `io.modelcontextprotocol/serverInfo` を注入（tools/* の中身は従来どおり Python 転送）
 - `subscriptions/listen` → SSE（`notifications/subscriptions/acknowledged` + keep-alive コメント）
 - OAuth 強化: 認可応答リダイレクトに `iss`（RFC 9207）／DCR で `application_type` 受理（既定 `web`）／`grant_type=refresh_token`（発行・使用ごとローテーション・再利用は `invalid_grant`・`scope` 縮小可）／`/.well-known/oauth-authorization-server/<suffix>` にも応答・`grant_types_supported` に `refresh_token`
 

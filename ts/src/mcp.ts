@@ -56,6 +56,8 @@ const MODERN_VERSIONS = ['2026-07-28'];
 /** server/discover の supportedVersions（モダン優先で列挙） */
 const SUPPORTED_VERSIONS = ['2026-07-28', '2025-11-25', '2025-03-26'];
 const META_PROTOCOL_VERSION = 'io.modelcontextprotocol/protocolVersion';
+const META_SERVER_INFO = 'io.modelcontextprotocol/serverInfo';
+const META_CLIENT_CAPABILITIES = 'io.modelcontextprotocol/clientCapabilities';
 const TOOLS_LIST_TTL_MS = 3600000;
 
 function metaOf(msg: JsonRpcMessage): Record<string, unknown> {
@@ -192,8 +194,17 @@ async function processModernMessage(
     return;
   }
 
+  // clientCapabilities 必須チェック（server/discover のヘッダなしプローブは免除）
+  const isProbe = method === 'server/discover' && !requested;
+  if (!isProbe && !meta[META_CLIENT_CAPABILITIES]) {
+    modernError(res, 400, msgId, -32602,
+      'Invalid params: _meta[io.modelcontextprotocol/clientCapabilities] is required');
+    return;
+  }
+
   if (method === 'server/discover') {
     const version = await upstreamVersion();
+    const serverInfo = { name: 'mio-memory', version: `${version}.0` };
     modernJson(res, 200, {
       jsonrpc: '2.0',
       id: msgId,
@@ -201,10 +212,10 @@ async function processModernMessage(
         resultType: 'complete',
         supportedVersions: SUPPORTED_VERSIONS,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'mio-memory', version: `${version}.0` },
         instructions: INSTRUCTIONS,
         ttlMs: TOOLS_LIST_TTL_MS,
         cacheScope: 'private',
+        _meta: { [META_SERVER_INFO]: serverInfo },
       },
     });
     return;
@@ -245,6 +256,10 @@ async function processModernMessage(
             if (!('ttlMs' in r)) r.ttlMs = TOOLS_LIST_TTL_MS;
             if (!('cacheScope' in r)) r.cacheScope = 'private';
           }
+          const rmeta = (r._meta ?? {}) as Record<string, unknown>;
+          const srvVer = await upstreamVersion();
+          rmeta[META_SERVER_INFO] = { name: 'mio-memory', version: `${srvVer}.0` };
+          r._meta = rmeta;
           out = JSON.stringify(parsed);
         }
       } catch {

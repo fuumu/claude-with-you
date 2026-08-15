@@ -104,11 +104,12 @@ command in `tests/conftest.py`.
 The new-spec contract is pinned in `tests/test_mcp_2026.py` (skipped in Python-only mode — main.py stays on 2025-11-25). The server is dual-era: legacy (initialize + `Mcp-Session-Id`) coexists on the same endpoint.
 
 - Modern detection: the request declares 2026-07-28 (or an unknown version) via `params._meta["io.modelcontextprotocol/protocolVersion"]` or the `MCP-Protocol-Version` header. No session IDs are minted or read
-- `server/discover` (MUST) → `result.{resultType, supportedVersions, capabilities, serverInfo, instructions, ttlMs, cacheScope}`. Also answers probes without a version declaration
+- `server/discover` (MUST) → `result.{resultType, supportedVersions, capabilities, instructions, ttlMs, cacheScope, _meta["io.modelcontextprotocol/serverInfo"]}`. `serverInfo` lives in `result._meta`, not at the top level. Also answers probes without a version declaration
+- `clientCapabilities` required: modern requests must include `params._meta["io.modelcontextprotocol/clientCapabilities"]`. Missing → **400** + error `-32602` (Invalid params). Header-less `server/discover` probes (no version declared) are exempt
 - Required-header validation (when 2026-07-28 is declared): `MCP-Protocol-Version` / `Mcp-Method` / (for tools/call) `Mcp-Name` missing or mismatching the body → **400** + error `-32020` (HeaderMismatch). `Mcp-Name` is compared after decoding the `=?base64?...?=` sentinel
 - Unsupported version → **400** + error `-32022` (with `data.supported` / `data.requested`)
 - Removed methods (`ping`, or `initialize` declared as modern) → **404** + `-32601`
-- Every result carries `resultType: "complete"`; `tools/list` gains `ttlMs` / `cacheScope` (tool payloads still forwarded to Python)
+- Every result carries `resultType: "complete"`; `tools/list` gains `ttlMs` / `cacheScope`; all modern responses carry `io.modelcontextprotocol/serverInfo` in `result._meta` (tool payloads still forwarded to Python)
 - `subscriptions/listen` → SSE (`notifications/subscriptions/acknowledged` + keep-alive comments)
 - OAuth hardening: `iss` on the authorization redirect (RFC 9207) / `application_type` accepted in DCR (default `web`) / `grant_type=refresh_token` (issued, rotated on every use, reuse → `invalid_grant`, scope narrowing allowed) / `/.well-known/oauth-authorization-server/<suffix>` answered, `grant_types_supported` includes `refresh_token`
 

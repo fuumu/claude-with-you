@@ -70,7 +70,8 @@ def test_server_discover(server):
     assert result['resultType'] == 'complete'
     assert PROTO in result['supportedVersions']
     assert '2025-11-25' in result['supportedVersions']  # デュアル時代サーバー
-    assert result['serverInfo']['name'] == 'mio-memory'
+    si = result['_meta']['io.modelcontextprotocol/serverInfo']
+    assert si['name'] == 'mio-memory'
     assert result['instructions']
     assert 'tools' in result['capabilities']
     assert result['ttlMs'] > 0
@@ -83,7 +84,9 @@ def test_server_discover_probe_without_headers(server):
               {'jsonrpc': '2.0', 'id': 1, 'method': 'server/discover', 'params': {}},
               {'Authorization': f'Bearer {server.token}', 'Accept': 'application/json'})
     assert r.status_code == 200
-    assert PROTO in r.json()['result']['supportedVersions']
+    result = r.json()['result']
+    assert PROTO in result['supportedVersions']
+    assert result['_meta']['io.modelcontextprotocol/serverInfo']['name'] == 'mio-memory'
 
 
 def test_modern_tools_list_stateless(server):
@@ -194,6 +197,39 @@ def test_subscriptions_listen_stream(server):
         assert 'message' in first or 'acknowledged' in first
     finally:
         r.close()
+
+
+def test_modern_response_carries_serverinfo_in_meta(server):
+    """モダン tools/call レスポンスの _meta に serverInfo が注入される"""
+    r = _post(server,
+              {'jsonrpc': '2.0', 'id': 20, 'method': 'tools/call',
+               'params': {'name': 'inbox_check', 'arguments': {},
+                           '_meta': _meta()}},
+              _headers(server, method='tools/call', name='inbox_check'))
+    assert r.status_code == 200
+    result = r.json()['result']
+    si = result['_meta']['io.modelcontextprotocol/serverInfo']
+    assert si['name'] == 'mio-memory'
+    assert si['version']
+
+
+def test_missing_client_capabilities_rejected(server):
+    """clientCapabilities 欠落は -32602 Invalid params（server/discover プローブは免除）"""
+    meta_no_caps = {META: PROTO,
+                    'io.modelcontextprotocol/clientInfo': {'name': 'test', 'version': '1'}}
+    r = _post(server,
+              {'jsonrpc': '2.0', 'id': 21, 'method': 'tools/list',
+               'params': {'_meta': meta_no_caps}},
+              _headers(server, method='tools/list'))
+    assert r.status_code == 400
+    assert r.json()['error']['code'] == -32602
+
+    # server/discover プローブ（版宣言なし）は免除
+    r2 = _post(server,
+               {'jsonrpc': '2.0', 'id': 22, 'method': 'server/discover',
+                'params': {}},
+               {'Authorization': f'Bearer {server.token}', 'Accept': 'application/json'})
+    assert r2.status_code == 200
 
 
 # ── OAuth 強化（MCP 2026-07-28）──────────────────────────────────────
