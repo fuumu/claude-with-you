@@ -5101,11 +5101,12 @@ def _attendance_rows():
         })
     # 5. セッションチェックイン（CoreMem_read / inbox_check 経由の自動登録, v3.85）
     for e in _load_session_checkins():
+        model = e.get('model')
         rows.append({
             'date': e.get('timestamp', ''),
             'channel': None,
-            'individual': e.get('individual'),
-            'model': e.get('model'),
+            'individual': _resolve_individual(model) if model else None,
+            'model': model,
             'title': '(auto checkin)',
             'kind': 'session_checkin',
         })
@@ -5119,6 +5120,8 @@ def _attendance_view(individual=None, date_from='', date_to='', limit=50):
     resolved = _resolve_individual(individual) if individual else None
 
     def _match(r):
+        if individual == '?' and not r.get('individual'):
+            return True
         if resolved and r.get('individual') == resolved:
             return True
         m = r.get('model') or ''
