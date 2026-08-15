@@ -3621,7 +3621,12 @@ async function loadAttendanceSummary() {
       return;
     }
     let html = '';
-    for (const [name, info] of Object.entries(d.individuals)) {
+    const sorted = Object.entries(d.individuals).sort((a, b) => {
+      const ta = a[1].last_seen || '';
+      const tb = b[1].last_seen || '';
+      return tb.localeCompare(ta);
+    });
+    for (const [name, info] of sorted) {
       const days = info.days_since != null ? info.days_since : '?';
       const lastDate = info.last_seen ? info.last_seen.slice(0, 10) : '—';
       const fresh = info.days_since != null && info.days_since <= 1;
