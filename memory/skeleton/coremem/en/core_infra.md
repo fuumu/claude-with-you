@@ -11,7 +11,7 @@
 
 | Item | Value |
 |------|-------|
-| mio-memory version | v3.88 |
+| mio-memory version | v3.89 |
 | MCP tool count | 35 (regular session) |
 | Host / server | <e.g. NAS-name / 192.168.x.x> |
 | Data path | <e.g. /volume1/docker/mio/memory/data/> |

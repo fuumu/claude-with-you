@@ -90,7 +90,7 @@ python -m venv .venv
 - id なし（notification）→ **202 Accepted**（本文なし）
 - `Accept: text/event-stream` を含むと SSE 形式（`event: message` + `data: <json>`）で返る。含まなければ `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions`（CoreMem_read("core.md") の案内を含む）/ `Mcp-Session-Id` ヘッダ発行
-- `tools/list` → 通常セッションは **35本**（v3.88）
+- `tools/list` → 通常セッションは **35本**（v3.89）
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON文字列>"}`。画像系は `_mcp_content`（type:"image", base64）
 - `ping` → `{}`
 - 未知メソッド → JSON-RPC error `-32601`

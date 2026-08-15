@@ -93,7 +93,7 @@ command in `tests/conftest.py`.
 - No id (notification) → **202 Accepted** (empty body)
 - If `Accept` includes `text/event-stream`, the response is SSE (`event: message` + `data: <json>`); otherwise `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions` (includes the CoreMem_read("core.md") prompt) / issues `Mcp-Session-Id` header
-- `tools/list` → **35 tools** for regular sessions (v3.88)
+- `tools/list` → **35 tools** for regular sessions (v3.89)
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON string>"}`; image tools use `_mcp_content` (type:"image", base64)
 - `ping` → `{}`
 - Unknown method → JSON-RPC error `-32601`

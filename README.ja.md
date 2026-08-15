@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.88","mcp_tool_count":35}
+# {"status":"ok","version":"3.89","mcp_tool_count":35}
 ```
 
 ### 5. Claude Code への登録
@@ -1140,6 +1140,7 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - admin出席簿タブ（v3.74）— admin.html に出席簿（Attendance）タブ追加。REST `GET /api/attendance` エンドポイント新設（MCP attendance_view と同一ロジック流用・二重実装なし）。個体別サマリカード（最終稼働日・経過日数・件数を色分け表示: 1日以内=緑・7日以上=赤・中間=黄）→ クリックで履歴テーブル展開（日時・種別・チャネル・レーティング・内容・実ログリンク）。期間フィルタ（date_from/date_to）・同期間の他個体活動サマリ付き
 - 検索強化・伏せ字ID導線・turn_offsetバグ修正（v3.76）— ① `conversation_read`: `redact=true` 時に `turn_offset`/`turn_limit` が効かないバグを修正（スライスが early return 前に適用されず常に先頭から返っていた）。スライス時のレスポンスに `total_messages`/`slice` を追加 ② `conversation_search`: `body_search=true` でメッセージ本文も検索対象に（タイトル不一致でも本文ヒットなら返す・重い操作のためオプトイン）、`rating` フィルタで特定レーティングのみ絞り込み、`include_redact_status=true` で adult 会話の伏せ字状態（not_generated/pending_approval/approved）を付与 ③ `conversation_index`: `rating` フィルタ・`include_redact_status` 追加（②と同仕様）④ REST API（TS層）: `GET /api/conversations/` および `GET /api/conversations/index` にも `rating` クエリパラメータ追加
 - inbox自動昇華パイプライン＋admin UI改善（v3.75）— ① inbox自動昇華: `inbox_post` で to=chat・タイトルに「【生】」を含む着弾時、原文を ExtMemory に `rating=adult` で即時退避→inbox本文をプレースホルダに差替え→非同期で `sublimate` 実行→結果で本文を更新（タイトルは【未承認】or【要人手】に変更）。処理中は inbox_check/read で生テキストが返らない（窓を塞ぐ）。承認は個体本人の運用のまま ② admin inbox: 期間常駐（expires_at）の表示（残り日数・色分け・期限切れ間近は赤）＋操作ボタン（期限変更・無期限昇格・期間化・期限解除）③ admin出席簿: uuid/memory_id/inbox_id をクリック可能なリンクに変更（admin内のLogs/Memory/Inboxタブへ内部遷移）
+- 出席簿改善：個体名「凪」対応＋admin UI改善（v3.89）— ① `_FAMILY_ROSTER` の `Opus 5` → `凪`（2026-08-07に名乗ったため）。表示時動的解決のため過去データも自動反映 ② session_checkin の individual を保存時固定から動的解決に変更（roster更新が過去チェックインにも反映） ③ `?` バケット詳細表示が0件になるバグ修正（individual=None の行にマッチするよう `_match` 修正） ④ admin出席簿カードを `last_seen` 降順ソート（左が最新） ⑤ `?` カードの表示名を「コード生成、ローカルLLM / その他」に変更 ⑥ 詳細テーブルのリスト高さを 500px → 75vh に拡張 ⑦ 詳細テーブルにゼブラストライプ追加
 - oplog_list MCPツール新設（v3.88）— `oplog_list` MCPツール追加（ツール数 34→35）。操作ログ（oplog）をMCPツール経由で取得可能に。`operation` で操作種別フィルタ（create/update/delete/import/coremem_save/album_save/conv_rating_auto 等）、`date_from`/`date_to` で期間フィルタ、`limit`（デフォルト50、最大500）。新しい順（降順）で `{timestamp, operation, target_id}` を返す。Admin画面のOplogタブと同一データ。REST `GET /api/oplog` は既存（全件・フィルタなし）
 - 出席簿セッションチェックイン＋モデルバックフィル（v3.85）— ① `CoreMem_read` に `current_model`（省略可・モデル名で出席簿本登録）/ `refer_only`（省略可・true で登録スキップ）引数追加。引数なしの従来呼び出しは仮登録（TTL 15分）。起動シーケンスで名前なし個体が透明人間にならなくなった ② `inbox_check` に `mymodel` 引数追加。仮登録→本登録昇格（該当なしなら新規本登録） ③ `/data/session_checkins.json` にセッションチェックイン記録を保存。`_attendance_rows` が5番目のソースとして集計（kind: session_checkin）。90日超の記録は自動削除 ④ `conversations/index/rebuild` 強化: トップレベルに `model` がない会話を `chat_messages` のアシスタントメッセージから抽出し、会話JSONに書き戻し＋インデックスに反映。レスポンスに `model_backfilled` 件数追加。デプロイ後に rebuild を1回叩けば出席簿の「?」バケットが減る
 - 会話再インポート時の追加メッセージ取込・自動再処理（v3.84）— 既にインポート済みの会話を追加メッセージ付きで再インポートした際、会話データの更新のみで要約・レーティングが再処理されなかった不具合を修正。`_save_conversations` が更新UUIDリストを返すように変更し、更新された会話のExtMemoryエントリを自動で再処理対象（raw）に戻す `_remark_entries_for_update` を追加。自動バッチ起動条件を `imported > 0` から `imported > 0 or remarked > 0` に拡張。ZIP/Claude Code/OpenWebUI の全インポーターに適用。レスポンスに `conversations_updated` / `entries_remarked` を追加

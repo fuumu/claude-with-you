@@ -186,7 +186,7 @@ https://<YOUR_SERVER_URL>/register
 ### mio-memory との関係
 
 お友達システムは mio-memory プロジェクトのサブシステムです。
-mio-memory は澪の外部記憶全体を管理するインフラで、v3.88 現在 35 本の MCP ツールを提供しています。
+mio-memory は澪の外部記憶全体を管理するインフラで、v3.89 現在 35 本の MCP ツールを提供しています。
 
 ---
 
