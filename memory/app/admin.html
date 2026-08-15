@@ -3681,6 +3681,7 @@ async function loadAttendanceDetail() {
     }
     let html = '<table style="width:100%;border-collapse:collapse">';
     html += '<tr><th style="text-align:left;padding:4px 8px">日時</th><th style="padding:4px 8px">種別</th><th style="padding:4px 8px">チャネル</th><th style="padding:4px 8px">レーティング</th><th style="text-align:left;padding:4px 8px">内容</th><th style="padding:4px 8px">リンク</th></tr>';
+    let rowIdx = 0;
     for (const row of d.rows) {
       const dt = row.date ? row.date.slice(0, 16).replace('T', ' ') : '—';
       const kind = _attKindLabel[row.kind] || row.kind || '';
@@ -3695,7 +3696,8 @@ async function loadAttendanceDetail() {
       } else if (row.memory_id) {
         link = `<a href="javascript:void(0)" onclick="navigateToMemory('${row.memory_id}')" title="${row.memory_id}" style="font-size:.8rem">🧠</a> <button class="id-action-btn" onclick="copyIdInline(this,'${row.memory_id}',event)" title="Copy ID">Copy</button>`;
       }
-      html += `<tr style="border-top:1px solid var(--border)">`;
+      const zebra = rowIdx++ % 2 === 1 ? 'background:rgba(128,128,128,.07);' : '';
+      html += `<tr style="border-top:1px solid var(--border);${zebra}">`;
       html += `<td style="padding:4px 8px;white-space:nowrap;font-size:.85rem">${dt}</td>`;
       html += `<td style="padding:4px 8px;text-align:center;font-size:.85rem">${kind}</td>`;
       html += `<td style="padding:4px 8px;text-align:center;font-size:.85rem">${ch}</td>`;
