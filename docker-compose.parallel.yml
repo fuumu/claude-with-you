@@ -1,0 +1,18 @@
+version: '3'
+services:
+  ts-proxy:
+    build:
+      context: ./ts
+      network: host
+    network_mode: host
+    volumes:
+      - ./memory/data:/data
+    environment:
+      - MIO_PORT=5003
+      - MIO_UPSTREAM_HOST=127.0.0.1
+      - MIO_UPSTREAM_PORT=5002
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - memory
