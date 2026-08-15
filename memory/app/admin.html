@@ -976,7 +976,7 @@
         <button onclick="closeAttendanceDetail()" style="font-size:.8rem;padding:2px 10px">閉じる</button>
       </div>
     </div>
-    <div id="att-detail-rows" style="font-size:.9rem;max-height:500px;overflow-y:auto"></div>
+    <div id="att-detail-rows" style="font-size:.9rem;max-height:75vh;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -3633,7 +3633,8 @@ async function loadAttendanceSummary() {
       const stale = info.days_since != null && info.days_since >= 7;
       const borderColor = fresh ? '#27ae60' : stale ? '#e74c3c' : '#f39c12';
       html += `<div onclick="openAttendanceDetail('${name}')" style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:14px 18px;min-width:150px;background:var(--card-bg);transition:transform .1s" onmouseenter="this.style.transform='scale(1.03)'" onmouseleave="this.style.transform=''">`;
-      html += `<div style="font-size:1.1rem;font-weight:700;margin-bottom:6px">${name}</div>`;
+      const displayName = name === '?' ? 'コード生成、ローカルLLM<br><span style="font-size:.85rem;font-weight:400">その他</span>' : name;
+      html += `<div style="font-size:1.1rem;font-weight:700;margin-bottom:6px">${displayName}</div>`;
       html += `<div style="font-size:.85rem;color:#888">最終稼働: ${lastDate}</div>`;
       html += `<div style="font-size:.85rem;color:${borderColor};font-weight:600">${days}日前 — ${info.count}件</div>`;
       html += `</div>`;
