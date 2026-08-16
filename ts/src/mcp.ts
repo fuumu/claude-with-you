@@ -527,12 +527,15 @@ export async function handleMcp(
   // モダン時代（2026-07-28）: 単一メッセージのみ（バッチは版 2025-06-18 で廃止済み）。
   // ステートレス処理 — セッションIDは発行も参照もしない
   if (!Array.isArray(msg) && isModernMessage(req, msg as JsonRpcMessage)) {
-    await processModernMessage(req, res, msg as JsonRpcMessage);
+    const m = msg as JsonRpcMessage;
+    console.log(`[MCP] protocol=modern method=${m.method ?? '(none)'}`);
+    await processModernMessage(req, res, m);
     return true;
   }
 
   // バッチ: 全要素がトランスポートメソッドならネイティブ、そうでなければ丸ごと転送
   if (Array.isArray(msg)) {
+    console.log(`[MCP] protocol=legacy method=(batch ${(msg as JsonRpcMessage[]).length} msgs)`);
     const messages = msg as JsonRpcMessage[];
     if (messages.every((m) => isTransportMethod(m))) {
       const results: Record<string, unknown>[] = [];
@@ -557,6 +560,7 @@ export async function handleMcp(
   }
 
   const single = msg as JsonRpcMessage;
+  console.log(`[MCP] protocol=legacy method=${single.method ?? '(none)'}`);
   if (isTransportMethod(single)) {
     const { response, sessionId: newSession } = await processTransportMessage(single);
     if (newSession) sessionId = newSession;
