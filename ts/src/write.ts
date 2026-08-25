@@ -72,6 +72,7 @@ export function rebuildIndex(): void {
     if (symbolic) item.symbolic = symbolic;
     if (e.rating && e.rating !== 'safe') item.rating = e.rating;
     if (e.local_only) item.local_only = true;
+    item.body_length = (e.body ?? '').length;
     index.push(item);
   }
   writeJson(INDEX_FILE, index);

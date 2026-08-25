@@ -1352,6 +1352,7 @@ function renderCards() {
   grid.innerHTML = entries.map(e => {
     const imp  = e.importance || 'normal';
     const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
+    const bodyLen = e.body_length != null ? `　${e.body_length.toLocaleString()} 字` : '';
     const tags = normTags(e.tags).map(t => `<span class="tag">${esc(t)}</span>`).join('');
     const logLink = e.source_thread
       ? `<button class="btn-conv-link" onclick="openConvInLogs('${esc(e.source_thread)}',event)" title="元の会話を開く">📖</button>`
@@ -1359,7 +1360,7 @@ function renderCards() {
     return `
       <div class="card${e.deleted ? ' deleted' : ''}" onclick="openMemory('${esc(e.id)}')">
         <div class="card-title"><span class="dot dot-${imp}"></span>${esc(e.title)}${logLink}</div>
-        <div class="card-meta">${date}</div>
+        <div class="card-meta">${date}${bodyLen}</div>
         <div class="card-tags">${tags}</div>
         <div class="card-footer">
           <button class="btn-link"   onclick="shareMemory('${esc(e.id)}', event)">リンク</button>
@@ -1375,8 +1376,9 @@ async function openMemory(id) {
     const e = await res.json();
     const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
     document.getElementById('modal-title').textContent = e.title || '';
+    const memBodyLen = (e.body || '').length;
     document.getElementById('modal-meta').textContent =
-      `${date}　${normTags(e.tags).join(' · ')}　importance: ${e.importance || 'normal'}`;
+      `${date}　${normTags(e.tags).join(' · ')}　importance: ${e.importance || 'normal'}　${memBodyLen.toLocaleString()} 字`;
     const body = document.getElementById('modal-body');
     body.className = 'modal-body md-body';
     body.innerHTML = renderMarkdown(e.body || '');
@@ -1447,10 +1449,12 @@ function renderCoreMem() {
   list.innerHTML = items.map(a => {
     const date = (a.updated_at || '').slice(0, 16).replace('T', ' ');
     const ver  = a.version != null ? String(a.version).padStart(3, '0') : '---';
+    const kb   = a.size != null ? (a.size / 1024).toFixed(1) + ' KB' : '';
     return `
       <div class="artifact-item" onclick="openArtifact('${esc(a.name)}')">
         <span class="artifact-name">${esc(a.name)}</span>
         <span class="artifact-ver">v${ver}</span>
+        <span class="artifact-date" style="min-width:5em;text-align:right">${kb}</span>
         <span class="artifact-date">${date}</span>
         <button class="del-btn" onclick="deleteArtifact('${esc(a.name)}', event)" title="削除">✕</button>
       </div>`;
@@ -3482,8 +3486,9 @@ function openEntityById(id) {
         document.getElementById('auth-overlay').style.display = 'none';
         const date = (e.created_at || '').slice(0, 16).replace('T', ' ');
         document.getElementById('modal-title').textContent = e.title || '';
+        const shareBodyLen = (e.body || '').length;
         document.getElementById('modal-meta').textContent =
-          `${date}　${normTags(e.tags).join(' · ')}　importance: ${e.importance || 'normal'}`;
+          `${date}　${normTags(e.tags).join(' · ')}　importance: ${e.importance || 'normal'}　${shareBodyLen.toLocaleString()} 字`;
         const body = document.getElementById('modal-body');
         body.className = 'modal-body';
         body.textContent = e.body || '';

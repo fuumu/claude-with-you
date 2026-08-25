@@ -18,7 +18,7 @@ def test_tools_list_34_tools(server):
     res = server.mcp('tools/list')
     tools = res['result']['tools']
     names = {t['name'] for t in tools}
-    assert len(tools) == 35, f'expected 35 tools, got {len(tools)}'
+    assert len(tools) == 37, f'expected 37 tools, got {len(tools)}'
     for expected in ('memory_read_index', 'memory_read', 'memory_write', 'memory_upsert',
                      'memory_search', 'memory_share',
                      'CoreMem_save', 'CoreMem_read', 'CoreMem_list', 'CoreMem_delete',
@@ -28,7 +28,8 @@ def test_tools_list_34_tools(server):
                      'batch_run_summary_layers', 'batch_run_rating',
                      'album_save', 'album_read', 'album_list', 'album_share', 'album_delete',
                      'file_upload', 'file_read', 'file_list', 'file_delete',
-                     'attendance_view', 'sublimate', 'oplog_list'):
+                     'attendance_view', 'sublimate', 'oplog_list',
+                     'project_create', 'project_list'):
         assert expected in names, expected
 
 

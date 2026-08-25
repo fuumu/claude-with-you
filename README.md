@@ -48,7 +48,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.89","mcp_tool_count":35}
+# {"status":"ok","version":"3.90","mcp_tool_count":37}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -171,7 +171,7 @@ Claude.ai / Claude Code
   │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
-  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · conversations(LogStore)/ · inbox/ · friends/ · album/ · uploads/
+  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · projects/ · conversations(LogStore)/ · inbox/ · friends/ · album/ · uploads/
 ```
 
 Single-file implementation — all logic in `memory/app/main.py`.
@@ -215,10 +215,10 @@ Versioned file storage (NAS file store). Every save creates a new version; the l
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `CoreMem_save` | Save a file (new version); `mode="append"` appends with automatic separator (v3.31/v3.32); `mode="str_replace"` replaces `old_str` with `new_str` for partial edits without full round-trip (v3.80) | `name`, `content`, `mode`, `old_str`, `new_str` |
-| `CoreMem_read` | Read latest or specific version; if `{stem}_manifest.md` exists, returns split files merged with `<!-- BEGIN/END: file -->` separators (v3.21); optional `current_model` registers attendance (full), `refer_only=true` skips registration, no args = temporary registration with 15min TTL (v3.85) | `name`, `version`, `current_model`, `refer_only` |
-| `CoreMem_list` | List all files | — |
-| `CoreMem_delete` | Delete a file and all its versions | `name` |
+| `CoreMem_save` | Save a file (new version); `mode="append"` appends with automatic separator (v3.31/v3.32); `mode="str_replace"` replaces `old_str` with `new_str` for partial edits without full round-trip (v3.80); `target` scopes to a project namespace (v3.90) | `name`, `content`, `mode`, `old_str`, `new_str`, `target` |
+| `CoreMem_read` | Read latest or specific version; if `{stem}_manifest.md` exists, returns split files merged with `<!-- BEGIN/END: file -->` separators (v3.21); optional `current_model` registers attendance (full, home only — skipped when `target` is set), `refer_only=true` skips registration, no args = temporary registration with 15min TTL (v3.85); `target` scopes to a project namespace (v3.90) | `name`, `version`, `current_model`, `refer_only`, `target` |
+| `CoreMem_list` | List all files with size in bytes (v3.90); `target` scopes to a project namespace | `target` |
+| `CoreMem_delete` | Delete a file and all its versions; `target` scopes to a project namespace (v3.90) | `name`, `target` |
 
 `CoreMem_read` falls back to conversation-extracted files if not found in the main store.
 
@@ -289,6 +289,15 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 | `album_list` | List album image metadata (no image data). Filter by tags. Adult images excluded by default (`include_adult=true` to include, v3.77) | `tags`, `include_adult` |
 | `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
 | `album_delete` | Permanently delete an album image and its metadata (v3.55) | `id` |
+
+### Project tools (2, v3.90)
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `project_create` | Create a new project namespace under `/data/projects/{name}/` with template files (PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/). Name must not contain path separators or `..`; `_template` is reserved | `name` |
+| `project_list` | List all projects with summary (first line of PROJECT.md) and file count | — |
+
+CoreMem tools (save/read/list/delete) accept an optional `target` parameter to operate on project-scoped files instead of the home store (`/data/artifacts/`). Omitting `target` preserves 100% backward compatibility.
 
 ### Attendance & sublimation tools (2, v3.71)
 
@@ -622,7 +631,8 @@ claude-with-you/
 - SysMemory dump versioning
 - mio-memory direct auth for Claude Code
 
-**Implemented (v3.9–v3.80)**
+**Implemented (v3.9–v3.90)**
+- Project management system + CoreMem_list file size (v3.90) — ① `project_create` / `project_list` MCP tools (tool count 35→37). Creates project-scoped CoreMem namespaces under `/data/projects/{name}/` with template files (PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/). ② All 4 CoreMem tools (save/read/list/delete) gain `target` parameter to operate on project-scoped files (omit for home = /data/artifacts/). 100% backward compatible. Path traversal prevention + `_template` reserved name. ③ CoreMem_read attendance checkin is home-only (skipped when target is set); conv_artifacts fallback also home-only. ④ `CoreMem_list` now includes file `size` (bytes). Admin UI shows KB. ⑤ TS layer (coremem.ts) has matching target + size support. REST `/api/coremem?target=` for the same functionality
 - Inbox auto-sublimation pipeline + admin UI improvements (v3.75) — ① auto-sublimation: `inbox_post` to=chat with title containing `【生】` triggers automatic raw backup to ExtMemory (rating=adult, tags=バカンス日記) + placeholder swap + async sublimate; on completion title becomes `【未承認】` (success) or `【要人手】` (needs human); raw text never stays in inbox ② admin inbox: timed-standing (expires_at) display (remaining days, color-coded, near-expiry in red) + action buttons (change deadline, promote to permanent, demote to timed, clear expiry) ③ admin attendance: uuid/memory_id/inbox_id now clickable links navigating to admin Logs/Memory/Inbox tabs
 - Admin attendance tab (v3.74) — new 出席簿 (Attendance) tab in admin.html. REST `GET /api/attendance` endpoint (reuses MCP `attendance_view` logic, no dual implementation). Individual summary cards (last-seen, days-since, count with color coding: ≤1 day green, ≥7 days red, in-between yellow) → click to expand detail table (datetime, kind, channel, rating, title, log links). Date range filter and same-period other-individual activity summary
 - memory_upsert rating preservation + sublimate hardening & orphan-job mitigation (v3.73) — ① `memory_upsert` now accepts `rating` / `local_only` args; when omitted, existing values are preserved (previously lost on overwrite) ② sublimate prompt: explicit forbidden-expression list (genital terms, act progression, bodily fluids), "must be mature or below" top-level principle, self-verification step ③ sublimate self-check: strict mode (temperature=0, dedicated strict prefix) separates generation from judgment so same-model drift is reduced ④ sublimate orphan-job mitigation: input cap 60K chars (immediate error if exceeded), processing timeout 180s (returns partial result with `partial=true` / `timeout_message`)

@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.89","mcp_tool_count":35}
+# {"status":"ok","version":"3.90","mcp_tool_count":37}
 ```
 
 ### 5. Claude Code への登録
@@ -537,12 +537,15 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ```
 引数: name（必須）, content（overwrite/append時は必須）, source_conversation_uuid（省略可）,
        mode（省略可 — "overwrite"（デフォルト） / "append" / "str_replace"（v3.80））,
-       old_str（str_replace時のみ必須）, new_str（str_replace時のみ・空文字列で削除）
+       old_str（str_replace時のみ必須）, new_str（str_replace時のみ・空文字列で削除）,
+       target（省略可 — プロジェクト名。指定するとプロジェクト内ファイルに保存。v3.90）
 返値: {name, version, version_str, server_time}
 ※ mode="append" 時は既存ファイル末尾に "\n---\n<!-- APPEND {datetime} -->\n" を挿入して追記し、
    新バージョンとして保存する（境界を明示するセパレーター自動挿入）
 ※ mode="str_replace" 時は old_str をファイル内で検索し、一意に一致する場合のみ new_str に
    置換して新バージョンとして保存。全文送り直し不要（v3.80）
+※ target: プロジェクト名を指定すると /data/projects/{target}/ 配下のファイルに保存（v3.90）。
+  省略時は従来通り /data/artifacts/（ホーム）に保存。100%後方互換
 ```
 
 ### CoreMem_read
@@ -550,11 +553,12 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ```
 引数: name（必須）, version（省略時は最新）,
       current_model（省略可 — モデル名。指定時は出席簿に本登録）,
-      refer_only（省略可 — trueで出席簿登録をスキップ。current_modelより優先）
+      refer_only（省略可 — trueで出席簿登録をスキップ。current_modelより優先）,
+      target（省略可 — プロジェクト名。v3.90）
 返値: {name, version, content, source_conversation_uuid（あれば）, server_time}
-正規パスになければ conv_artifacts を自動検索（source: "conv_artifact" が付く）
+正規パスになければ conv_artifacts を自動検索（source: "conv_artifact" が付く。target 指定時はフォールバックなし）
 
-出席簿チェックイン（v3.85）:
+出席簿チェックイン（v3.85・ホームのみ — target指定時は登録なし）:
   current_modelあり → 本登録（モデル名で記録）
   引数なし         → 仮登録（「モデル不明」、TTL 15分で自動クリア）
   refer_only=true  → 登録なし
@@ -568,12 +572,39 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
   version 指定時は従来どおり direct ファイルを返す。
 ```
 
+### CoreMem_list
+
+```
+引数: target（省略可 — プロジェクト名。v3.90）
+返値: [{name, version, updated_at, size, source_conversation_uuid?}, ...]
+※ size: ファイルサイズ（バイト）を返す（v3.90）
+※ target: プロジェクト名を指定すると該当プロジェクト内のファイル一覧を返す
+```
+
 ### CoreMem_delete
 
 ```
-引数: name（必須）
+引数: name（必須）, target（省略可 — プロジェクト名。v3.90）
 返値: {deleted: name, server_time}
 バージョン履歴ごと完全削除する
+```
+
+### project_create（v3.90）
+
+```
+引数: name（必須 — プロジェクト名。英数字・ハイフン・アンダースコア・日本語可。パス区切り・".."は不可）
+返値: {name, path, files: [作成されたテンプレートファイル名...]}
+※ /data/projects/{name}/ にプロジェクトディレクトリを作成し、テンプレートファイル群を配置
+  テンプレート: PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/
+※ 既存プロジェクト名の場合はエラー。"_template" は予約名で使用不可
+```
+
+### project_list（v3.90）
+
+```
+引数: なし
+返値: {projects: [{name, summary（PROJECT.mdの先頭行）, file_count}, ...]}
+※ /data/projects/ 配下の全プロジェクトを列挙
 ```
 
 ### inbox_post
@@ -1021,6 +1052,7 @@ memory/data/          ← gitignored、コンテナ内は /data/
 ├── annotations/      会話の追記注釈（{uuid}.json・append-only）
 ├── album/            アルバム画像（{id}.{ext} + {id}.json メタデータ）
 ├── uploads/          アップロードファイル（{id}.{ext} + {id}.json メタデータ）
+├── projects/         プロジェクト名前空間（{name}/ 配下に CoreMem 同等のファイルストア。v3.90）
 ├── inbox/            インボックスメッセージ
 ├── friends/          お友達システム（registry.json・{連番}/memory.md）
 ├── friend_core.md    お友達セッション用アイデンティティ定義（任意・なければ組み込みデフォルト）
@@ -1086,7 +1118,8 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.80）**
+**実装済み（v3.9〜v3.90）**
+- プロジェクト管理システム＋CoreMem_list ファイルサイズ表示（v3.90）— ① `project_create` / `project_list` MCPツール新設（ツール数 35→37）。`/data/projects/{name}/` にプロジェクト専用の CoreMem 名前空間を作成し、テンプレートファイル群（PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/）を自動配置 ② CoreMem 4ツール（save/read/list/delete）に `target` 引数追加。`target` にプロジェクト名を指定するとプロジェクト内ファイルを操作（省略時はホーム = /data/artifacts/）。100%後方互換。パストラバーサル防止・`_template` 予約名禁止 ③ CoreMem_read の出席簿チェックインはホームのみ（target 指定時は登録なし）、conv_artifacts フォールバックもホームのみ ④ `CoreMem_list` にファイルサイズ（bytes）を追加。admin.html の CoreMem 一覧で KB 表示 ⑤ TS 層（coremem.ts）も同等の target 対応・size 対応を実装。REST `/api/coremem?target=` で同一機能
 - お友達システム — 登録申請・メール承認・専用 MCP セッション・記憶管理（v3.9〜v3.12）
 - `CoreMem_delete` ツール・`DELETE /api/coremem/<name>`・logs.html Unicode 表示修正（v3.13）
 - admin/logs UI 改善 — モーダル強化（先頭表示・スクロール・最大化・IDコピー）、チャット↔ファイル双方向リンク（v3.14）

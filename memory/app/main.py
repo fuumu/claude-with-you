@@ -3,6 +3,15 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.90 (2026-08-25) - プロジェクト管理体制 + CoreMemファイルサイズ表示
+    - project_create / project_list MCPツール新設（37本化）
+    - CoreMem系4ツール（save/read/list/delete）に target 引数追加（プロジェクト切り替え）
+    - target指定時は projects/{target}/ にパス解決。後方互換100%（targetなし=家）
+    - パストラバーサル防止バリデーション付き
+    - manifestマージもtarget先で動作
+    - CoreMem_list レスポンスに size（バイト数）追加
+    - admin.html CoreMem一覧にファイルサイズ（KB）表示
+
   v3.88 (2026-08-10) - oplog_list MCPツール新設
     - 操作ログ（oplog）をMCPツール経由で取得可能に
     - operation / date_from / date_to / limit でフィルタリング
@@ -627,7 +636,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.89'
+VERSION = '3.90'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -647,6 +656,7 @@ ALBUM_DIR          = f'{DATA_ROOT}/album'
 UPLOADS_DIR        = f'{DATA_ROOT}/uploads'
 ARTIFACTS_META_FILE = f'{DATA_ROOT}/artifacts/_meta.json'
 FRIENDS_DIR            = f'{DATA_ROOT}/friends'
+PROJECTS_DIR           = f'{DATA_ROOT}/projects'
 FRIENDS_REGISTRY_FILE  = f'{DATA_ROOT}/friends/registry.json'
 FRIEND_CORE_FILE       = f'{DATA_ROOT}/friend_core.md'
 SESSION_CHECKINS_FILE  = f'{DATA_ROOT}/session_checkins.json'
@@ -806,15 +816,19 @@ def _log_server_error(e):
     _log_error(f'HTTP 500 {request.method} {request.path}: {e}')
     return jsonify({"error": "Internal Server Error", "code": 500}), 500
 
-def _load_artifacts_meta() -> dict:
-    if os.path.exists(ARTIFACTS_META_FILE):
-        with open(ARTIFACTS_META_FILE, encoding='utf-8') as f:
+def _load_artifacts_meta(base_dir=None) -> dict:
+    d = base_dir or ARTIFACTS_DIR
+    meta_file = os.path.join(d, '_meta.json')
+    if os.path.exists(meta_file):
+        with open(meta_file, encoding='utf-8') as f:
             return json.load(f)
     return {}
 
-def _save_artifacts_meta(meta: dict):
-    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-    with open(ARTIFACTS_META_FILE, 'w', encoding='utf-8') as f:
+def _save_artifacts_meta(meta: dict, base_dir=None):
+    d = base_dir or ARTIFACTS_DIR
+    os.makedirs(d, exist_ok=True)
+    meta_file = os.path.join(d, '_meta.json')
+    with open(meta_file, 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 def _verify_token(token: str) -> bool:
@@ -883,6 +897,7 @@ def rebuild_index():
             item['author'] = e['author']
         if e.get('source_thread'):
             item['source_thread'] = e['source_thread']
+        item['body_length'] = len(e.get('body') or '')
         index.append(item)
     with open(INDEX_FILE, 'w') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
@@ -897,6 +912,94 @@ def append_oplog(operation, entry_id, before, after):
                   'diff': {'before': before, 'after': after}})
     with open(OPLOG_FILE, 'w') as f:
         json.dump(oplog, f, ensure_ascii=False, indent=2)
+
+# ── プロジェクト管理 ──────────────────────────────────────────────────
+
+def _validate_project_target(target: str) -> bool:
+    if not target:
+        return False
+    norm = os.path.normpath(target)
+    if norm.startswith('..') or os.path.isabs(norm) or '/' in target or '\\' in target:
+        return False
+    if target == '_template':
+        return False
+    return True
+
+def _resolve_artifacts_dir(target=None):
+    if not target:
+        return ARTIFACTS_DIR
+    return os.path.join(PROJECTS_DIR, target)
+
+_PROJECT_TEMPLATE_FILES = {
+    'PROJECT.md': """# {project_name}
+
+## 概要
+（プロジェクトの目的・ゴールを記載）
+
+## ファイル構成
+
+| ファイル | 役割 |
+|---------|------|
+| PROJECT.md | このファイル。切り替え時にまず読む |
+| todo.md | タスク管理。未完了のみ記載 |
+| design.md | 設計書・仕様 |
+| notes.md | メモ・調査・気づき |
+| inbox.md | プロジェクト内の伝言・申し送り |
+| conversations.md | 関連する会話ログUUID |
+| log.md | 作業ログ・進捗 |
+| files/ | 成果物 |
+
+## ステータス
+- 作成日: {date}
+- 状態: 準備中
+""",
+    'todo.md': '# TODO\n\n（タスクをここに記載）\n',
+    'design.md': '# 設計書\n\n（設計・仕様をここに記載）\n',
+    'notes.md': '# メモ\n\n（調査・気づき・メモをここに記載）\n',
+    'inbox.md': '# 伝言\n\n（プロジェクト内の申し送りをここに記載）\n',
+    'conversations.md': '# 関連する会話ログ\n\n| UUID | タイトル | 日付 |\n|------|---------|------|\n',
+    'log.md': '# 作業ログ\n\n（進捗をここに記録）\n',
+}
+
+def _project_create(name: str) -> dict:
+    if not _validate_project_target(name):
+        return {"error": f"invalid project name: {name}"}
+    project_dir = os.path.join(PROJECTS_DIR, name)
+    if os.path.exists(project_dir):
+        return {"error": f"project already exists: {name}"}
+    os.makedirs(project_dir, exist_ok=True)
+    os.makedirs(os.path.join(project_dir, 'versions'), exist_ok=True)
+    os.makedirs(os.path.join(project_dir, 'files'), exist_ok=True)
+    import datetime as _dt
+    date_str = _dt.datetime.now(JST).strftime('%Y-%m-%d')
+    for fname, template in _PROJECT_TEMPLATE_FILES.items():
+        content = template.replace('{project_name}', name).replace('{date}', date_str)
+        _artifacts_save(fname, content, base_dir=project_dir)
+    _log_info(f'project_create: {name}')
+    return {"created": name, "path": f"projects/{name}", "files": list(_PROJECT_TEMPLATE_FILES.keys()) + ['files/']}
+
+def _project_list() -> dict:
+    if not os.path.exists(PROJECTS_DIR):
+        return {"projects": []}
+    projects = []
+    for entry in sorted(os.listdir(PROJECTS_DIR)):
+        if entry.startswith('_') or entry.startswith('.'):
+            continue
+        project_dir = os.path.join(PROJECTS_DIR, entry)
+        if not os.path.isdir(project_dir):
+            continue
+        summary = ''
+        project_md = os.path.join(project_dir, 'PROJECT.md')
+        if os.path.exists(project_md):
+            with open(project_md, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('## 概要'):
+                        next_line = next(f, '').strip()
+                        if next_line and not next_line.startswith('（'):
+                            summary = next_line
+                        break
+        projects.append({"name": entry, "summary": summary})
+    return {"projects": projects}
 
 # ── アーティファクト操作 ──────────────────────────────────────────────
 
@@ -925,13 +1028,15 @@ def _link_or_copy_latest(rel_target: str, symlink_path: str):
 
 
 def _artifacts_save(name: str, content: str, source_conversation_uuid: str = None,
-                    mode: str = "overwrite", old_str: str = None, new_str: str = None) -> dict:
+                    mode: str = "overwrite", old_str: str = None, new_str: str = None,
+                    base_dir: str = None) -> dict:
+    artifacts_dir = base_dir or ARTIFACTS_DIR
     name_slug = _name_slug(name)
     ext = os.path.splitext(name)[1]  # '.md', '.sh', etc.
 
-    versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
+    versions_dir = os.path.join(artifacts_dir, 'versions', name_slug)
     os.makedirs(versions_dir, exist_ok=True)
-    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+    os.makedirs(artifacts_dir, exist_ok=True)
 
     existing = sorted(glob.glob(os.path.join(versions_dir, f'*{ext}')))
     next_num = int(os.path.splitext(os.path.basename(existing[-1]))[0]) + 1 if existing else 1
@@ -939,7 +1044,7 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
     version_path = os.path.join(versions_dir, version_filename)
 
     if mode == "str_replace":
-        symlink_path = os.path.join(ARTIFACTS_DIR, name)
+        symlink_path = os.path.join(artifacts_dir, name)
         if not os.path.exists(symlink_path):
             return {"error": f"file not found: {name}"}
         if not old_str:
@@ -953,7 +1058,7 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
             return {"error": f"old_str matches {count} times (must be unique)"}
         content = existing_content.replace(old_str, new_str if new_str is not None else '', 1)
     elif mode == "append" and existing:
-        symlink_path = os.path.join(ARTIFACTS_DIR, name)
+        symlink_path = os.path.join(artifacts_dir, name)
         if os.path.exists(symlink_path):
             with open(symlink_path, 'r', encoding='utf-8') as f:
                 existing_content = f.read()
@@ -965,7 +1070,7 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
         f.write(content)
 
     # トップレベルシンボリックリンクを最新バージョンに張り替え
-    symlink_path = os.path.join(ARTIFACTS_DIR, name)
+    symlink_path = os.path.join(artifacts_dir, name)
     rel_target = os.path.join('versions', name_slug, version_filename)
     if os.path.islink(symlink_path) or os.path.exists(symlink_path):
         os.remove(symlink_path)
@@ -973,9 +1078,9 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
 
     # source_conversation_uuid をメタデータに保存
     if source_conversation_uuid:
-        meta = _load_artifacts_meta()
+        meta = _load_artifacts_meta(base_dir=artifacts_dir)
         meta[name] = {**meta.get(name, {}), 'source_conversation_uuid': source_conversation_uuid}
-        _save_artifacts_meta(meta)
+        _save_artifacts_meta(meta, base_dir=artifacts_dir)
 
     _log_info(f'CoreMem_save: {name} v{next_num:03d}')
     result = {'name': name, 'version': next_num, 'version_str': f'{next_num:03d}'}
@@ -983,20 +1088,21 @@ def _artifacts_save(name: str, content: str, source_conversation_uuid: str = Non
         result['source_conversation_uuid'] = source_conversation_uuid
     return result
 
-def _artifacts_read(name: str, version=None) -> dict:
-    meta = _load_artifacts_meta()
+def _artifacts_read(name: str, version=None, base_dir: str = None) -> dict:
+    artifacts_dir = base_dir or ARTIFACTS_DIR
+    meta = _load_artifacts_meta(base_dir=artifacts_dir)
     entry_meta = meta.get(name, {})
 
     if version is None:
-        path = os.path.join(ARTIFACTS_DIR, name)
+        path = os.path.join(artifacts_dir, name)
         if os.path.exists(path):
             with open(path, 'r', encoding='utf-8') as f:
                 result = {'name': name, 'version': None, 'content': f.read()}
                 if entry_meta.get('source_conversation_uuid'):
                     result['source_conversation_uuid'] = entry_meta['source_conversation_uuid']
                 return result
-        # conv_artifacts へのフォールバック（孤立ファイル対応）
-        if os.path.exists(CONV_ARTIFACTS_DIR):
+        # conv_artifacts へのフォールバック（家のみ・プロジェクト内では不要）
+        if artifacts_dir == ARTIFACTS_DIR and os.path.exists(CONV_ARTIFACTS_DIR):
             for conv_uuid in sorted(os.listdir(CONV_ARTIFACTS_DIR)):
                 conv_path = os.path.join(CONV_ARTIFACTS_DIR, conv_uuid, name)
                 if os.path.exists(conv_path):
@@ -1007,7 +1113,7 @@ def _artifacts_read(name: str, version=None) -> dict:
     else:
         name_slug = _name_slug(name)
         ext = os.path.splitext(name)[1]
-        path = os.path.join(ARTIFACTS_DIR, 'versions', name_slug, f'{int(version):03d}{ext}')
+        path = os.path.join(artifacts_dir, 'versions', name_slug, f'{int(version):03d}{ext}')
         if not os.path.exists(path):
             return {'error': 'not found'}
         with open(path, 'r', encoding='utf-8') as f:
@@ -1016,7 +1122,7 @@ def _artifacts_read(name: str, version=None) -> dict:
                 result['source_conversation_uuid'] = entry_meta['source_conversation_uuid']
             return result
 
-def _coremem_read_merged(name: str):
+def _coremem_read_merged(name: str, base_dir: str = None):
     """CoreMem 分割+マージ読み込み（v3.21）。
     {stem}_manifest.md があれば order 順に各ファイルを BEGIN/END セパレータ付きで
     結合して返す。manifest がない・order が空なら None（呼び出し元が従来読みにフォールバック）"""
@@ -1024,7 +1130,7 @@ def _coremem_read_merged(name: str):
     if ext != '.md' or stem.endswith('_manifest'):
         return None
     manifest_name = f'{stem}_manifest.md'
-    mres = _artifacts_read(manifest_name)
+    mres = _artifacts_read(manifest_name, base_dir=base_dir)
     if 'error' in mres:
         return None
     order = re.findall(r'^\s*-\s*(\S+)', mres.get('content', ''), re.M)
@@ -1033,7 +1139,7 @@ def _coremem_read_merged(name: str):
         return None
     parts, mapping, missing = [], {}, []
     for fname in order:
-        r = _artifacts_read(fname)
+        r = _artifacts_read(fname, base_dir=base_dir)
         if 'error' in r:
             missing.append(fname)
             continue
@@ -1048,14 +1154,15 @@ def _coremem_read_merged(name: str):
         result['missing'] = missing
     return result
 
-def _artifacts_list() -> list:
-    if not os.path.exists(ARTIFACTS_DIR):
+def _artifacts_list(base_dir: str = None) -> list:
+    artifacts_dir = base_dir or ARTIFACTS_DIR
+    if not os.path.exists(artifacts_dir):
         return []
-    meta = _load_artifacts_meta()
+    meta = _load_artifacts_meta(base_dir=artifacts_dir)
     items = []
-    for entry in sorted(os.listdir(ARTIFACTS_DIR)):
-        full_path = os.path.join(ARTIFACTS_DIR, entry)
-        # versions/ ディレクトリとメタデータは対象外
+    for entry in sorted(os.listdir(artifacts_dir)):
+        full_path = os.path.join(artifacts_dir, entry)
+        # versions/ ディレクトリ、files/ ディレクトリ、メタデータは対象外
         if os.path.isdir(full_path) or entry == '_meta.json':
             continue
         # 壊れたシンボリックリンクをスキップ
@@ -1070,7 +1177,7 @@ def _artifacts_list() -> list:
         else:
             # symlink 非対応環境（コピーフォールバック）: versions/ から最新番号を導出
             vs = sorted(glob.glob(os.path.join(
-                ARTIFACTS_DIR, 'versions', _name_slug(entry), f'*{os.path.splitext(entry)[1]}')))
+                artifacts_dir, 'versions', _name_slug(entry), f'*{os.path.splitext(entry)[1]}')))
             version_str = os.path.splitext(os.path.basename(vs[-1]))[0] if vs else ''
         try:
             version = int(version_str)
@@ -1080,7 +1187,8 @@ def _artifacts_list() -> list:
         item = {
             'name': entry,
             'version': version,
-            'updated_at': datetime.fromtimestamp(stat.st_mtime, tz=JST).isoformat()
+            'updated_at': datetime.fromtimestamp(stat.st_mtime, tz=JST).isoformat(),
+            'size': stat.st_size,
         }
         if meta.get(entry, {}).get('source_conversation_uuid'):
             item['source_conversation_uuid'] = meta[entry]['source_conversation_uuid']
@@ -6602,7 +6710,7 @@ _MCP_TOOLS = [
     },
     {
         "name": "CoreMem_save",
-        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う。mode=\"append\"で既存ファイルの末尾に追記、mode=\"str_replace\"でold_str→new_strの部分書き換え（全文送り直し不要）",
+        "description": "UserCoreMemory（NASファイルストア）にファイルをバージョン管理付きで保存する。core.mdの保存に使う。mode=\"append\"で既存ファイルの末尾に追記、mode=\"str_replace\"でold_str→new_strの部分書き換え（全文送り直し不要）。target指定でプロジェクト内ファイルに保存（v3.90）",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -6611,38 +6719,55 @@ _MCP_TOOLS = [
                 "mode":    {"type": "string", "description": "\"overwrite\"（デフォルト・全文書き換え）/ \"append\"（既存末尾に追記）/ \"str_replace\"（old_strをnew_strに部分書き換え）"},
                 "old_str": {"type": "string", "description": "str_replaceモード用: 置換対象の文字列（ファイル内で一意に一致する必要あり）"},
                 "new_str": {"type": "string", "description": "str_replaceモード用: 置換後の文字列（空文字列で削除）"},
-                "source_conversation_uuid": {"type": "string", "description": "このファイルが生まれた会話のUUID（省略可）"}
+                "source_conversation_uuid": {"type": "string", "description": "このファイルが生まれた会話のUUID（省略可）"},
+                "target": {"type": "string", "description": "プロジェクト名（省略時は家=通常のCoreMem）。指定するとprojects/{target}/以下にパス解決（v3.90）"}
             },
             "required": ["name"]
         }
     },
     {
         "name": "CoreMem_read",
-        "description": "UserCoreMemoryからファイルを読み込む。versionを省略すると最新版を返す。{stem}_manifest.md が存在する場合は分割ファイルを <!-- BEGIN/END: ファイル名 --> セパレータ付きでマージして返す（書き込み時はセパレータを含めず対象ファイルのみ CoreMem_save すること）",
+        "description": "UserCoreMemoryからファイルを読み込む。versionを省略すると最新版を返す。{stem}_manifest.md が存在する場合は分割ファイルを <!-- BEGIN/END: ファイル名 --> セパレータ付きでマージして返す（書き込み時はセパレータを含めず対象ファイルのみ CoreMem_save すること）。target指定でプロジェクト内ファイルを読む（v3.90）",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name":    {"type": "string"},
                 "version": {"type": "integer", "description": "バージョン番号（省略時は最新）"},
                 "current_model": {"type": "string", "description": "現在動いているモデル名（例: claude-opus-4-6）。指定時は出席簿に本登録される"},
-                "refer_only": {"type": "boolean", "description": "参照のみフラグ。trueのとき出席簿への登録をスキップする"}
+                "refer_only": {"type": "boolean", "description": "参照のみフラグ。trueのとき出席簿への登録をスキップする"},
+                "target": {"type": "string", "description": "プロジェクト名（省略時は家=通常のCoreMem）。指定するとprojects/{target}/以下にパス解決（v3.90）"}
             },
             "required": ["name"]
         }
     },
     {
         "name": "CoreMem_list",
-        "description": "UserCoreMemoryの保存済みファイル一覧を取得する（名前・最新バージョン・更新日時）",
-        "inputSchema": {"type": "object", "properties": {}, "required": []}
+        "description": "UserCoreMemoryの保存済みファイル一覧を取得する（名前・最新バージョン・更新日時・サイズ）。target指定でプロジェクト内ファイル一覧（v3.90）",
+        "inputSchema": {"type": "object", "properties": {
+            "target": {"type": "string", "description": "プロジェクト名（省略時は家=通常のCoreMem）。指定するとprojects/{target}/以下のファイル一覧（v3.90）"}
+        }, "required": []}
     },
     {
         "name": "CoreMem_delete",
-        "description": "UserCoreMemoryからファイルを削除またはリネームする。name指定→バージョン履歴ごと完全削除。src+dst指定→サーバー側リネーム（内容の読み書きなし）",
+        "description": "UserCoreMemoryからファイルを削除またはリネームする。name指定→バージョン履歴ごと完全削除。src+dst指定→サーバー側リネーム（内容の読み書きなし）。target指定でプロジェクト内ファイルを操作（v3.90）",
         "inputSchema": {"type": "object", "properties": {
             "name": {"type": "string", "description": "削除するファイル名（例: old.md）。src/dst 未指定時に使用"},
             "src":  {"type": "string", "description": "リネーム元ファイル名（dst と一緒に指定）"},
-            "dst":  {"type": "string", "description": "リネーム先ファイル名（src と一緒に指定）"}
+            "dst":  {"type": "string", "description": "リネーム先ファイル名（src と一緒に指定）"},
+            "target": {"type": "string", "description": "プロジェクト名（省略時は家=通常のCoreMem）。指定するとprojects/{target}/以下のファイルを操作（v3.90）"}
         }, "required": []}
+    },
+    {
+        "name": "project_create",
+        "description": "新しいプロジェクトを作成する。テンプレートファイル群（PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/）を配置（v3.90）",
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "プロジェクト名（英数字・ハイフン・アンダースコア推奨）"}
+        }, "required": ["name"]}
+    },
+    {
+        "name": "project_list",
+        "description": "プロジェクト一覧を取得する。各プロジェクトの名前とPROJECT.mdの概要行を返す（v3.90）",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
     },
     {
         "name": "conversation_index",
@@ -7052,59 +7177,92 @@ def _handle_tool_call_raw(name, arguments):
     elif name == "CoreMem_save":
         n = arguments.get("name", "")
         m = arguments.get("mode", "overwrite")
+        target = arguments.get("target", "")
         if not n:
             return {"error": "name is required"}
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
+        base_dir = None
+        if target:
+            if not _validate_project_target(target):
+                return {"error": f"invalid target: {target}"}
+            base_dir = _resolve_artifacts_dir(target)
+            if not os.path.isdir(base_dir):
+                return {"error": f"project not found: {target}"}
         if m == "str_replace":
             result = _artifacts_save(n, "", source_conversation_uuid=arguments.get("source_conversation_uuid"),
                                      mode="str_replace",
                                      old_str=arguments.get("old_str", ""),
-                                     new_str=arguments.get("new_str", ""))
+                                     new_str=arguments.get("new_str", ""),
+                                     base_dir=base_dir)
         else:
             c = arguments.get("content", "")
-            result = _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=m)
+            result = _artifacts_save(n, c, source_conversation_uuid=arguments.get("source_conversation_uuid"), mode=m,
+                                     base_dir=base_dir)
         if result.get('error'):
             return result
-        append_oplog('coremem_save', n, None, {'name': n, 'version': result.get('version')})
+        oplog_id = f'{target}/{n}' if target else n
+        append_oplog('coremem_save', oplog_id, None, {'name': n, 'version': result.get('version'), 'target': target or None})
         return result
 
     elif name == "CoreMem_read":
         n = arguments.get("name", "")
+        target = arguments.get("target", "")
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
-        # v3.85: 出席簿チェックイン
-        refer_only = bool(arguments.get("refer_only", False))
-        current_model = arguments.get("current_model")
-        if not refer_only:
-            if current_model:
-                _session_checkin(model=current_model, permanent=True)
-            else:
-                _session_checkin(model=None, permanent=False)
-        # v3.21: {stem}_manifest.md があれば分割ファイルをマージして返す
-        #        （manifest が direct ファイルより優先 — version 指定時は従来読み）
+        base_dir = None
+        if target:
+            if not _validate_project_target(target):
+                return {"error": f"invalid target: {target}"}
+            base_dir = _resolve_artifacts_dir(target)
+            if not os.path.isdir(base_dir):
+                return {"error": f"project not found: {target}"}
+        # v3.85: 出席簿チェックイン（家のCoreMemのみ）
+        if not target:
+            refer_only = bool(arguments.get("refer_only", False))
+            current_model = arguments.get("current_model")
+            if not refer_only:
+                if current_model:
+                    _session_checkin(model=current_model, permanent=True)
+                else:
+                    _session_checkin(model=None, permanent=False)
         if arguments.get("version") is None:
-            merged = _coremem_read_merged(n)
+            merged = _coremem_read_merged(n, base_dir=base_dir)
             if merged is not None:
                 return merged
-        return _artifacts_read(n, arguments.get("version"))
+        return _artifacts_read(n, arguments.get("version"), base_dir=base_dir)
 
     elif name == "CoreMem_list":
-        return _artifacts_list()
+        target = arguments.get("target", "")
+        base_dir = None
+        if target:
+            if not _validate_project_target(target):
+                return {"error": f"invalid target: {target}"}
+            base_dir = _resolve_artifacts_dir(target)
+            if not os.path.isdir(base_dir):
+                return {"error": f"project not found: {target}"}
+        return _artifacts_list(base_dir=base_dir)
 
     elif name == "CoreMem_delete":
         src = arguments.get("src", "")
         dst = arguments.get("dst", "")
         n   = arguments.get("name", "")
+        target = arguments.get("target", "")
+        artifacts_dir = ARTIFACTS_DIR
+        if target:
+            if not _validate_project_target(target):
+                return {"error": f"invalid target: {target}"}
+            artifacts_dir = _resolve_artifacts_dir(target)
+            if not os.path.isdir(artifacts_dir):
+                return {"error": f"project not found: {target}"}
 
         if src or dst:
-            # rename モード
             if not src or not dst:
                 return {"error": "src と dst は両方必須です"}
             if not _validate_artifact_name(src) or not _validate_artifact_name(dst):
                 return {"error": "invalid name"}
-            src_sym = os.path.join(ARTIFACTS_DIR, src)
-            dst_sym = os.path.join(ARTIFACTS_DIR, dst)
+            src_sym = os.path.join(artifacts_dir, src)
+            dst_sym = os.path.join(artifacts_dir, dst)
             if not os.path.islink(src_sym) and not os.path.exists(src_sym):
                 return {"error": f"not found: {src}"}
             if os.path.exists(dst_sym):
@@ -7113,8 +7271,8 @@ def _handle_tool_call_raw(name, arguments):
             dst_slug = _name_slug(dst)
             src_ext  = os.path.splitext(src)[1]
             dst_ext  = os.path.splitext(dst)[1]
-            src_vdir = os.path.join(ARTIFACTS_DIR, 'versions', src_slug)
-            dst_vdir = os.path.join(ARTIFACTS_DIR, 'versions', dst_slug)
+            src_vdir = os.path.join(artifacts_dir, 'versions', src_slug)
+            dst_vdir = os.path.join(artifacts_dir, 'versions', dst_slug)
             if os.path.isdir(src_vdir):
                 os.rename(src_vdir, dst_vdir)
                 if src_ext != dst_ext:
@@ -7134,23 +7292,31 @@ def _handle_tool_call_raw(name, arguments):
             append_oplog('coremem_rename', src, {'name': src}, {'name': dst})
             return {"renamed": True, "src": src, "dst": dst, "server_time": now_jst()}
 
-        # delete モード（従来通り）
         if not n:
             return {"error": "name は必須です（削除: name / リネーム: src+dst）"}
         if not _validate_artifact_name(n):
             return {"error": "invalid name"}
-        symlink_path = os.path.join(ARTIFACTS_DIR, n)
+        symlink_path = os.path.join(artifacts_dir, n)
         if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
             return {"error": f"not found: {n}"}
         if os.path.islink(symlink_path) or os.path.exists(symlink_path):
             os.remove(symlink_path)
         name_slug = _name_slug(n)
-        versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
+        versions_dir = os.path.join(artifacts_dir, 'versions', name_slug)
         if os.path.isdir(versions_dir):
             shutil.rmtree(versions_dir)
         _log_info(f'CoreMem_delete via MCP: {n}')
         append_oplog('coremem_delete', n, {'name': n}, None)
         return {"deleted": n, "server_time": now_jst()}
+
+    elif name == "project_create":
+        pname = arguments.get("name", "")
+        if not pname:
+            return {"error": "name is required"}
+        return _project_create(pname)
+
+    elif name == "project_list":
+        return _project_list()
 
     elif name == "conversation_index":
         search = arguments.get("search", "").lower()

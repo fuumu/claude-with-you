@@ -98,7 +98,7 @@ def test_modern_tools_list_stateless(server):
     assert r.status_code == 200
     assert 'Mcp-Session-Id' not in r.headers
     result = r.json()['result']
-    assert len(result['tools']) == 35
+    assert len(result['tools']) == 37
     assert result['resultType'] == 'complete'
     assert result['ttlMs'] > 0
     assert result['cacheScope'] in ('public', 'private')

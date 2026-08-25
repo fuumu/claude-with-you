@@ -17,6 +17,7 @@ import { appendOplog, jstIsoFromMs } from './write.js';
 const ARTIFACTS_DIR = path.join(DATA_ROOT, 'artifacts');
 const CONV_ARTIFACTS_DIR = path.join(DATA_ROOT, 'conv_artifacts');
 const META_FILE = path.join(ARTIFACTS_DIR, '_meta.json');
+const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 
 interface ArtifactReadResult {
   name?: string;
@@ -38,9 +39,23 @@ function validateArtifactName(name: string): boolean {
   return !(norm.startsWith('..') || path.posix.isAbsolute(norm));
 }
 
-function loadMeta(): Record<string, { source_conversation_uuid?: string }> {
+function validateProjectTarget(target: string): boolean {
+  if (!target) return false;
+  const norm = path.posix.normalize(target);
+  if (norm.startsWith('..') || path.posix.isAbsolute(norm) || target.includes('/') || target.includes('\\')) return false;
+  if (target === '_template') return false;
+  return true;
+}
+
+function resolveArtifactsDir(target?: string): string {
+  if (!target) return ARTIFACTS_DIR;
+  return path.join(PROJECTS_DIR, target);
+}
+
+function loadMeta(baseDir?: string): Record<string, { source_conversation_uuid?: string }> {
+  const metaFile = path.join(baseDir ?? ARTIFACTS_DIR, '_meta.json');
   try {
-    return JSON.parse(fs.readFileSync(META_FILE, 'utf-8'));
+    return JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
   } catch {
     return {};
   }
@@ -74,12 +89,14 @@ function listVersions(versionsDir: string, ext: string): string[] {
 export function artifactsSave(
   name: string,
   content: string,
+  baseDir?: string,
 ): { name: string; version: number; version_str: string } {
+  const artifactsDir = baseDir ?? ARTIFACTS_DIR;
   const slug = nameSlug(name);
   const ext = path.extname(name);
-  const versionsDir = path.join(ARTIFACTS_DIR, 'versions', slug);
+  const versionsDir = path.join(artifactsDir, 'versions', slug);
   fs.mkdirSync(versionsDir, { recursive: true });
-  fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+  fs.mkdirSync(artifactsDir, { recursive: true });
 
   const existing = listVersions(versionsDir, ext);
   const nextNum =
@@ -89,7 +106,7 @@ export function artifactsSave(
   const versionFilename = `${String(nextNum).padStart(3, '0')}${ext}`;
   fs.writeFileSync(path.join(versionsDir, versionFilename), content, 'utf-8');
 
-  const symlinkPath = path.join(ARTIFACTS_DIR, name);
+  const symlinkPath = path.join(artifactsDir, name);
   const relTarget = path.join('versions', slug, versionFilename);
   try {
     fs.rmSync(symlinkPath, { force: true });
@@ -102,12 +119,13 @@ export function artifactsSave(
 }
 
 /** main.py _artifacts_read と同一契約（conv_artifacts フォールバック含む） */
-export function artifactsRead(name: string, version: number | null): ArtifactReadResult {
-  const meta = loadMeta();
+export function artifactsRead(name: string, version: number | null, baseDir?: string): ArtifactReadResult {
+  const artifactsDir = baseDir ?? ARTIFACTS_DIR;
+  const meta = loadMeta(artifactsDir);
   const entryMeta = meta[name] ?? {};
 
   if (version === null) {
-    const p = path.join(ARTIFACTS_DIR, name);
+    const p = path.join(artifactsDir, name);
     if (fs.existsSync(p)) {
       const result: ArtifactReadResult = {
         name,
@@ -119,8 +137,8 @@ export function artifactsRead(name: string, version: number | null): ArtifactRea
       }
       return result;
     }
-    // conv_artifacts へのフォールバック（孤立ファイル対応）
-    if (fs.existsSync(CONV_ARTIFACTS_DIR)) {
+    // conv_artifacts へのフォールバック（家のみ）
+    if (artifactsDir === ARTIFACTS_DIR && fs.existsSync(CONV_ARTIFACTS_DIR)) {
       for (const convUuid of fs.readdirSync(CONV_ARTIFACTS_DIR).sort()) {
         const convPath = path.join(CONV_ARTIFACTS_DIR, convUuid, name);
         if (fs.existsSync(convPath)) {
@@ -138,7 +156,7 @@ export function artifactsRead(name: string, version: number | null): ArtifactRea
   }
 
   const p = path.join(
-    ARTIFACTS_DIR,
+    artifactsDir,
     'versions',
     nameSlug(name),
     `${String(version).padStart(3, '0')}${path.extname(name)}`,
@@ -152,12 +170,12 @@ export function artifactsRead(name: string, version: number | null): ArtifactRea
 }
 
 /** main.py _coremem_read_merged（v3.21 分割+マージ読み）。対象外なら null */
-export function coreMemReadMerged(name: string): ArtifactReadResult | null {
+export function coreMemReadMerged(name: string, baseDir?: string): ArtifactReadResult | null {
   const ext = path.extname(name);
   const stem = name.slice(0, name.length - ext.length);
   if (ext !== '.md' || stem.endsWith('_manifest')) return null;
   const manifestName = `${stem}_manifest.md`;
-  const mres = artifactsRead(manifestName, null);
+  const mres = artifactsRead(manifestName, null, baseDir);
   if (mres.error) return null;
   let order = [...String(mres.content ?? '').matchAll(/^\s*-\s*(\S+)/gm)].map((m) => m[1]);
   order = order.filter((f) => validateArtifactName(f) && f !== name && f !== manifestName);
@@ -166,7 +184,7 @@ export function coreMemReadMerged(name: string): ArtifactReadResult | null {
   const mapping: Record<string, string[]> = {};
   const missing: string[] = [];
   for (const fname of order) {
-    const r = artifactsRead(fname, null);
+    const r = artifactsRead(fname, null, baseDir);
     if (r.error) {
       missing.push(fname);
       continue;
@@ -191,13 +209,14 @@ export function coreMemReadMerged(name: string): ArtifactReadResult | null {
 }
 
 /** main.py _artifacts_list と同一契約 */
-export function artifactsList(): Record<string, unknown>[] {
-  if (!fs.existsSync(ARTIFACTS_DIR)) return [];
-  const meta = loadMeta();
+export function artifactsList(baseDir?: string): Record<string, unknown>[] {
+  const artifactsDir = baseDir ?? ARTIFACTS_DIR;
+  if (!fs.existsSync(artifactsDir)) return [];
+  const meta = loadMeta(artifactsDir);
   const items: Record<string, unknown>[] = [];
-  for (const entry of fs.readdirSync(ARTIFACTS_DIR).sort()) {
-    const fullPath = path.join(ARTIFACTS_DIR, entry);
-    // versions/ ディレクトリとメタデータは対象外。壊れた symlink・__del__ もスキップ
+  for (const entry of fs.readdirSync(artifactsDir).sort()) {
+    const fullPath = path.join(artifactsDir, entry);
+    // versions/ ディレクトリ、files/ ディレクトリ、メタデータは対象外。壊れた symlink・__del__ もスキップ
     if (!fs.existsSync(fullPath)) continue;
     if (fs.statSync(fullPath).isDirectory() || entry === '_meta.json') continue;
     if (entry.startsWith('__del__')) continue;
@@ -206,9 +225,8 @@ export function artifactsList(): Record<string, unknown>[] {
       const target = fs.readlinkSync(fullPath);
       versionStr = path.basename(target, path.extname(target));
     } else {
-      // symlink 非対応環境（コピーフォールバック）: versions/ から最新番号を導出
       const ext = path.extname(entry);
-      const vs = listVersions(path.join(ARTIFACTS_DIR, 'versions', nameSlug(entry)), ext);
+      const vs = listVersions(path.join(artifactsDir, 'versions', nameSlug(entry)), ext);
       versionStr = vs.length > 0 ? path.basename(vs[vs.length - 1], ext) : '';
     }
     const version = /^\d+$/.test(versionStr) ? parseInt(versionStr, 10) : null;
@@ -217,6 +235,7 @@ export function artifactsList(): Record<string, unknown>[] {
       name: entry,
       version,
       updated_at: jstIsoFromMs(stat.mtimeMs),
+      size: stat.size,
     };
     if (meta[entry]?.source_conversation_uuid) {
       item.source_conversation_uuid = meta[entry].source_conversation_uuid;
@@ -227,8 +246,9 @@ export function artifactsList(): Record<string, unknown>[] {
 }
 
 /** main.py api_coremem_delete: 全版削除。対象なしなら false（404） */
-export function artifactsDelete(name: string): boolean {
-  const symlinkPath = path.join(ARTIFACTS_DIR, name);
+export function artifactsDelete(name: string, baseDir?: string): boolean {
+  const artifactsDir = baseDir ?? ARTIFACTS_DIR;
+  const symlinkPath = path.join(artifactsDir, name);
   let isLink = false;
   try {
     isLink = fs.lstatSync(symlinkPath).isSymbolicLink();
@@ -237,7 +257,7 @@ export function artifactsDelete(name: string): boolean {
   }
   if (!isLink && !fs.existsSync(symlinkPath)) return false;
   fs.rmSync(symlinkPath, { force: true });
-  const versionsDir = path.join(ARTIFACTS_DIR, 'versions', nameSlug(name));
+  const versionsDir = path.join(artifactsDir, 'versions', nameSlug(name));
   if (fs.existsSync(versionsDir)) {
     fs.rmSync(versionsDir, { recursive: true, force: true });
   }
@@ -270,9 +290,24 @@ export async function handleCoremem(
   const p = url.pathname;
   const method = req.method ?? '';
 
+  // target クエリパラメータでプロジェクト内ファイルにアクセス（v3.90）
+  const targetParam = url.searchParams.get('target') ?? '';
+  let baseDir: string | undefined;
+  if (targetParam) {
+    if (!validateProjectTarget(targetParam)) {
+      sendJson(res, 400, { error: `invalid target: ${targetParam}` });
+      return true;
+    }
+    baseDir = resolveArtifactsDir(targetParam);
+    if (!fs.existsSync(baseDir)) {
+      sendJson(res, 404, { error: `project not found: ${targetParam}` });
+      return true;
+    }
+  }
+
   if (p === '/api/coremem') {
     if (method !== 'GET') return false;
-    sendJson(res, 200, artifactsList());
+    sendJson(res, 200, artifactsList(baseDir));
     return true;
   }
 
@@ -288,13 +323,13 @@ export async function handleCoremem(
     const versionParam = url.searchParams.get('version');
     const version = versionParam !== null ? parseInt(versionParam, 10) : null;
     if (version === null && url.searchParams.get('raw')?.toLowerCase() !== 'true') {
-      const merged = coreMemReadMerged(name);
+      const merged = coreMemReadMerged(name, baseDir);
       if (merged !== null) {
         sendJson(res, 200, merged);
         return true;
       }
     }
-    const result = artifactsRead(name, version);
+    const result = artifactsRead(name, version, baseDir);
     if (result.error) {
       sendJson(res, 404, { error: 'not found' });
     } else {
@@ -318,7 +353,7 @@ export async function handleCoremem(
       sendJson(res, 400, { error: 'Bad Request', code: 400 });
       return true;
     }
-    const result = artifactsSave(name, String(data.content ?? ''));
+    const result = artifactsSave(name, String(data.content ?? ''), baseDir);
     appendOplog('coremem_save', name, null, { name, version: result.version });
     sendJson(res, 201, result);
     return true;
@@ -329,7 +364,7 @@ export async function handleCoremem(
       sendJson(res, 400, { error: 'Bad Request', code: 400 });
       return true;
     }
-    if (artifactsDelete(name)) {
+    if (artifactsDelete(name, baseDir)) {
       appendOplog('coremem_delete', name, { name }, null);
       sendJson(res, 200, { deleted: name });
     } else {
