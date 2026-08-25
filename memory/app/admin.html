@@ -849,6 +849,16 @@
       <span id="rebuild-result" style="font-size:.85rem;color:#7a8a9a"></span>
     </div>
   </div>
+
+  <!-- ExtMemory index rebuild (v3.90) -->
+  <div class="batch-section">
+    <h3>記憶インデックス再構築</h3>
+    <p>ExtMemory の index.json を全エントリから再構築します。キーワード層やシンボリック層の反映、body_length の更新に使えます。</p>
+    <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-secondary" onclick="rebuildMemoryIndex()">🔄 記憶インデックスを再構築</button>
+      <span id="memory-rebuild-result" style="font-size:.85rem;color:#7a8a9a"></span>
+    </div>
+  </div>
 </div>
 
 <!-- Oplog tab -->
@@ -1845,6 +1855,18 @@ async function rebuildConvIndex() {
     const d = await res.json();
     const bf = d.model_backfilled ? ` （モデル補完: ${d.model_backfilled}件）` : '';
     el.innerHTML = `<span style="color:#2ecc71">✓ ${d.rebuilt}件のエントリで再構築完了${bf}</span>`;
+  } catch (e) {
+    el.innerHTML = `<span style="color:#e74c3c">✗ ${esc(e.message)}</span>`;
+  }
+}
+
+async function rebuildMemoryIndex() {
+  const el = document.getElementById('memory-rebuild-result');
+  el.textContent = '再構築中...';
+  try {
+    const res = await apiFetch('/api/memory/reindex', { method: 'POST' });
+    const d = await res.json();
+    el.innerHTML = `<span style="color:#2ecc71">✓ ${d.count}件のエントリで再構築完了</span>`;
   } catch (e) {
     el.innerHTML = `<span style="color:#e74c3c">✗ ${esc(e.message)}</span>`;
   }
