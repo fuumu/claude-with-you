@@ -1957,25 +1957,44 @@ def create_entry_path(path_token): return create_entry()
 
 # ── UserCoreMemory REST API ───────────────────────────────────────────
 
+def _resolve_rest_target():
+    """REST リクエストの ?target= を検証し base_dir を返す。不正なら abort。"""
+    target = request.args.get('target', '')
+    if not target:
+        return None
+    if not _validate_project_target(target):
+        abort(400, f'invalid target: {target}')
+    base_dir = _resolve_artifacts_dir(target)
+    if not os.path.exists(base_dir):
+        abort(404, f'project not found: {target}')
+    return base_dir
+
+@app.route('/api/projects')
+@require_auth
+def api_projects_list():
+    return jsonify(_project_list())
+
 @app.route('/api/coremem')
 @require_auth
 def api_coremem_list():
-    return jsonify(_artifacts_list())
+    base_dir = _resolve_rest_target()
+    return jsonify(_artifacts_list(base_dir=base_dir))
 
 @app.route('/api/coremem/<path:name>', methods=['GET'])
 @require_auth
 def api_coremem_read(name):
     if not _validate_artifact_name(name):
         abort(400)
+    base_dir = _resolve_rest_target()
     version = request.args.get('version', None)
     if version is not None:
         version = int(version)
     # v3.21: マージ読み込み（MCP CoreMem_read と同等）。?raw=true で無効化
     if version is None and request.args.get('raw', 'false').lower() != 'true':
-        merged = _coremem_read_merged(name)
+        merged = _coremem_read_merged(name, base_dir=base_dir)
         if merged is not None:
             return jsonify(merged)
-    result = _artifacts_read(name, version)
+    result = _artifacts_read(name, version, base_dir=base_dir)
     if 'error' in result:
         abort(404)
     return jsonify(result)
@@ -1985,10 +2004,11 @@ def api_coremem_read(name):
 def api_coremem_save(name):
     if not _validate_artifact_name(name):
         abort(400)
+    base_dir = _resolve_rest_target()
     data = request.get_json()
     if not data or 'content' not in data:
         abort(400)
-    result = _artifacts_save(name, data['content'])
+    result = _artifacts_save(name, data['content'], base_dir=base_dir)
     return jsonify(result), 201
 
 @app.route('/api/coremem/<path:name>', methods=['DELETE'])
@@ -1996,13 +2016,15 @@ def api_coremem_save(name):
 def api_coremem_delete(name):
     if not _validate_artifact_name(name):
         abort(400)
-    symlink_path = os.path.join(ARTIFACTS_DIR, name)
+    base_dir = _resolve_rest_target()
+    artifacts_dir = base_dir or ARTIFACTS_DIR
+    symlink_path = os.path.join(artifacts_dir, name)
     if not os.path.islink(symlink_path) and not os.path.exists(symlink_path):
         abort(404)
     if os.path.islink(symlink_path) or os.path.exists(symlink_path):
         os.remove(symlink_path)
     name_slug = _name_slug(name)
-    versions_dir = os.path.join(ARTIFACTS_DIR, 'versions', name_slug)
+    versions_dir = os.path.join(artifacts_dir, 'versions', name_slug)
     if os.path.isdir(versions_dir):
         shutil.rmtree(versions_dir)
     _log_info(f'CoreMem_delete: {name}')
