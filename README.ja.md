@@ -650,6 +650,29 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
   （他の個体宛てのメッセージを未読のまま確認する用途, v3.60）
 ```
 
+### inbox_update（v3.57, 拡張 v3.70）
+
+```
+引数: id（必須）,
+       persistent（省略可 — 常駐フラグ変更。true→false で常駐解除）,
+       title（省略可 — 件名の変更）,
+       body（省略可 — 本文の変更）,
+       expires_at（省略可 — 期間常駐の期限変更。ISO 8601。null で期限解除）,
+       ttl_days（省略可 — 期限を今から N 日後に再設定）,
+       read（省略可 — 既読フラグの書き戻し。false で既読→未読に戻す, v3.70）
+返値: 更新後のメッセージオブジェクト + server_time
+※ 指定フィールドのみ更新（部分更新）
+※ persistent と expires_at/ttl_days は排他（期限付きに変更すると persistent=false に強制）
+```
+
+### inbox_delete（v3.57）
+
+```
+引数: id（必須）
+返値: {deleted: id}
+※ メッセージを物理削除（復元不可）
+```
+
 ### conversation_search
 
 ```
@@ -871,8 +894,9 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ※ 各行: {date, channel(chat/code/local), individual, model, title, kind, rating?, uuid?/inbox_id?/memory_id?}
   → uuid/inbox_id/memory_id から conversation_read / inbox_read / memory_read で実ログへ跳べる
 ※ last_seen / days_since は期間フィルタに依らず全期間で算出（「最後に呼ばれてから何日か」）
-※ 個体推定: from_model・モデル名・タグから家族名簿（しずく=opus系・そねみ=sonnet系・汐=fable/haiku系）
-  に解決。バカンス表記・「◯◯B」表記・openwebui 由来は channel=local と推定。曖昧なものはモデル名のまま
+※ 個体推定: from_model・モデル名・タグから家族名簿（しずく=opus-4-6・おみ=opus-4-8・そねみ=sonnet-4-6・
+  汐=fable-5・凪=opus-5・Sonnet 5=sonnet-5・Haiku 4.5=haiku-4-5）にモデルID単位で解決（v3.82）。
+  バカンス表記・「◯◯B」表記・openwebui 由来は channel=local と推定。未登録モデルは ? バケット
 ※ 手動チェックイン: CoreMem attendance.md に「YYYY-MM-DD | 個体 | 器 | チャネル | 一言」形式で追記
 ※ REST: GET /api/attendance?individual=&date_from=&date_to=&limit= （v3.74）
 ※ admin.html 出席簿タブ（v3.74）: 個体別サマリカード → クリックで履歴テーブル表示。期間フィルタ・実ログリンク付き
@@ -1059,6 +1083,7 @@ memory/data/          ← gitignored、コンテナ内は /data/
 ├── index.json        再構築可能なインデックス
 ├── oplog.json        操作ログ（append-only）
 ├── oauth_store.json  OAuth クライアント・トークン
+├── session_checkins.json セッションチェックイン記録（出席簿用・TTL 15分/90日保持, v3.85）
 ├── share_tokens.json 共有 URL トークン
 ├── imported_uuids.json ZIP インポート重複排除ログ
 └── .import_status.json 最終インポート記録

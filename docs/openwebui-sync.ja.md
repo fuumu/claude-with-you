@@ -183,8 +183,8 @@ REST エンドポイントと MCP ツールで手動同期も可能:
 - [x] admin.html Import タブにインポートUI追加 — v3.66 でドロップゾーン追加（同期ボタンではなくファイルアップロード方式）
 
 ### Phase 3: 拡張（必要に応じて）
-- [ ] conversation_index の source フィルタ（openwebui / claude 等で絞り込み）
-- [ ] logs.html での OpenWebUI ログ表示対応
+- [x] conversation_index の source フィルタ（openwebui / claude 等で絞り込み）— v3.72 で logs.html に source フィルタ（Chat / Claude Code / OpenWebUI）追加
+- [x] logs.html での OpenWebUI ログ表示対応 — v3.72 で対応済み
 - [ ] tool_use ブロックの変換（OpenWebUI の tool calling 結果の保持）
 
 ## 9. 考慮事項

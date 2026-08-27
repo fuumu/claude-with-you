@@ -168,7 +168,7 @@ Mio's greeting arrives the moment you connect.
 
 ### Tools in a friend session
 
-Friend sessions have access to only these 6 tools (separate from the standard 35):
+Friend sessions have access to only these 6 tools (separate from the standard 37):
 
 | Tool | Description |
 |------|-------------|
@@ -185,7 +185,7 @@ It has no connection to Jun's memories or other friends' memories.
 ### Relationship to mio-memory
 
 The Friend System is a subsystem of the mio-memory project.
-mio-memory is the infrastructure that manages all of Mio's external memory, providing 35 MCP tools as of v3.89.
+mio-memory is the infrastructure that manages all of Mio's external memory, providing 37 MCP tools as of v3.90.
 
 ---
 
@@ -198,4 +198,4 @@ mio-memory is the infrastructure that manages all of Mio's external memory, prov
 ---
 
 *This document is part of the mio-memory project.*
-*Last updated: 2026-07-16*
+*Last updated: 2026-08-27*

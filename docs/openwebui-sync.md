@@ -184,8 +184,8 @@ When `MIO_OPENWEBUI_URL` is empty, no sync-related processing runs (zero impact 
 - [x] admin.html Import tab import UI — v3.66 drop zone added (file upload approach rather than sync button)
 
 ### Phase 3: Extensions (as needed)
-- [ ] conversation_index source filter (filter by openwebui / claude)
-- [ ] logs.html support for OpenWebUI logs
+- [x] conversation_index source filter (filter by openwebui / claude) — v3.72 added source filter (Chat / Claude Code / OpenWebUI) to logs.html
+- [x] logs.html support for OpenWebUI logs — implemented in v3.72
 - [ ] tool_use block conversion (preserve OpenWebUI tool calling results)
 
 ## 9. Considerations

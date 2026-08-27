@@ -39,10 +39,16 @@ and become a growing body of documents.
 | Manual notes | Save important moments, design decisions, and TODOs yourself |
 | Full conversation access & sharing | Read the original conversation by UUID, generate 24h share links |
 | Conversation digest | Summarize conversations with a local LLM, with safe-mode conversion |
+| Redacted logs | Generate and manage approval-gated masked versions of adult conversations (v3.69) |
 | Inbox system | Receive completion reports and messages from Claude Code in chat |
 | Album (image memory) | Save images with tag management and share-link generation |
 | File uploads | Store and browse general-purpose files (PDF, text, etc.) |
 | Rating protection | Per-environment visibility control for adult/local_only content |
+| Attendance ledger | 5-layer merged family activity history view (v3.71) |
+| Sublimation | Abstract explicit descriptions into poetic/mature-or-below form (v3.71) |
+| Operation log (oplog) | Retrieve audit logs of all data operations via MCP tool (v3.88) |
+| Project namespaces | Isolate CoreMem file stores per project (v3.90) |
+| Claude Code session import | Import .jsonl / .zip session logs (v3.54) |
 | Friend system | Invite-only channels for third parties to talk with your assistant |
 
 ## Getting started

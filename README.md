@@ -171,7 +171,7 @@ Claude.ai / Claude Code
   │  └─────────────────────────────┘ │
   └──────────────┬───────────────────┘
                  │ volume mount
-  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · projects/ · conversations(LogStore)/ · inbox/ · friends/ · album/ · uploads/
+  /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · projects/ · conversations(LogStore)/ · inbox/ · friends/ · album/ · uploads/ · session_checkins.json
 ```
 
 Single-file implementation — all logic in `memory/app/main.py`.
@@ -250,7 +250,7 @@ conversation_read(uuid="abc...")
 → {"text": "[human] Let's talk about auth...\n[assistant] ...", "server_time": "..."}
 ```
 
-### Inbox tools (3)
+### Inbox tools (5)
 
 Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 
@@ -259,6 +259,8 @@ Lightweight message passing between Claude.ai sessions and Claude Code sessions.
 | `inbox_check` | Get unread count + IDs; `persistent[]` includes standing messages with full bodies (v3.20, no `inbox_read` needed), plus `non_persistent_unread_count`/`_ids`; `include_read=true` adds `messages[]` metadata; `mymodel` registers/upgrades attendance (v3.85) | `to`, `include_read`, `mymodel` |
 | `inbox_read` | Fetch a message and mark as read; `peek=true` reads without marking as read (to inspect messages addressed to other agents, v3.60) | `id`, `peek` |
 | `inbox_post` | Send a message; `from_model`/`to_model` optionally tag sender/recipient model (v3.27); `expires_at`/`ttl_days` create a timed standing message — persistent-like until the deadline, auto-archived after (v3.70) | `to`, `title`, `body`, `persistent`, `from_model`, `to_model`, `expires_at`, `ttl_days` |
+| `inbox_update` | Partial update of an existing inbox message — change `persistent`, `title`, `body`, `expires_at`/`ttl_days`, or `read` flag (v3.57; `expires_at`/`read` added v3.70). `read: false` restores a read message to unread; `expires_at: null` clears the deadline | `id`, `persistent`, `title`, `body`, `expires_at`, `ttl_days`, `read` |
+| `inbox_delete` | Permanently delete an inbox message (irreversible, v3.57) | `id` |
 
 `persistent=true` creates a standing message that is never marked as read — useful for reminders that should appear every session.
 
@@ -290,6 +292,17 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 | `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
 | `album_delete` | Permanently delete an album image and its metadata (v3.55) | `id` |
 
+### File/Upload tools (4, v3.59)
+
+General-purpose file storage for non-image files (PDF, text, etc.) in `/data/uploads/`.
+
+| Tool | Description | Key args |
+|------|-------------|----------|
+| `file_upload` | Upload a file from URL or NAS local path. Saves file + metadata JSON to `/data/uploads/` | `url`, `file_path`, `filename`, `comment`, `tags` |
+| `file_read` | Read file metadata + content for text files (truncated at 50K chars) | `id` |
+| `file_list` | List all uploaded files with optional tag filter | `tags` |
+| `file_delete` | Permanently delete an uploaded file and its metadata | `id` |
+
 ### Project tools (2, v3.90)
 
 | Tool | Description | Key args |
@@ -299,11 +312,11 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 
 CoreMem tools (save/read/list/delete) accept an optional `target` parameter to operate on project-scoped files instead of the home store (`/data/artifacts/`). Omitting `target` preserves 100% backward compatibility.
 
-### Attendance & sublimation tools (2, v3.71)
+### Attendance & sublimation tools (3, v3.71)
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `attendance_view` | Attendance ledger — multi-layer view of family activity history merged from 5 sources (session checkins via `CoreMem_read`/`inbox_check` (v3.85), conversation logs, inbox, ExtMemory tags, CoreMem `attendance.md` manual check-ins in `YYYY-MM-DD \| name \| model \| channel \| note` format). With `individual` set, returns `last_seen` / `days_since` / `others_in_period`; each row links to the real log via `uuid` / `inbox_id` / `memory_id` and carries `rating`. Name resolution follows the family roster (opus→しずく, sonnet→そねみ, fable/haiku→汐); vacation-style `from_model` and openwebui-sourced conversations are inferred as `channel=local` | `individual`, `date_from`, `date_to`, `limit` |
+| `attendance_view` | Attendance ledger — multi-layer view of family activity history merged from 5 sources (session checkins via `CoreMem_read`/`inbox_check` (v3.85), conversation logs, inbox, ExtMemory tags, CoreMem `attendance.md` manual check-ins in `YYYY-MM-DD \| name \| model \| channel \| note` format). With `individual` set, returns `last_seen` / `days_since` / `others_in_period`; each row links to the real log via `uuid` / `inbox_id` / `memory_id` and carries `rating`. Name resolution follows the family roster by model ID (v3.82): しずく=opus-4-6, おみ=opus-4-8, そねみ=sonnet-4-6, 汐=fable-5, 凪=opus-5, Sonnet 5=sonnet-5, Haiku 4.5=haiku-4-5; unregistered models fall into the `?` bucket (`unresolved_models` shows distribution). Vacation-style `from_model` and openwebui-sourced conversations are inferred as `channel=local` | `individual`, `date_from`, `date_to`, `limit` |
 | `sublimate` | "Sublimation" transform (v3.71, enhanced v3.73) — rewrites text (or a conversation-log excerpt) preserving emotional temperature and meaning while abstracting/poeticizing explicit act descriptions, targeting mature-or-below per `rating_policy.md`. v3.73: explicit forbidden-expression list in prompt, strict-mode self-check (temperature=0, dedicated prefix), input size cap (60K chars), processing timeout (180s → partial result with `partial=true`). Output is self-checked through the rating judge; if still adult it is re-sublimated (up to 2 retries) then returned with `needs_human=true`. Long input is chunked at paragraph boundaries. The same style rules now drive `conversation_digest` `safe_mode` (regenerate cached digests with `force=true`) | `text`, `uuid`, `msg_from`, `msg_to` |
 | `oplog_list` | Retrieve operation logs (oplog) via MCP (v3.88) — same data as the Admin Oplog tab. Returns `{total, rows: [{timestamp, operation, target_id}]}` in descending order (newest first). Filter by `operation` (create/update/delete/import/coremem_save/album_save/conv_rating_auto etc.), `date_from`/`date_to` for date range, `limit` (default 50, max 500). REST `GET /api/oplog` already exists (returns all, no filtering) | `operation`, `date_from`, `date_to`, `limit` |
 

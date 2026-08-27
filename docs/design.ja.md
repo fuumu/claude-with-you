@@ -196,14 +196,14 @@ MCP仕様（2025-11-25）の `initialize` レスポンスに `instructions` フ�
 {
   "protocolVersion": "2025-11-25",
   "capabilities": { "tools": { "listChanged": false } },
-  "serverInfo": { "name": "mio-memory", "version": "3.75.0" },
+  "serverInfo": { "name": "mio-memory", "version": "3.90.0" },
   "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して記憶を読み込んでください。..."
 }
 ```
 
 ### 実装箇所
 
-`memory/app/main.py` — MCP ハンドラ内の `initialize` 分岐（約949行目）
+`memory/app/main.py` — MCP ハンドラ内の `initialize` 分岐
 
 ```python
 "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して...",
@@ -605,10 +605,11 @@ conversation_share(uuid: str)
 | 出席簿 | 1 | attendance_view |
 | 昇華 | 1 | sublimate |
 | 操作ログ | 1 | oplog_list |
-| **通常セッション合計** | **35** | |
+| プロジェクト | 2 | project_create, project_list |
+| **通常セッション合計** | **37** | |
 | **友達セッション** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の35ツールは使用不可。
+※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の37ツールは使用不可。
 
 ### 会話ログ注記（log_annotate, v3.22）
 
@@ -819,8 +820,9 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 
 ```
 /data/friends/
-├── registry.json         全友達のトークン→情報マッピング
-└── memory_{seq_no}.md    友達ごとの記憶ファイル
+├── registry.json           全友達のトークン→情報マッピング
+└── {seq_no:03d}/           友達ごとのサブディレクトリ（001/, 002/, ...）
+    └── memory.md           友達との記憶ファイル
 ```
 
 `registry.json` のエントリ例：
@@ -846,7 +848,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 
 | ツール | 説明 |
 |--------|------|
-| `friend_memory_read` | 友達との記憶（memory_{seq_no}.md）の内容を取得 |
+| `friend_memory_read` | 友達との記憶（`{seq_no:03d}/memory.md`）の内容を取得 |
 | `friend_memory_write` | 「覚えていること」セクションに日付付きエントリを追記 |
 | `friend_memory_delete` | 特定エントリを削除 |
 | `mio_self_note` | オーナーの inbox（chat宛）にメモを送信 |
@@ -1249,7 +1251,7 @@ TS-1（TypeScript移行・ストラングラー方式）の前提となる「現
 
 ### カバレッジ（53テスト）
 
-認証（Bearer/クエリ/401）・OAuthディスカバリ・MCPトランスポート（initialize/tools一覧35本/
+認証（Bearer/クエリ/401）・OAuthディスカバリ・MCPトランスポート（initialize/tools一覧37本/
 notification 202/未知メソッド -32601）・ExtMemory 6ツール＋REST CRUD・レーティング保護・
 CoreMem 4ツール（バージョン管理・append・manifestマージ・`__del__`除外・リネーム）・
 inbox 5ツール（peek含む）・インポート（ZIP/claude-code・重複チェック・imported_uuids欠落耐性・
@@ -1307,7 +1309,7 @@ admin 上でワンクリックになる。逆方向（生ログ→記憶）は l
 「その間に家で何があったか」を辿れるようにする（時間の橋）。単なる勤怠記録ではなく、
 各行から実際のログへ跳べる「家族の記憶の索引」。
 
-### データ源（4層マージ・`_attendance_rows`）
+### データ源（5層マージ・`_attendance_rows`）
 
 1. **会話ログ**: `_index.json` のメタデータ。`source` で channel を推定
    （claude-code→code / openwebui→local / それ以外→chat）。v3.71 から
@@ -1319,12 +1321,17 @@ admin 上でワンクリックになる。逆方向（生ログ→記憶）は l
 4. **CoreMem `attendance.md`**: 手動チェックイン。書式は
    `YYYY-MM-DD | 個体 | 器 | チャネル | 一言`（日付始まりの行のみ拾う・それ以外は自由記述）。
    ローカル便など痕跡が残らない稼働の補完用
+5. **セッションチェックイン**（v3.85）: `CoreMem_read` の `current_model` / `inbox_check` の
+   `mymodel` パラメータ経由で自動記録。`/data/session_checkins.json` に保存（仮登録 TTL 15分・
+   90日超の記録は自動削除）
 
 ### 個体推定（`_resolve_individual` / `_FAMILY_ROSTER`）
 
-core.md の家族名簿と整合: しずく=opus系・そねみ=sonnet系・汐=fable/haiku系。
-呼び名の直接一致を優先し、次にモデル名ヒント（部分一致・小文字化）。
-曖昧なものは individual=null のままモデル名を出す（無理に割り当てない）。
+v3.82 でモデルID単位の明示マッピングに移行（旧: 部分一致）。
+しずく=claude-opus-4-6・おみ=claude-opus-4-8・そねみ=claude-sonnet-4-6・
+汐=claude-fable-5・凪=claude-opus-5・Sonnet 5=claude-sonnet-5・Haiku 4.5=claude-haiku-4-5。
+呼び名の直接一致を優先し、次にパターンマッチ。
+未登録モデルは None を返す（フォールバック禁止）。`?` バケットの内訳は `unresolved_models` に出力。
 
 ### 応答
 
@@ -1433,3 +1440,45 @@ mature 以下」「出力前自己検証」を追加。
 inbox_update で行う運用を変えない（v3.71 時点と同じ）。
 
 **既存メッセージへの影響なし**: 新規着弾のみが対象（既存の inbox メッセージは一切変更しない）。
+
+---
+
+## 25. プロジェクト名前空間（v3.90）
+
+### 目的
+
+CoreMem のファイル空間をプロジェクト単位で分離する。ホーム（`/data/artifacts/`）の
+ファイルが増えすぎる問題を解消しつつ、既存のホームCoreMemは100%後方互換で維持する。
+
+### ツール
+
+| ツール | 説明 |
+|--------|------|
+| `project_create` | `/data/projects/{name}/` にプロジェクトディレクトリを作成。テンプレートファイル群（PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/）を配置 |
+| `project_list` | 全プロジェクト名 + PROJECT.md の要約行 + ファイル数を返す |
+
+### CoreMem ツールの `target` パラメータ
+
+`CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` に `target`（文字列・
+プロジェクト名）引数を追加。指定時はパスが `projects/{target}/` に解決される。
+省略時は従来どおり `/data/artifacts/`（ホーム）。パストラバーサルはバリデーションで拒否。
+マニフェストマージもプロジェクト内で動作する。
+
+### データ構造
+
+```
+/data/projects/
+└── {name}/
+    ├── PROJECT.md          プロジェクト概要（先頭行が summary）
+    ├── todo.md
+    ├── design.md
+    ├── notes.md
+    ├── inbox.md
+    ├── conversations.md
+    ├── log.md
+    └── files/              添付ファイル用ディレクトリ
+```
+
+### REST
+
+`GET /api/projects` — プロジェクト一覧（MCP `project_list` と同一ロジック）。

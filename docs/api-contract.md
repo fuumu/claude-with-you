@@ -1,6 +1,6 @@
 # API Contract Document (TS-0)
 
-*Target: mio-memory v3.61 / Written: 2026-07-13*
+*Target: mio-memory v3.90 / Written: 2026-07-13 / Last updated: 2026-08-27*
 
 This document pins down the externally promised behavior (the contract) of the current
 `memory/app/main.py`. **The executable contract is the characterization test suite in
@@ -84,8 +84,11 @@ command in `tests/conftest.py`.
 | POST | `/api/memory/reindex` | Rebuild index.json |
 | POST | `/api/memory/share/<id>` | Issue share token |
 | GET | `/api/share/<token>` | Entry without auth (24h expiry) |
+| GET | `/api/memories/symbolic` | Layer-3 symbolic compression list for all entries (`{id, title, symbolic}`, empties excluded, v3.42) |
+| POST | `/api/memory/cleanup-empty` | Bulk soft-delete empty memory entries (dry_run supported, v3.79) |
 | GET | `/api/export` | ZIP of CoreMem + ExtMemory |
 | POST | `/api/import/backup` | Restore from an export ZIP (multipart `file`, `mode=skip/overwrite`, `dry_run=true`). Response `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`. Bad ZIP / wrong structure / bad mode → 400 (v3.63; contract pinned in tests/test_backup_restore.py) |
+| POST | `/api/import/compare` | ZIP comparison without data changes |
 
 ## 4. MCP transport (`/mcp`)
 
@@ -93,11 +96,11 @@ command in `tests/conftest.py`.
 - No id (notification) → **202 Accepted** (empty body)
 - If `Accept` includes `text/event-stream`, the response is SSE (`event: message` + `data: <json>`); otherwise `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions` (includes the CoreMem_read("core.md") prompt) / issues `Mcp-Session-Id` header
-- `tools/list` → **35 tools** for regular sessions (v3.89)
+- `tools/list` → **37 tools** for regular sessions (v3.90)
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON string>"}`; image tools use `_mcp_content` (type:"image", base64)
 - `ping` → `{}`
 - Unknown method → JSON-RPC error `-32601`
-- Friend tokens (`/mcp?token=<friend_token>`) expose a separate 4-tool set
+- Friend tokens (`/mcp?token=<friend_token>`) expose a separate 6-tool set (friend_memory_read/write/delete, mio_self_note, friend_inbox_check/read)
 
 ### 4b. MCP 2026-07-28 stateless core (TS layer only; verified with `MIO_TS1=1`)
 
@@ -113,7 +116,7 @@ The new-spec contract is pinned in `tests/test_mcp_2026.py` (skipped in Python-o
 - `subscriptions/listen` → SSE (`notifications/subscriptions/acknowledged` + keep-alive comments)
 - OAuth hardening: `iss` on the authorization redirect (RFC 9207) / `application_type` accepted in DCR (default `web`) / `grant_type=refresh_token` (issued, rotated on every use, reuse → `invalid_grant`, scope narrowing allowed) / `/.well-known/oauth-authorization-server/<suffix>` answered, `grant_types_supported` includes `refresh_token`
 
-## 5. MCP tools (35): response shapes (essentials)
+## 5. MCP tools (37): response shapes (essentials)
 
 For argument details see README.md / CoreMem `protocol_guide_detail.md`. Below are the
 response shapes pinned by tests.
@@ -126,13 +129,17 @@ response shapes pinned by tests.
 | `memory_upsert` | Upsert by fixed id; created dict. Accepts `rating`/`local_only` (preserves existing values when omitted, v3.73) |
 | `memory_search` | `{results[], total, has_more}`; no body by default (`summary`+`symbolic`+`match_layer`); `full_body=true` for body; `author` filters by author field (partial match, v3.81); `search_layer` limits to `index`/`summary`/`full` (v3.81); `include_conversations=true` adds `conversations[]`+`conversations_total` (v3.61) |
 | `memory_share` | `{token, url(admin.html?token=..&id=..), expires_at}` |
-| `CoreMem_save` | `{name, version, version_str}`; `mode="append"` appends with `<!-- APPEND datetime -->` separator |
-| `CoreMem_read` | `{name, version, content}`; with manifest: `merged:true` + `<!-- BEGIN/END: file -->` separators + `manifest` map |
-| `CoreMem_list` | list → `{data:[{name,version,updated_at}]}`; `__del__` prefix excluded |
-| `CoreMem_delete` | `{deleted}` / rename: `{renamed,src,dst}` |
+| `CoreMem_save` | `{name, version, version_str}`; `mode="append"` appends with `<!-- APPEND datetime -->` separator; `mode="str_replace"` for partial edits via `old_str`→`new_str` (v3.80); `target` for project scope (v3.90) |
+| `CoreMem_read` | `{name, version, content}`; with manifest: `merged:true` + `<!-- BEGIN/END: file -->` separators + `manifest` map; `current_model` (attendance registration) / `refer_only` (skip registration) (v3.85); `target` for project scope (v3.90) |
+| `CoreMem_list` | list → `{data:[{name,version,updated_at,size}]}`; `__del__` prefix excluded; `size` (bytes) added (v3.90); `target` for project scope (v3.90) |
+| `CoreMem_delete` | `{deleted}` / rename: `{renamed,src,dst}`; `target` for project scope (v3.90) |
+| `project_create` | `{name, path, files[]}`; creates `/data/projects/{name}/` with template files (v3.90) |
+| `project_list` | `{projects:[{name,summary,file_count}]}`; lists all projects (v3.90) |
 | `conversation_index` | `{total, offset, limit, items[]}` |
 | `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`; multi-word queries are AND-matched (v3.81); `body_search=true` for message text with AND matching (v3.76); date range supported |
-| `conversation_read` | Body dict; `turn_offset` (negative = from tail) / `turn_limit`; `include_annotations=true` adds annotations + `[No.X]`; **adult conversations never return raw text by default** (`include_raw=true` for raw) |
+| `conversation_read` | Body dict; `turn_offset` (negative = from tail) / `turn_limit`; `include_annotations=true` adds annotations + `[No.X]`; **adult conversations never return raw text by default** (`include_raw=true` for raw); `redact=true` returns approved masked version (v3.69); `[assistant]` labels replaced with individual names (v3.80) |
+| `conversation_share` | `{token, url, expires_at}`; 24h share URL (v3.23) |
+| `conversation_digest` | `{digest, uuid, cached, chunks, model}`; digest via local LLM; `force=true` to ignore cache; `safe_mode=true` for sublimation-style transform (v3.71+); chunked generation (v3.53) |
 | `log_annotate` | The appended annotation (seq starts at 1); no edit/delete API |
 | `inbox_check` | `{count, ids, non_persistent_unread_count, non_persistent_unread_ids, persistent[] (with bodies)}`; `limit/days/from_model/to_model` filters |
 | `inbox_read` | Message dict (marks read); `peek=true` does not mark read (v3.60); persistent never gets marked |
@@ -140,6 +147,7 @@ response shapes pinned by tests.
 | `inbox_update` | Partially updated dict (unspecified fields kept) |
 | `inbox_delete` | Physical delete |
 | `batch_run_summary_layers` | `status_only=true` → `{running,total,processed,errors,skipped,raw_pending,keywords_pending}` |
+| `batch_run_rating` | `status_only=true` → `{running,total,processed,errors,skipped,pending,index_counts,skip_reasons,error_uuids}`; `force=true` re-judges auto entries (manual untouched); unjudgeable logs get `rating_skip_reason` and are skipped permanently (v3.68/v3.70) |
 | `album_*` / `file_*` | Same metadata shapes as REST; `album_read` returns MCP image content; `album_save` accepts `rating`/`guard_message` (v3.77); `album_read` with `rating=adult`: hidden by default (`include_adult=true`), `guard_message` triggers two-step reveal (`acknowledged=true` to view, logs `viewer` to `view_log`); `album_list` excludes adult by default (`include_adult=true`) |
 | `attendance_view` | With `individual`: `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}`; without: `{individual:"all",individuals{},period,total,rows[]}`; rows are date-descending with `kind` (conversation/inbox/memory/checkin) + real-log refs (uuid/inbox_id/memory_id) (v3.71) |
 | `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`; exactly one of `text`/`uuid` required (both → `{error}` exclusive); unreachable LLM → `{error:"sublimation failed: ..."}` (v3.71) |
@@ -189,6 +197,11 @@ response shapes pinned by tests.
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | Rating batch: status dict (`pending` = next-run targets, `index_counts` distribution, `skip_reasons`, `error_uuids`, v3.70) / background start (v3.68) |
 | redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | Redact: generate, get, approve, reject, status list (v3.69) |
 | attendance | `GET /api/attendance` | Attendance ledger: `?individual=&date_from=&date_to=&limit=` (same logic as MCP attendance_view, v3.74) |
+| oplog | `GET /api/oplog` | Full operation log. `DELETE /api/oplog/<index>` deletes individual entries (v3.82) |
+| conv-artifacts | `GET /api/conv-artifacts` | List files extracted from conversation tool-use blocks. `GET /api/conv-artifacts/<uuid>/<filename>` downloads a specific file |
+| projects | `GET /api/projects` | Project list (v3.90) |
+| oauth-resource | `GET /.well-known/oauth-protected-resource` | OAuth protected resource metadata |
+| conversations-cleanup | `POST /api/conversations/cleanup-empty` | Bulk-hide empty conversation logs (dry_run supported, v3.79) |
 | import-status | `/api/import-status` | Last ZIP import record |
 | friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
 

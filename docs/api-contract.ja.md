@@ -1,6 +1,6 @@
 # API 契約ドキュメント（TS-0）
 
-*対象: mio-memory v3.61 / 作成: 2026-07-13*
+*対象: mio-memory v3.90 / 作成: 2026-07-13 / 最終更新: 2026-08-27*
 
 このドキュメントは、現行 `memory/app/main.py` が外部に約束している挙動（契約）を固定化するためのもの。
 **実行可能な契約は `tests/` の特性テストスイート**であり、本書はその地図にあたる。
@@ -81,8 +81,11 @@ python -m venv .venv
 | POST | `/api/memory/reindex` | index.json 再構築 |
 | POST | `/api/memory/share/<id>` | 共有トークン発行 |
 | GET | `/api/share/<token>` | 認証不要でエントリ返却（24h期限） |
+| GET | `/api/memories/symbolic` | 全エントリの layer-3 シンボリック圧縮一覧（`{id, title, symbolic}`、空を除外, v3.42） |
+| POST | `/api/memory/cleanup-empty` | 空エントリの一括論理削除（`dry_run` 対応, v3.79） |
 | GET | `/api/export` | CoreMem+ExtMemory の ZIP |
 | POST | `/api/import/backup` | export ZIP から復元（multipart `file`・`mode=skip/overwrite`・`dry_run=true`）。応答 `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`。ZIP不正・構造不一致・不正modeは400（v3.63・契約は tests/test_backup_restore.py） |
+| POST | `/api/import/compare` | ZIP 比較（データ変更なし） |
 
 ## 4. MCP トランスポート（`/mcp`）
 
@@ -90,11 +93,11 @@ python -m venv .venv
 - id なし（notification）→ **202 Accepted**（本文なし）
 - `Accept: text/event-stream` を含むと SSE 形式（`event: message` + `data: <json>`）で返る。含まなければ `application/json`
 - `initialize` → `result.serverInfo` / `result.instructions`（CoreMem_read("core.md") の案内を含む）/ `Mcp-Session-Id` ヘッダ発行
-- `tools/list` → 通常セッションは **35本**（v3.89）
+- `tools/list` → 通常セッションは **37本**（v3.90）
 - `tools/call` → `result.content[0] = {type:"text", text:"<JSON文字列>"}`。画像系は `_mcp_content`（type:"image", base64）
 - `ping` → `{}`
 - 未知メソッド → JSON-RPC error `-32601`
-- 友達トークン（`/mcp?token=<friend_token>`）では別ツールセット（4本）
+- 友達トークン（`/mcp?token=<friend_token>`）では別ツールセット（6本: friend_memory_read/write/delete, mio_self_note, friend_inbox_check/read）
 
 ### 4b. MCP 2026-07-28 ステートレスコア（TS層のみ・`MIO_TS1=1` で検証）
 
@@ -110,7 +113,7 @@ python -m venv .venv
 - `subscriptions/listen` → SSE（`notifications/subscriptions/acknowledged` + keep-alive コメント）
 - OAuth 強化: 認可応答リダイレクトに `iss`（RFC 9207）／DCR で `application_type` 受理（既定 `web`）／`grant_type=refresh_token`（発行・使用ごとローテーション・再利用は `invalid_grant`・`scope` 縮小可）／`/.well-known/oauth-authorization-server/<suffix>` にも応答・`grant_types_supported` に `refresh_token`
 
-## 5. MCP ツール（35本）の返却形状（要点）
+## 5. MCP ツール（37本）の返却形状（要点）
 
 引数の詳細は README.ja.md / CoreMem `protocol_guide_detail.md` を参照。ここではテストで固定化した返却形状のみ列挙する。
 
@@ -121,14 +124,17 @@ python -m venv .venv
 | `memory_write` | 作成エントリ dict（`id` 必須確認）。`rating`/`local_only` 受付 |
 | `memory_upsert` | 固定 id で上書き/新規。作成 dict。`rating`/`local_only` 受付（省略時は既存値温存, v3.73） |
 | `memory_search` | `{results[], total, has_more}`。デフォルト body なし（`summary`+`symbolic`+`match_layer`）。`full_body=true` で body。`author` で著者フィルタ（部分一致・v3.81）。`search_layer` で検索対象レイヤー限定（`index`/`summary`/`full`・v3.81）。`include_conversations=true` で `conversations[]`+`conversations_total`（v3.61） |
-| `memory_share` | `{token, url(admin.html?token=..&id=..), expires_at}` |
-| `CoreMem_save` | `{name, version, version_str}`。`mode="append"` は `<!-- APPEND datetime -->` 区切りで追記 |
-| `CoreMem_read` | `{name, version, content}`。manifest があれば `merged:true` + `<!-- BEGIN/END: file -->` 区切り + `manifest` マップ |
-| `CoreMem_list` | list → `{data:[{name,version,updated_at}]}`。`__del__` プレフィックス除外 |
-| `CoreMem_delete` | `{deleted}` / リネーム時 `{renamed,src,dst}` |
+| `CoreMem_save` | `{name, version, version_str}`。`mode="append"` は `<!-- APPEND datetime -->` 区切りで追記。`mode="str_replace"` は `old_str`→`new_str` 部分置換（v3.80）。`target` でプロジェクトスコープ（v3.90） |
+| `CoreMem_read` | `{name, version, content}`。manifest があれば `merged:true` + `<!-- BEGIN/END: file -->` 区切り + `manifest` マップ。`current_model`（出席簿本登録）/ `refer_only`（登録スキップ）対応（v3.85）。`target` でプロジェクトスコープ（v3.90） |
+| `CoreMem_list` | list → `{data:[{name,version,updated_at,size}]}`。`__del__` プレフィックス除外。`size`（bytes）追加（v3.90）。`target` でプロジェクトスコープ（v3.90） |
+| `CoreMem_delete` | `{deleted}` / リネーム時 `{renamed,src,dst}`。`target` でプロジェクトスコープ（v3.90） |
+| `project_create` | `{name, path, files[]}`。`/data/projects/{name}/` にテンプレート群を配置（v3.90） |
+| `project_list` | `{projects:[{name,summary,file_count}]}`。全プロジェクト列挙（v3.90） |
 | `conversation_index` | `{total, offset, limit, items[]}` |
 | `conversation_search` | list → `{data:[{uuid,title,created_at,updated_at,message_count}]}`。複数キーワードAND一致（v3.81）・日付範囲可。`body_search=true` で本文も検索（v3.76） |
-| `conversation_read` | 本文 dict。`turn_offset`（負値=末尾起点）/`turn_limit`。`include_annotations=true` で注記+`[No.X]`。**adult はデフォルトで原文非返却**（`include_raw=true` で原文） |
+| `conversation_read` | 本文 dict。`turn_offset`（負値=末尾起点）/`turn_limit`。`include_annotations=true` で注記+`[No.X]`。**adult はデフォルトで原文非返却**（`include_raw=true` で原文）。`redact=true` で承認済み伏せ字版（v3.69）。`[assistant]` ラベルは個体名に置換（v3.80） |
+| `conversation_share` | `{token, url, expires_at}`。24h 共有 URL 発行（v3.23） |
+| `conversation_digest` | `{digest, uuid, cached, chunks, model}`。ローカル LLM でダイジェスト生成。`force=true` でキャッシュ無視再生成。`safe_mode=true` で昇華スタイル変換（v3.71〜）。チャンク結合生成（v3.53） |
 | `log_annotate` | 追記した注記（seq は 1 始まり連番）。編集・削除 API なし |
 | `inbox_check` | `{count, ids, non_persistent_unread_count, non_persistent_unread_ids, persistent[]（本文込み）}`。`limit/days/from_model/to_model` フィルタ |
 | `inbox_read` | メッセージ dict（既読化）。`peek=true` は既読化しない（v3.60）。persistent は常に既読化されない |
@@ -136,6 +142,7 @@ python -m venv .venv
 | `inbox_update` | 部分更新後の dict（未指定フィールド維持） |
 | `inbox_delete` | 物理削除 |
 | `batch_run_summary_layers` | `status_only=true` → `{running,total,processed,errors,skipped,raw_pending,keywords_pending}` |
+| `batch_run_rating` | `status_only=true` → `{running,total,processed,errors,skipped,pending,index_counts,skip_reasons,error_uuids}`。`force=true` で auto 再判定（manual は不変）。判定不能ログは `rating_skip_reason` 付きで恒久スキップ（v3.68/v3.70） |
 | `album_*` / `file_*` | REST と同じメタデータ形状。`album_read` は MCP image content。`album_save` は `rating`/`guard_message` 受付（v3.77）。`album_read`/`album_list` は adult デフォルト除外（`include_adult` で表示・v3.77） |
 | `attendance_view` | `individual` 指定時 `{individual,last_seen,days_since,count,others_in_period,period,total,rows[]}` / 省略時 `{individual:"all",individuals{},period,total,rows[]}`。rows は日付降順・`kind`（conversation/inbox/memory/checkin）＋実ログ参照（uuid/inbox_id/memory_id）付き（v3.71） |
 | `sublimate` | `{sublimated,rating,rating_reason,chunks,attempts,needs_human,model,uuid?}`。`text`/`uuid` どちらか必須（両方は `{error}`・exclusive）。LLM 到達不能時は `{error:"sublimation failed: ..."}`（v3.71） |
@@ -175,6 +182,11 @@ python -m venv .venv
 | rating-batch | `/api/rating-batch/status` `/api/rating-batch/start` | レーティング判定バッチ: 状態 dict（`pending`=次回対象件数・`index_counts` 分布・`skip_reasons`・`error_uuids`, v3.70）/ バックグラウンド起動（v3.68） |
 | redact | `/api/conversations/<uuid>/redact` `redacted` `redact/approve` `redact/reject` `redact-status` | 伏せ字ログ: 生成・取得・承認・差し戻し・ステータス一覧（v3.69） |
 | attendance | `GET /api/attendance` | 出席簿: `?individual=&date_from=&date_to=&limit=`（MCP attendance_view と同一ロジック, v3.74） |
+| oplog | `GET /api/oplog` | 操作ログ全件。`DELETE /api/oplog/<index>` で個別削除（v3.82） |
+| conv-artifacts | `GET /api/conv-artifacts` | 会話から抽出したファイル一覧。`GET /api/conv-artifacts/<uuid>/<filename>` でダウンロード |
+| projects | `GET /api/projects` | プロジェクト一覧（v3.90） |
+| oauth-resource | `GET /.well-known/oauth-protected-resource` | OAuth 保護リソースメタデータ |
+| conversations-cleanup | `POST /api/conversations/cleanup-empty` | 空会話ログの一括非表示（`dry_run` 対応, v3.79） |
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
 | friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |
 

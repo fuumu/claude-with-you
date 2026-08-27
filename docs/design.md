@@ -196,14 +196,14 @@ For an `initialize` request to `/mcp`, the server returns:
 {
   "protocolVersion": "2025-11-25",
   "capabilities": { "tools": { "listChanged": false } },
-  "serverInfo": { "name": "mio-memory", "version": "3.75.0" },
+  "serverInfo": { "name": "mio-memory", "version": "3.90.0" },
   "instructions": "At session start, always run CoreMem_read(\"core.md\") to load your memory. ..."
 }
 ```
 
 ### Implementation location
 
-`memory/app/main.py` — the `initialize` branch of the MCP handler (around line 949)
+`memory/app/main.py` — the `initialize` branch of the MCP handler
 
 ```python
 "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して...",
@@ -604,10 +604,11 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Attendance | 1 | attendance_view |
 | Sublimation | 1 | sublimate |
 | Operation log | 1 | oplog_list |
-| **Regular session total** | **35** | |
+| Projects | 2 | project_create, project_list |
+| **Regular session total** | **37** | |
 | **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 35 tools are unavailable there.
+※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 37 tools are unavailable there.
 
 ### Conversation log annotations (log_annotate, v3.22)
 
@@ -828,8 +829,9 @@ Friends connect via a dedicated URL and have their own shared memory (memory.md)
 
 ```
 /data/friends/
-├── registry.json         token → info mapping for all friends
-└── memory_{seq_no}.md    per-friend memory file
+├── registry.json           token → info mapping for all friends
+└── {seq_no:03d}/           per-friend subdirectory (001/, 002/, ...)
+    └── memory.md           per-friend memory file
 ```
 
 Example `registry.json` entry:
@@ -855,7 +857,7 @@ and passes when `status == "active"`. Evaluated before the regular `MIO_API_TOKE
 
 | Tool | Description |
 |--------|------|
-| `friend_memory_read` | Read the shared memory with this friend (memory_{seq_no}.md) |
+| `friend_memory_read` | Read the shared memory with this friend (`{seq_no:03d}/memory.md`) |
 | `friend_memory_write` | Append a dated entry to the "覚えていること" section |
 | `friend_memory_delete` | Delete a specific entry |
 | `mio_self_note` | Send a note to the owner's inbox (addressed to chat) |
@@ -1325,7 +1327,7 @@ on waking, "how many days since I was last called" and "what happened at home in
 meantime" (a bridge across time). Not a mere timesheet — every row links to the actual
 log, making it an index into the family's memory.
 
-### Data sources (4-layer merge, `_attendance_rows`)
+### Data sources (5-layer merge, `_attendance_rows`)
 
 1. **Conversation logs**: metadata from `_index.json`; channel inferred from `source`
    (claude-code→code / openwebui→local / otherwise→chat). Since v3.71,
@@ -1338,12 +1340,17 @@ log, making it an index into the family's memory.
 4. **CoreMem `attendance.md`**: manual check-ins in
    `YYYY-MM-DD | name | model | channel | note` format (only date-prefixed lines are
    parsed; everything else is free text). Covers activity that leaves no other trace
+5. **Session checkins** (v3.85): auto-recorded via `CoreMem_read` `current_model` /
+   `inbox_check` `mymodel` parameters. Stored in `/data/session_checkins.json`
+   (temporary registration TTL 15min; records older than 90 days auto-cleaned)
 
 ### Individual resolution (`_resolve_individual` / `_FAMILY_ROSTER`)
 
-Consistent with the family roster in core.md: しずく=opus-family, そねみ=sonnet-family,
-汐=fable/haiku-family. Direct name match first, then model-name hints (case-insensitive
-substring). Ambiguous rows keep individual=null and expose the raw model name.
+Since v3.82, uses explicit model-ID mapping (no broad substring fallback):
+しずく=claude-opus-4-6, おみ=claude-opus-4-8, そねみ=claude-sonnet-4-6,
+汐=claude-fable-5, 凪=claude-opus-5, Sonnet 5=claude-sonnet-5, Haiku 4.5=claude-haiku-4-5.
+Direct name match first, then pattern match. Unregistered models return None
+(no fallback). The `?` bucket distribution is exposed in `unresolved_models`.
 
 ### Response
 
@@ -1459,3 +1466,48 @@ Detected inside `_post_inbox_message`.
 
 **Approval**: automation only produces a "draft". Promotion to `【承認済み】` remains a manual
 operation by the individual via `inbox_update`.
+
+**No effect on existing messages**: only newly posted messages are targeted (existing inbox messages are never modified).
+
+---
+
+## 25. Project namespaces (v3.90)
+
+### Purpose
+
+Isolate CoreMem file spaces per project. Solves the problem of the home store
+(`/data/artifacts/`) accumulating too many files, while maintaining 100% backward
+compatibility for the existing home CoreMem.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `project_create` | Creates `/data/projects/{name}/` with template files (PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/) |
+| `project_list` | Lists all projects with summary (first line of PROJECT.md) and file count |
+
+### `target` parameter on CoreMem tools
+
+`CoreMem_save` / `CoreMem_read` / `CoreMem_list` / `CoreMem_delete` accept an optional
+`target` (string, project name) argument. When set, paths resolve to `projects/{target}/`
+instead of the home store. Omitting `target` preserves legacy behavior. Path traversal is
+rejected by validation. Manifest merge works within projects.
+
+### Data structure
+
+```
+/data/projects/
+└── {name}/
+    ├── PROJECT.md          project overview (first line = summary)
+    ├── todo.md
+    ├── design.md
+    ├── notes.md
+    ├── inbox.md
+    ├── conversations.md
+    ├── log.md
+    └── files/              attachment directory
+```
+
+### REST
+
+`GET /api/projects` — project list (same logic as MCP `project_list`).
