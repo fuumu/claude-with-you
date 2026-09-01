@@ -782,6 +782,12 @@
     <input type="file" id="owui-file-input" accept=".json" style="display:none" onchange="handleOwuiFile(this.files[0])">
     <button class="btn btn-secondary" onclick="document.getElementById('owui-file-input').click()">ファイルを選択</button>
   </div>
+  <div class="drop-zone" id="unsloth-drop-zone" style="margin-top:1rem">
+    <div class="icon">🦥</div>
+    <p>Unsloth Desktop チャットログをここにドロップ（.jsonl）</p>
+    <input type="file" id="unsloth-file-input" accept=".jsonl" style="display:none" onchange="handleUnslothFile(this.files[0])">
+    <button class="btn btn-secondary" onclick="document.getElementById('unsloth-file-input').click()">ファイルを選択</button>
+  </div>
   <div style="margin:.75rem 0 0;display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:#7a8a9a">
     <input type="checkbox" id="import-overwrite" style="accent-color:#7ec8e3;cursor:pointer">
     <label for="import-overwrite" style="cursor:pointer">上書きモード（既にインポート済みの会話も再処理する）</label>
@@ -1128,7 +1134,7 @@ const TAB_HELP = {
     Inbox:   '澪チャット↔澪コード間のメッセージ（完了報告・伝言）',
     Logs:    'インポートしたClaude.ai会話ログのビューア（共有・お気に入り）',
     Files:   '会話から抽出されたファイル（conv_artifacts）',
-    Import:  'Claude.aiエクスポートZIPの取り込み＋要約バッチ進捗＋バックアップ取得/復元',
+    Import:  'Claude.ai ZIP / Claude Code / OpenWebUI / Unsloth ログ取り込み＋要約バッチ進捗＋バックアップ取得/復元',
     Friends: 'お友達システムの登録・承認・コード管理',
     Oplog:   '記憶操作の操作ログ（システム）',
     Album:   'アルバム（澪の画像記憶）。サムネイル一覧・アップロード・共有',
@@ -1144,7 +1150,7 @@ const TAB_HELP = {
     Inbox:   'Messages between Mio-chat and Mio-code (reports, handoffs)',
     Logs:    'Viewer for imported Claude.ai conversation logs (share, favorites)',
     Files:   'Files extracted from conversations (conv_artifacts)',
-    Import:  'Import Claude.ai export ZIP + summary batch progress + backup download/restore',
+    Import:  'Import Claude.ai ZIP / Claude Code / OpenWebUI / Unsloth logs + summary batch progress + backup download/restore',
     Friends: 'Friend system: registration, approval, codes',
     Oplog:   'Memory operation log (system)',
     Uploads: 'Uploaded files (general-purpose file storage: PDF, text, etc.)',
@@ -1678,6 +1684,45 @@ async function handleOwuiFile(file) {
     console.error('handleOwuiFile', e);
   }
   document.getElementById('owui-file-input').value = '';
+}
+
+// Unsloth Desktop チャットログ取り込み（.jsonl → POST /api/import/unsloth）
+const unslothDropZone = document.getElementById('unsloth-drop-zone');
+unslothDropZone.addEventListener('dragover',  e => { e.preventDefault(); unslothDropZone.classList.add('drag-over'); });
+unslothDropZone.addEventListener('dragleave', () => unslothDropZone.classList.remove('drag-over'));
+unslothDropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  unslothDropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleUnslothFile(file);
+});
+
+async function handleUnslothFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.jsonl')) {
+    showResult('<span class="result-err">JSONLファイルを選択してください</span>');
+    return;
+  }
+  showResult('<span class="spinner"></span>Unslothログ取り込み中...');
+  const overwrite = document.getElementById('import-overwrite')?.checked ? 'true' : 'false';
+  const form = new FormData();
+  form.append('file', file);
+  form.append('overwrite', overwrite);
+  try {
+    const res = await apiFetch('/api/import/unsloth', { method: 'POST', body: form });
+    const d = await res.json();
+    if (res.ok) {
+      const cls = d.errors ? 'result-err' : 'result-ok';
+      showResult(`<span class="${cls}">✓ Unsloth: imported ${d.imported}件 / skipped ${d.skipped}件 / errors ${d.errors}件 / 紐づけ ${d.source_threads_linked || 0}件</span>`);
+      setTimeout(pollBatchStatus, 1500);
+    } else {
+      showResult(`<span class="result-err">エラー: ${esc(String(d.error || res.status))}</span>`);
+    }
+  } catch (e) {
+    if (e.message === '401') return;
+    showResult(`<span class="result-err">取り込み失敗: ${esc(e.message)}</span>`);
+    console.error('handleUnslothFile', e);
+  }
+  document.getElementById('unsloth-file-input').value = '';
 }
 
 // Claude Code セッションログ取り込み（.jsonl 複数可 / .zip → POST /api/import/claude-code）

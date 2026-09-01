@@ -4061,6 +4061,242 @@ def import_openwebui():
     return jsonify(result)
 
 
+# ── Unsloth Desktop チャットログインポート ─────────────────────────────
+
+_UNSLOTH_TS_RE = re.compile(r'(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})')
+_THINKING_RE = re.compile(r'<thinking>(.*?)</thinking>', re.DOTALL)
+
+
+def _convert_unsloth_session(fp, session_id, filename=''):
+    """Unsloth Desktop JSONL を conversations 形式の dict に変換する。
+    1行1メッセージ: {"role":"user/assistant/tool","content":"..."}
+    assistant には <thinking> ブロックや tool_calls が含まれる場合がある。
+    """
+    title = ''
+    messages = []
+    for line in fp:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        role = rec.get('role', '')
+        if role not in ('user', 'assistant', 'tool'):
+            continue
+
+        content_raw = rec.get('content', '')
+        if not isinstance(content_raw, str):
+            content_raw = json.dumps(content_raw, ensure_ascii=False)
+
+        if role == 'tool':
+            blocks = [{'type': 'tool_result',
+                        'tool_call_id': rec.get('tool_call_id', ''),
+                        'name': rec.get('name', ''),
+                        'content': content_raw}]
+            messages.append({
+                'uuid': '',
+                'sender': 'assistant',
+                'text': '',
+                'content': blocks,
+                'created_at': '',
+                'updated_at': '',
+            })
+            continue
+
+        if role == 'user':
+            blocks = [{'type': 'text', 'text': content_raw}]
+            if not title and content_raw.strip():
+                title = content_raw.strip().replace('\n', ' ')[:40]
+            messages.append({
+                'uuid': '',
+                'sender': 'human',
+                'text': content_raw,
+                'content': blocks,
+                'created_at': '',
+                'updated_at': '',
+            })
+            continue
+
+        # role == 'assistant'
+        blocks = []
+        texts = []
+
+        # <thinking> ブロックを抽出
+        remaining = content_raw
+        parts = _THINKING_RE.split(remaining)
+        # parts: [text_before, thinking_1, text_between, thinking_2, ..., text_after]
+        for idx, part in enumerate(parts):
+            if idx % 2 == 0:
+                # テキスト部分
+                t = part.strip()
+                if t:
+                    blocks.append({'type': 'text', 'text': t})
+                    texts.append(t)
+            else:
+                # thinking 部分
+                blocks.append({'type': 'thinking', 'thinking': part.strip()})
+
+        # tool_calls
+        tool_calls = rec.get('tool_calls')
+        if tool_calls and isinstance(tool_calls, list):
+            tc_list = []
+            for tc in tool_calls:
+                fn = tc.get('function', {})
+                tc_entry = {'name': fn.get('name', ''), 'id': tc.get('id', '')}
+                args = fn.get('arguments', '')
+                if args:
+                    tc_entry['arguments'] = args[:500]
+                tc_list.append(tc_entry)
+            blocks.append({'type': 'tool_calls', 'tool_calls': tc_list})
+
+        if not blocks:
+            continue
+        messages.append({
+            'uuid': '',
+            'sender': 'assistant',
+            'text': '\n'.join(t for t in texts if t),
+            'content': blocks,
+            'created_at': '',
+            'updated_at': '',
+        })
+
+    if not messages:
+        return None
+
+    # ファイル名から日時を抽出
+    created_at = ''
+    m = _UNSLOTH_TS_RE.search(filename or session_id)
+    if m:
+        created_at = m.group(1).replace('-', ':', 2).replace('T', 'T', 1)
+        # 2026-09-01T08-41-31 → 2026-09-01T08:41:31+09:00
+        ts_str = m.group(1)
+        try:
+            dt = datetime.strptime(ts_str, '%Y-%m-%dT%H-%M-%S').replace(tzinfo=JST)
+            created_at = dt.isoformat()
+        except Exception:
+            pass
+
+    return {
+        'uuid': session_id,
+        'name': title or session_id[:8],
+        'source': 'unsloth',
+        'model': '',
+        'created_at': created_at,
+        'updated_at': created_at,
+        'chat_messages': messages,
+    }
+
+
+@app.route('/api/import/unsloth', methods=['POST'])
+@require_auth
+def import_unsloth():
+    """Unsloth Desktop チャットログ JSONL を会話ストアに取り込む。
+    file: .jsonl 単体
+    overwrite=true で重複チェックを無視して上書き
+    """
+    if 'file' not in request.files:
+        abort(400)
+    f = request.files['file']
+    fname = f.filename or ''
+    if not fname.lower().endswith('.jsonl'):
+        return jsonify({'error': 'JSONL file required'}), 400
+    overwrite = request.form.get('overwrite', 'false').lower() == 'true'
+
+    # session_id: ファイル名（拡張子除去）をキーにする
+    session_id = os.path.splitext(os.path.basename(fname))[0]
+
+    imported = 0
+    skipped = 0
+    errors = 0
+    convs = []
+
+    imported_uuids = _load_imported_uuids()
+    existing_threads = _existing_source_threads()
+
+    if not overwrite and (session_id in imported_uuids or session_id in existing_threads):
+        skipped = 1
+    else:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = os.path.join(tmpdir, 'session.jsonl')
+            f.save(p)
+            try:
+                with open(p, encoding='utf-8') as fp:
+                    conv = _convert_unsloth_session(fp, session_id, fname)
+            except Exception as e:
+                _log_error(f'unsloth convert error ({session_id}): {e}')
+                errors = 1
+                conv = None
+            if conv:
+                convs.append(conv)
+            elif errors == 0:
+                skipped = 1
+
+    for i, conv in enumerate(convs):
+        uid = conv['uuid']
+        ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
+        entry_id = f'{ts}_{i:04d}_{uid[:8]}'
+        entry = {
+            'id': entry_id,
+            'created_at': conv.get('created_at') or now_jst(),
+            'updated_at': now_jst(),
+            'title': f'[会話/Unsloth] {conv["name"]}',
+            'body': '',
+            'tags': ['会話ログ', 'unsloth', 'raw'],
+            'source_thread': uid,
+            'importance': 'low',
+            'author': 'unsloth',
+            'deleted': False
+        }
+        with open(f'{DATA_DIR}/{entry_id}.json', 'w') as ef:
+            json.dump(entry, ef, ensure_ascii=False, indent=2)
+        append_oplog('import', entry_id, None, entry)
+        imported_uuids.add(uid)
+        imported = 1
+
+    conv_result = {'saved': 0, 'updated': 0, 'skipped': 0, 'updated_uuids': []}
+    try:
+        conv_result = _save_conversations(convs)
+    except Exception as e:
+        _log_error(f'unsloth conv save error: {e}')
+    conv_saved = conv_result['saved']
+
+    remarked = 0
+    if conv_result['updated_uuids']:
+        try:
+            remarked = _remark_entries_for_update(conv_result['updated_uuids'])
+        except Exception as e:
+            _log_error(f'remark for update error: {e}')
+
+    link_result = {}
+    try:
+        link_result = _link_source_threads(convs)
+    except Exception as e:
+        _log_error(f'source_thread link error: {e}')
+
+    if imported > 0:
+        rebuild_index()
+    _save_imported_uuids(imported_uuids)
+
+    _log_info(f'unsloth import: imported={imported} skipped={skipped} errors={errors} conv_saved={conv_saved} conv_updated={conv_result["updated"]} remarked={remarked}')
+
+    if (imported > 0 or remarked > 0) and os.environ.get('MIO_IMPORT_AUTO_BATCH') != 'off':
+        ok, info = _start_summary_batch()
+        if ok:
+            _log_info(f'auto summary batch started: backend={info["backend"]}')
+        ok_r, info_r = _start_rating_batch()
+        if ok_r:
+            _log_info(f'auto rating batch started: backend={info_r["backend"]}')
+
+    result = {'imported': imported, 'skipped': skipped, 'errors': errors,
+              'conversations_saved': conv_saved, 'conversations_updated': conv_result['updated'],
+              'source_threads_linked': link_result.get('linked', 0)}
+    if remarked > 0:
+        result['entries_remarked'] = remarked
+    return jsonify(result)
+
+
 # ── バッチ要約生成 ─────────────────────────────────────────────────────
 
 # ── 要約レイヤー定数・ヘルパー ─────────────────────────────────────────

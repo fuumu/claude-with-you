@@ -390,6 +390,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | POST | `/import` | Import ZIP file |
 | POST | `/api/import/claude-code` | Import Claude Code session logs (.jsonl / .zip, v3.54) |
 | POST | `/api/import/openwebui` | Import OpenWebUI chat export (.json, v3.66) |
+| POST | `/api/import/unsloth` | Import Unsloth Desktop chat log (.jsonl, v3.91) |
 | GET | `/api/uploads/` | List uploaded files (`?tag=...` filter) |
 | GET | `/api/uploads/<id>` | Download uploaded file |
 | POST | `/api/uploads/` | Upload file (multipart/form-data) |
@@ -416,7 +417,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 |-----|-----------------|
 | **Memory** | Browse, search, read, and edit memory entries; link to raw conversation logs |
 | **CoreMem** | View UserCoreMemory files, content preview, delete, filter by name |
-| **Import** | Upload Claude.ai ZIP / Claude Code / OpenWebUI logs; overwrite mode; batch progress; backup download/restore (v3.64) |
+| **Import** | Upload Claude.ai ZIP / Claude Code / OpenWebUI / Unsloth logs; overwrite mode; batch progress; backup download/restore (v3.64) |
 | **Files** | Browse files extracted from conversation tool-use blocks |
 | **Inbox** | Read messages between Claude Code and Claude.ai sessions; thread view |
 | **Logs** | Search and read full conversation history |
@@ -431,7 +432,7 @@ Access at `https://your-domain/admin.html` — login with your API token.
 ### Conversation viewer (`/logs.html`)
 
 - Auto-loads conversations from the server
-- Filter by keyword, date range, minimum message count, rating (v3.70), and source (Chat / Claude Code / OpenWebUI, v3.72)
+- Filter by keyword, date range, minimum message count, rating (v3.70), and source (Chat / Claude Code / OpenWebUI / Unsloth, v3.72)
 - Renders markdown with `marked.js` + `DOMPurify`
 - Collapsible `thinking` / `tool_use` / `tool_result` blocks
 - Font size toggle (small / medium / large)
@@ -500,6 +501,16 @@ curl -X POST https://your-domain/api/import/claude-code \
 curl -X POST https://your-domain/api/import/claude-code \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "file=@claude_code_logs.zip"
+```
+
+**Unsloth Desktop chat log import (v3.91):**
+
+Unsloth Desktop chat logs (JSONL format, one `{"role":"user/assistant/tool","content":"..."}` per line) can be imported into the same conversation store (identified by `source: "unsloth"`). Assistant `<thinking>` blocks and `tool_calls` are preserved. The session ID and timestamp are derived from the filename.
+
+```bash
+curl -X POST https://your-domain/api/import/unsloth \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@conversation-messages-2026-09-01T08-41-31.jsonl"
 ```
 
 ### Versioned UserCoreMemory files

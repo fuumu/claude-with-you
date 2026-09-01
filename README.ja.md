@@ -309,7 +309,7 @@ CoreMem_read(name="config.md")
 
 ### 会話ログ（Conversations）
 
-Claude.ai のエクスポート ZIP・Claude Code セッションログ・OpenWebUI チャットエクスポートをインポートすると、全会話が `/data/conversations/{uuid}.json` に保存される。`conversation_search` で検索し、`conversation_read` で全文を取得できる。
+Claude.ai のエクスポート ZIP・Claude Code セッションログ・OpenWebUI チャットエクスポート・Unsloth Desktop チャットログをインポートすると、全会話が `/data/conversations/{uuid}.json` に保存される。`conversation_search` で検索し、`conversation_read` で全文を取得できる。
 
 **会話インデックスの構造（`_index.json`）：**
 ```json
@@ -422,6 +422,18 @@ curl -X POST https://your-domain/api/import/openwebui \
 
 admin.html の Import タブからドラッグ&ドロップでもインポート可能。
 
+**Unsloth Desktop チャットログの取り込み（v3.91）：**
+
+Unsloth Desktop のチャットログ JSONL も同じ会話ストアに取り込める（`source: "unsloth"` で識別）。1行1メッセージの `{"role":"user/assistant/tool","content":"..."}` 形式。assistant の `<thinking>` ブロックや `tool_calls` も保持される。
+
+```bash
+curl -X POST https://your-domain/api/import/unsloth \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@conversation-messages-2026-09-01T08-41-31.jsonl"
+```
+
+admin.html の Import タブからドラッグ&ドロップでもインポート可能。
+
 ---
 
 ### 管理画面（admin.html）
@@ -432,7 +444,7 @@ admin.html の Import タブからドラッグ&ドロップでもインポート
 |------|------|
 | **Memory** | 記憶エントリの一覧・キーワード検索・詳細表示・編集・削除・生ログリンク |
 | **CoreMem** | UserCoreMemory（NASファイルストア）一覧・内容プレビュー・削除・ファイル名絞り込み |
-| **Import** | ZIP / Claude Code / OpenWebUI ログ取り込み・上書きモード・要約バッチ進捗・バックアップ取得/復元（v3.64） |
+| **Import** | ZIP / Claude Code / OpenWebUI / Unsloth ログ取り込み・上書きモード・要約バッチ進捗・バックアップ取得/復元（v3.64） |
 | **Files** | 会話から抽出したファイル一覧・拡張子フィルタ・日付範囲・プレビュー |
 | **Inbox** | チャット↔コード間のメッセージ一覧・既読管理・スレッド表示・詳細表示 |
 | **Logs** | 会話ログ一覧・キーワード検索・日付フィルタ・メッセージ全文表示 |
@@ -456,7 +468,7 @@ admin.html の Import タブからドラッグ&ドロップでもインポート
 `https://your-domain/logs.html` で直接アクセス可能。または admin.html の Logs タブから。
 
 - 会話一覧をサーバーから自動読み込み
-- キーワード・日付範囲・最小メッセージ数・レーティング（v3.70）・ソース（チャット / Claude Code / OpenWebUI、v3.72）でフィルタ
+- キーワード・日付範囲・最小メッセージ数・レーティング（v3.70）・ソース（チャット / Claude Code / OpenWebUI / Unsloth、v3.72）でフィルタ
 - thinking / tool_use / tool_result ブロックを折り畳み表示
 - フォントサイズ切り替え（小/中/大）
 - `?token=` 共有 URL で認証なし閲覧可能
@@ -1011,6 +1023,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | POST | `/import` | ZIP インポート |
 | POST | `/api/import/claude-code` | Claude Code セッションログ取り込み（.jsonl / .zip・v3.54） |
 | POST | `/api/import/openwebui` | OpenWebUI チャットエクスポート取り込み（.json・v3.66） |
+| POST | `/api/import/unsloth` | Unsloth Desktop チャットログ取り込み（.jsonl・v3.91） |
 | GET | `/api/uploads/` | アップロードファイル一覧（`?tag=...` でフィルタ） |
 | GET | `/api/uploads/<id>` | アップロードファイルダウンロード |
 | POST | `/api/uploads/` | ファイルアップロード（multipart/form-data） |

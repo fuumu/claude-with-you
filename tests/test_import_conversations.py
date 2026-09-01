@@ -138,6 +138,59 @@ def test_claude_code_jsonl_import(server, tmp_path):
     assert r2.json()['skipped'] == 1
 
 
+def test_unsloth_jsonl_import(server, tmp_path):
+    """.jsonl 単体の Unsloth Desktop チャットログ取り込み"""
+    lines = [
+        {'role': 'user', 'content': 'ローカルLLMについて教えて'},
+        {'role': 'assistant', 'content': '<thinking>\nユーザーはローカルLLMについて知りたい\n</thinking>\n\nローカルLLMにはいくつかの選択肢があります。'},
+        {'role': 'user', 'content': '検索して'},
+        {'role': 'assistant', 'content': '検索します。', 'tool_calls': [
+            {'id': 'tc_001', 'type': 'function',
+             'function': {'name': 'web_search', 'arguments': '{"query":"local LLM 2026"}'}}
+        ]},
+        {'role': 'tool', 'tool_call_id': 'tc_001', 'name': 'web_search',
+         'content': 'Title: Best Local LLMs\nSnippet: ...'},
+    ]
+    fname = 'conversation-messages-2026-09-01T08-41-31.jsonl'
+    sid = fname[:-len('.jsonl')]
+    p = tmp_path / fname
+    p.write_text('\n'.join(json.dumps(l, ensure_ascii=False) for l in lines), encoding='utf-8')
+
+    with open(p, 'rb') as f:
+        r = server.post('/api/import/unsloth',
+                        files={'file': (fname, f, 'application/octet-stream')})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d['imported'] == 1
+    assert d['errors'] == 0
+    assert 'source_threads_linked' in d
+
+    # 会話として読める
+    body = server.tool('conversation_read', {'uuid': sid})
+    text = json.dumps(body, ensure_ascii=False)
+    assert 'ローカルLLM' in text
+    assert 'いくつかの選択肢' in text
+
+    # thinking ブロックが保持されている
+    body_think = server.tool('conversation_read', {'uuid': sid, 'include_thinking': True})
+    text_think = json.dumps(body_think, ensure_ascii=False)
+    assert 'ローカルLLMについて知りたい' in text_think
+
+    # ExtMemory エントリが unsloth タグ付き
+    hits = server.tool('memory_search', {'q': 'ローカルLLMについて教えて'})
+    assert hits['total'] >= 1
+    hit = [h for h in hits['results'] if h['source_thread'] == sid]
+    assert hit
+    assert 'unsloth' in hit[0]['tags']
+
+    # 再インポートは skip
+    with open(p, 'rb') as f:
+        r2 = server.post('/api/import/unsloth',
+                         files={'file': (fname, f, 'application/octet-stream')})
+    assert r2.json()['imported'] == 0
+    assert r2.json()['skipped'] == 1
+
+
 def test_conversation_search_and_index(server, make_conv_zip):
     conv = make_conversation(title='犀の角の会話',
                              created_at='2026-07-03T00:00:00.000000Z',
