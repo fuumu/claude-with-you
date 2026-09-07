@@ -61,6 +61,16 @@ DEFAULT_MODEL_ANTHROPIC  = 'claude-haiku-4-5-20251001'
 DEFAULT_MODEL_LMSTUDIO   = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
 
 
+def _llm_extract_text(msg):
+    """LLMレスポンスからTextBlockのテキストを抽出する（ThinkingBlockスキップ）。"""
+    if not msg.content:
+        return ''
+    for block in msg.content:
+        if getattr(block, 'type', None) == 'text':
+            return block.text.strip()
+    return getattr(msg.content[0], 'text', '').strip()
+
+
 def _get_llm_endpoints():
     ep_str = os.environ.get('LLM_ENDPOINTS', '')
     if ep_str:
@@ -234,7 +244,7 @@ def generate_layers(client: anthropic.Anthropic, model: str, title: str, conv_te
         max_tokens=400,
         messages=[{'role': 'user', 'content': prompt}]
     )
-    return msg.content[0].text.strip()
+    return _llm_extract_text(msg)
 
 
 def generate_keywords_only(client: anthropic.Anthropic, model: str, title: str, summary: str) -> list:
@@ -248,7 +258,7 @@ def generate_keywords_only(client: anthropic.Anthropic, model: str, title: str, 
         max_tokens=100,
         messages=[{'role': 'user', 'content': prompt}]
     )
-    text = msg.content[0].text.strip()
+    text = _llm_extract_text(msg)
     line = next((l.strip() for l in text.splitlines() if l.strip()), '')
     return parse_keywords_line(line)
 

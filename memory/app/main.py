@@ -3,6 +3,11 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.95 (2026-09-07) - Qwen ThinkingBlockでLLMレスポンスパース失敗するバグ修正
+    - _llm_extract_text()ヘルパー追加: ThinkingBlock(type!=text)をスキップしTextBlockのみ抽出
+    - main.py内の全7箇所 + scripts/generate_summary_layers.py 2箇所を修正
+    - ダイジェスト・要約・レーティング・昇華すべてのLLM呼び出しで対応
+
   v3.94 (2026-09-07) - LM Studioモデル発見を管理API優先に修正
     - _llm_discover_models()が /api/v1/models を優先、loaded_instancesでロード中モデルのみ返す
     - LM Studioの /v1/models がダウンロード済み全モデルを返す問題を解消
@@ -652,7 +657,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.94'
+VERSION = '3.95'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -747,6 +752,16 @@ def _log_llm(msg):
     ts = datetime.now(timezone(_td(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
     _llm_log_buffer.append(f'[{ts}] {msg}')
     _log_info(msg)
+
+def _llm_extract_text(msg):
+    """LLMレスポンスからTextBlockのテキストを抽出する。
+    ThinkingBlock等のtype!="text"なブロックはスキップする。"""
+    if not msg.content:
+        return ''
+    for block in msg.content:
+        if getattr(block, 'type', None) == 'text':
+            return block.text.strip()
+    return getattr(msg.content[0], 'text', '').strip()
 
 def _log_error(msg):
     if _LOG_LEVEL != 'off':
@@ -4592,7 +4607,7 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                         model=model, max_tokens=100,
                         messages=[{'role': 'user', 'content': kw_prompt}]
                     )
-                    kw_text = msg.content[0].text.strip()
+                    kw_text = _llm_extract_text(msg)
                     kw_line = next((l.strip() for l in kw_text.splitlines() if l.strip()), '')
                     entry['keywords']   = _parse_keywords_line(kw_line)
                     entry['updated_at'] = now_jst()
@@ -4671,7 +4686,7 @@ def _run_summary_batch(api_key: str, backend: str = 'anthropic',
                     model=model, max_tokens=400,
                     messages=[{'role': 'user', 'content': prompt}]
                 )
-                layers, keywords = _split_layers_and_keywords(msg.content[0].text)
+                layers, keywords = _split_layers_and_keywords(_llm_extract_text(msg))
 
                 # v3.79: 生成後の無内容パターン検知 — ゴミ要約なら論理削除
                 summary_text = _extract_summary(layers)
@@ -4823,7 +4838,7 @@ def _judge_rating_single(client, model, conv_text, strict=False):
     if strict:
         kwargs['temperature'] = 0.0
     msg = client.messages.create(**kwargs)
-    raw = msg.content[0].text.strip()
+    raw = _llm_extract_text(msg)
     brace_start = raw.find('{')
     brace_end = raw.rfind('}')
     if brace_start >= 0 and brace_end > brace_start:
@@ -5190,7 +5205,7 @@ def _generate_redacted(uuid, force=False):
                 model=model, max_tokens=500,
                 messages=[{'role': 'user', 'content': prompt}]
             )
-            raw = resp.content[0].text.strip()
+            raw = _llm_extract_text(resp)
             brace_start = raw.find('{')
             brace_end = raw.rfind('}')
             if brace_start >= 0 and brace_end > brace_start:
@@ -5809,7 +5824,7 @@ def _sublimate_chunk(client, model, text):
         msg = client.messages.create(
             model=model, max_tokens=4096,
             messages=[{'role': 'user', 'content': prompt + text}])
-        out = msg.content[0].text.strip() if msg.content else ''
+        out = _llm_extract_text(msg)
         rating, reason = _judge_rating_single(client, model, out, strict=True)
         if rating != 'adult':
             return out, rating, reason, attempt, False
@@ -6051,7 +6066,7 @@ def _conversation_digest(uuid, force=False, safe_mode=False):
             resp = client.messages.create(
                 model=model, max_tokens=1024,
                 messages=[{"role": "user", "content": prompt}])
-            digest_text = resp.content[0].text.strip() if resp.content else ''
+            digest_text = _llm_extract_text(resp)
         except Exception as e:
             _log_info(f'conversation_digest chunk {i} error: {e}')
             digest_text = f'[チャンク{i+1}のダイジェスト生成失敗: {e}]'
@@ -6073,7 +6088,7 @@ def _conversation_digest(uuid, force=False, safe_mode=False):
             resp = client.messages.create(
                 model=model, max_tokens=2048,
                 messages=[{"role": "user", "content": prompt}])
-            final_digest = resp.content[0].text.strip() if resp.content else ''
+            final_digest = _llm_extract_text(resp)
         except Exception as e:
             _log_info(f'conversation_digest integration error: {e}')
             final_digest = '\n\n'.join(chunk_digests)
