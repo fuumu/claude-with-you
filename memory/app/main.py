@@ -3,6 +3,11 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.94 (2026-09-07) - LM Studioモデル発見を管理API優先に修正
+    - _llm_discover_models()が /api/v1/models を優先、loaded_instancesでロード中モデルのみ返す
+    - LM Studioの /v1/models がダウンロード済み全モデルを返す問題を解消
+    - FreeToken等の管理API非対応エンドポイントは従来の /v1/models にフォールバック
+
   v3.93 (2026-09-07) - llm_status MCPツール追加（38本化）
     - LLM診断情報をMCPツール経由で取得可能に（REST /api/llm-status と同一データ）
     - 各エンドポイントのアクティブモデル・OKリストマッチ・選択結果・直近ログを返す
@@ -647,7 +652,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.93'
+VERSION = '3.94'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -5621,9 +5626,25 @@ _LLM_CONNECT_TIMEOUT = 5
 
 
 def _llm_discover_models(base_url):
-    """エンドポイントの /v1/models を叩いてアクティブなモデルID一覧を返す。
+    """エンドポイントの実際にロード中のモデルID一覧を返す。
+    管理API対応(LM Studio)の場合は /api/v1/models の loaded_instances で判定。
+    非対応(FreeToken等)の場合は /v1/models にフォールバック。
     接続失敗時は空リストを返す。"""
     import urllib.request
+    try:
+        req = urllib.request.Request(f'{base_url}/api/v1/models')
+        with urllib.request.urlopen(req, timeout=_LLM_CONNECT_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+        models = []
+        for m in data.get('data', data.get('models', [])):
+            mid = m.get('id', m.get('key', ''))
+            instances = m.get('loaded_instances', [])
+            if mid and instances:
+                models.append(mid)
+        _log_llm(f'LLM discover (mgmt) {base_url}: {models}')
+        return models
+    except Exception:
+        pass
     try:
         req = urllib.request.Request(f'{base_url}/v1/models')
         with urllib.request.urlopen(req, timeout=_LLM_CONNECT_TIMEOUT) as resp:
@@ -5633,7 +5654,7 @@ def _llm_discover_models(base_url):
             mid = m.get('id', m.get('key', ''))
             if mid:
                 models.append(mid)
-        _log_llm(f'LLM discover {base_url}: {models}')
+        _log_llm(f'LLM discover (openai) {base_url}: {models}')
         return models
     except Exception as e:
         _log_llm(f'LLM discover failed for {base_url}: {e}')
