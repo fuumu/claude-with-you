@@ -5689,8 +5689,10 @@ def _lm_client(requested_model=None):
     """マルチエンドポイント対応のローカルLLMクライアント。
     接続フロー:
     1. 各エンドポイントの /v1/models でアクティブモデル一覧を取得
-    2. 要求モデルがアクティブなエンドポイントがあればそこに接続
-    3. なければモデル管理API対応エンドポイントでロード試行
+    2. アクティブモデルの中にOKリストに含まれるものがあれば、そのまま使う（ロード不要）
+       - requested_model 指定時はそのモデルの直接マッチを最優先
+       - 未指定時はOKリスト順で最良のアクティブモデルを選択
+    3. どこにもアクティブなOKモデルがなければ、管理API対応エンドポイントでロード試行
     4. どこにもなければエラー
 
     返値: (anthropic.Anthropic client, model_name)
@@ -5699,33 +5701,40 @@ def _lm_client(requested_model=None):
 
     endpoints = _llm_endpoints()
     ok_models = _llm_ok_models()
-    target_model = requested_model or ok_models[0]
 
     endpoint_models = {}
     for ep in endpoints:
         models = _llm_discover_models(ep)
         endpoint_models[ep] = models
 
+    if requested_model:
+        for ep in endpoints:
+            for active_model in endpoint_models[ep]:
+                matched = _match_ok_model(active_model, [requested_model])
+                if matched:
+                    _log_info(f'LLM direct match: {matched} at {ep}')
+                    client = _anthropic.Anthropic(
+                        base_url=ep, api_key='lmstudio', timeout=300.0)
+                    return client, matched
+
+    best_candidate = None
+    best_priority = len(ok_models)
     for ep in endpoints:
         for active_model in endpoint_models[ep]:
-            matched = _match_ok_model(active_model, [target_model])
+            matched = _match_ok_model(active_model, ok_models)
             if matched:
-                _log_info(f'LLM direct match: {matched} at {ep}')
-                client = _anthropic.Anthropic(
-                    base_url=ep, api_key='lmstudio', timeout=300.0)
-                return client, matched
+                priority = ok_models.index(matched)
+                if priority < best_priority:
+                    best_priority = priority
+                    best_candidate = (ep, matched)
+    if best_candidate:
+        ep, model_name = best_candidate
+        _log_info(f'LLM using active OK model: {model_name} at {ep}')
+        client = _anthropic.Anthropic(
+            base_url=ep, api_key='lmstudio', timeout=300.0)
+        return client, model_name
 
-    if not requested_model:
-        for model_candidate in ok_models:
-            for ep in endpoints:
-                for active_model in endpoint_models[ep]:
-                    matched = _match_ok_model(active_model, [model_candidate])
-                    if matched:
-                        _log_info(f'LLM found OK model: {matched} at {ep}')
-                        client = _anthropic.Anthropic(
-                            base_url=ep, api_key='lmstudio', timeout=300.0)
-                        return client, matched
-
+    load_target = requested_model or ok_models[0]
     for ep in endpoints:
         supported, mgmt_data = _llm_endpoint_supports_management(ep)
         if not supported:
@@ -5738,16 +5747,16 @@ def _lm_client(requested_model=None):
                     if not _match_ok_model(mid, ok_models):
                         for inst in instances:
                             _lm_unload_instance(ep, inst['id'], mid)
-            _lm_load_model(ep, target_model)
-            _log_info(f'LLM loaded {target_model} at {ep}')
+            _lm_load_model(ep, load_target)
+            _log_info(f'LLM loaded {load_target} at {ep}')
             client = _anthropic.Anthropic(
                 base_url=ep, api_key='lmstudio', timeout=300.0)
-            return client, target_model
+            return client, load_target
         except Exception as e:
             _log_info(f'LLM load failed at {ep}: {e}')
             continue
 
-    raise RuntimeError(f'No LLM endpoint available for model {target_model}. '
+    raise RuntimeError(f'No LLM endpoint available for model {load_target}. '
                        f'Endpoints tried: {endpoints}')
 
 
