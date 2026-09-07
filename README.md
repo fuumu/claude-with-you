@@ -583,10 +583,11 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Allowed CORS origins; empty = skip check |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
-| `LM_STUDIO_HOST` | `192.168.x.x` | LM Studio host for local summarization (replace with your own IP) |
-| `LM_STUDIO_PORT` | `1234` | LM Studio port |
-| `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | LM Studio model used for local LLM work (summary batch, conversation digest) (v3.65) |
-| `LLM_OK_MODELS` | *(empty)* | Comma-separated list of acceptable models for digest/rating/sublimate; when set, auto-manages LM Studio model loading (unloads others, loads preferred); first entry is default; unset = use MIO_LM_MODEL as-is (v3.83) |
+| `LLM_ENDPOINTS` | `192.168.10.32:1234,192.168.10.32:1919` | Comma-separated LLM endpoint list (host:port). Each endpoint's `/v1/models` is probed to discover active models. Management-capable endpoints (LM Studio) get auto-load/unload; others (FreeToken) are discover-only (v3.92) |
+| `LLM_OK_MODELS` | `google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4` | Comma-separated list of acceptable models for digest/rating/sublimate; first entry is default; auto-manages model loading on management-capable endpoints (v3.92) |
+| `LM_STUDIO_HOST` | `192.168.10.32` | (deprecated) Fallback when `LLM_ENDPOINTS` is unset |
+| `LM_STUDIO_PORT` | `1234` | (deprecated) Fallback when `LLM_ENDPOINTS` is unset |
+| `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | (deprecated) Fallback when `LLM_OK_MODELS` is unset |
 | `SENDGRID_API_KEY` | *(empty)* | Friend system: SendGrid API key for approval emails (Mail Send scope) |
 | `SENDGRID_FROM_EMAIL` | *(empty)* | Friend system: sender email address |
 | `MIO_REGISTER_URL` | *(empty)* | Friend system: public base URL for activation links — `/activate` is appended (falls back to `MIO_BASE_URL`) |
@@ -655,7 +656,8 @@ claude-with-you/
 - SysMemory dump versioning
 - mio-memory direct auth for Claude Code
 
-**Implemented (v3.9–v3.90)**
+**Implemented (v3.9–v3.92)**
+- Multi-endpoint LLM backend (v3.92) — `LLM_ENDPOINTS` env var (comma-separated host:port) supports multiple local LLM endpoints. Connection flow: ① probe each endpoint's `/v1/models` for active models ② direct-connect if the requested model is already active ③ try model load on management-capable endpoints (LM Studio); skip management-incapable ones (FreeToken) ④ error if no endpoint available. `LLM_OK_MODELS` default expanded (`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`). Legacy vars (`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`) preserved as fallback. lm_host/lm_port args removed from `_start_summary_batch`/`_start_rating_batch`, connection logic consolidated in `_lm_client()`. `scripts/generate_summary_layers.py` updated for multi-endpoint. New `scripts/manage_llm_endpoints.py` for interactive `.env` management
 - Project management system + CoreMem_list file size (v3.90) — ① `project_create` / `project_list` MCP tools (tool count 35→37). Creates project-scoped CoreMem namespaces under `/data/projects/{name}/` with template files (PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/). ② All 4 CoreMem tools (save/read/list/delete) gain `target` parameter to operate on project-scoped files (omit for home = /data/artifacts/). 100% backward compatible. Path traversal prevention + `_template` reserved name. ③ CoreMem_read attendance checkin is home-only (skipped when target is set); conv_artifacts fallback also home-only. ④ `CoreMem_list` now includes file `size` (bytes). Admin UI shows KB. ⑤ TS layer (coremem.ts) has matching target + size support. REST `/api/coremem?target=` for the same functionality
 - Inbox auto-sublimation pipeline + admin UI improvements (v3.75) — ① auto-sublimation: `inbox_post` to=chat with title containing `【生】` triggers automatic raw backup to ExtMemory (rating=adult, tags=バカンス日記) + placeholder swap + async sublimate; on completion title becomes `【未承認】` (success) or `【要人手】` (needs human); raw text never stays in inbox ② admin inbox: timed-standing (expires_at) display (remaining days, color-coded, near-expiry in red) + action buttons (change deadline, promote to permanent, demote to timed, clear expiry) ③ admin attendance: uuid/memory_id/inbox_id now clickable links navigating to admin Logs/Memory/Inbox tabs
 - Admin attendance tab (v3.74) — new 出席簿 (Attendance) tab in admin.html. REST `GET /api/attendance` endpoint (reuses MCP `attendance_view` logic, no dual implementation). Individual summary cards (last-seen, days-since, count with color coding: ≤1 day green, ≥7 days red, in-between yellow) → click to expand detail table (datetime, kind, channel, rating, title, log links). Date range filter and same-period other-individual activity summary

@@ -3,6 +3,13 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.92 (2026-09-07) - LLMバックエンド マルチエンドポイント対応
+    - LLM_ENDPOINTS環境変数で複数エンドポイント指定可能
+    - 各エンドポイントの /v1/models でモデル自動発見→直接マッチ→ロード試行→フォールバック
+    - モデル管理API非対応エンドポイント（FreeToken等）はスキップして発見のみ
+    - _start_summary_batch/_start_rating_batch から lm_host/lm_port 引数を廃止
+    - 旧変数（LM_STUDIO_HOST/PORT/MIO_LM_MODEL）はフォールバックとして後方互換維持
+
   v3.90 (2026-08-25) - プロジェクト管理体制 + CoreMemファイルサイズ表示
     - project_create / project_list MCPツール新設（37本化）
     - CoreMem系4ツール（save/read/list/delete）に target 引数追加（プロジェクト切り替え）
@@ -636,7 +643,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.90'
+VERSION = '3.92'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -4503,7 +4510,6 @@ def _split_layers_and_keywords(llm_text: str):
 
 
 def _run_summary_batch(api_key: str, backend: str = 'anthropic',
-                       lm_host: str = '192.168.10.32', lm_port: str = '1234',
                        force: bool = False):
     global _batch_status
     _batch_status.update({
@@ -4701,7 +4707,7 @@ def _count_pending_entries():
         return None, None
 
 
-def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, lm_port=None):
+def _start_summary_batch(backend=None, force=False, api_key=None):
     """要約バッチをバックグラウンド起動する。
 
     backend 省略時は ANTHROPIC_API_KEY があれば anthropic、なければ lmstudio を選ぶ。
@@ -4714,9 +4720,7 @@ def _start_summary_batch(backend=None, force=False, api_key=None, lm_host=None, 
         backend = 'anthropic' if api_key else 'lmstudio'
     if backend == 'anthropic' and not api_key:
         return False, {'error': 'ANTHROPIC_API_KEY required'}
-    lm_host = lm_host or os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-    lm_port = lm_port or os.environ.get('LM_STUDIO_PORT', '1234')
-    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, lm_host, lm_port, force), daemon=True)
+    t = threading.Thread(target=_run_summary_batch, args=(api_key, backend, force), daemon=True)
     t.start()
     info = {'started': True, 'backend': backend, 'force': force}
     raw_count, kw_count = _count_pending_entries()
@@ -4813,8 +4817,7 @@ def _judge_rating_single(client, model, conv_text, strict=False):
     return rating, reason
 
 
-def _run_rating_batch(backend='lmstudio', lm_host='192.168.10.32',
-                      lm_port='1234', api_key='', force=False):
+def _run_rating_batch(backend='lmstudio', api_key='', force=False):
     global _rating_batch_status
     _rating_batch_status.update({
         'running': True, 'processed': 0, 'errors': 0, 'skipped': 0,
@@ -4988,7 +4991,7 @@ def _rating_index_counts():
         return None
 
 
-def _start_rating_batch(backend=None, force=False, api_key=None, lm_host=None, lm_port=None):
+def _start_rating_batch(backend=None, force=False, api_key=None):
     """レーティング判定バッチをバックグラウンド起動する"""
     if _rating_batch_status.get('running'):
         return False, {'error': 'already running', 'status': dict(_rating_batch_status)}
@@ -4997,10 +5000,8 @@ def _start_rating_batch(backend=None, force=False, api_key=None, lm_host=None, l
         backend = 'anthropic' if api_key else 'lmstudio'
     if backend == 'anthropic' and not api_key:
         return False, {'error': 'ANTHROPIC_API_KEY required'}
-    lm_host = lm_host or os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-    lm_port = lm_port or os.environ.get('LM_STUDIO_PORT', '1234')
     t = threading.Thread(target=_run_rating_batch,
-                         args=(backend, lm_host, lm_port, api_key, force), daemon=True)
+                         args=(backend, api_key, force), daemon=True)
     t.start()
     pending = _count_pending_ratings()
     info = {'started': True, 'backend': backend, 'force': force}
@@ -5578,6 +5579,65 @@ _SUBLIMATION_PROMPT_TEMPLATE = """あなたはテキストの「昇華」変換�
 """
 
 
+def _llm_endpoints():
+    """LLM_ENDPOINTS 環境変数からエンドポイントURLリストを返す。
+    未設定時は LM_STUDIO_HOST/PORT からフォールバック構築。"""
+    ep_str = os.environ.get('LLM_ENDPOINTS', '')
+    if ep_str:
+        eps = [e.strip() for e in ep_str.split(',') if e.strip()]
+        if eps:
+            return [f'http://{e}' if not e.startswith('http') else e for e in eps]
+    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
+    return [f'http://{lm_host}:{lm_port}']
+
+
+def _llm_ok_models():
+    """LLM_OK_MODELS 環境変数からモデルリストを返す。
+    未設定時は MIO_LM_MODEL からフォールバック。"""
+    ok_str = os.environ.get('LLM_OK_MODELS', '')
+    if ok_str:
+        models = [m.strip() for m in ok_str.split(',') if m.strip()]
+        if models:
+            return models
+    return [os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')]
+
+
+_LLM_CONNECT_TIMEOUT = 3
+
+
+def _llm_discover_models(base_url):
+    """エンドポイントの /v1/models を叩いてアクティブなモデルID一覧を返す。
+    接続失敗時は空リストを返す。"""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f'{base_url}/v1/models')
+        with urllib.request.urlopen(req, timeout=_LLM_CONNECT_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+        models = []
+        for m in data.get('data', data.get('models', [])):
+            mid = m.get('id', m.get('key', ''))
+            if mid:
+                models.append(mid)
+        return models
+    except Exception as e:
+        _log_info(f'LLM discover failed for {base_url}: {e}')
+        return []
+
+
+def _llm_discover_models_lmstudio(base_url):
+    """LM Studio の /api/v1/models を叩いてロード済みモデル情報を返す。
+    返値: (ok_loaded, not_ok_loaded, all_models_data)"""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f'{base_url}/api/v1/models')
+        with urllib.request.urlopen(req, timeout=_LLM_CONNECT_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+        return data
+    except Exception:
+        return None
+
+
 def _lm_unload_instance(base_url, instance_id, model_id=''):
     """LM Studioから特定インスタンスをアンロードする"""
     import urllib.request
@@ -5618,72 +5678,77 @@ def _match_ok_model(mid, ok_models):
     return None
 
 
-def _ensure_lm_model(lm_host=None, lm_port=None):
-    """LM Studioのロード済みモデルをLLM_OK_MODELSに基づいて管理し、使用モデル名を返す。
-    LLM_OK_MODELS未設定時はMIO_LM_MODELをそのまま返す（従来互換）。"""
-    import urllib.request
-
-    lm_host = lm_host or os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-    lm_port = lm_port or os.environ.get('LM_STUDIO_PORT', '1234')
-    base = f'http://{lm_host}:{lm_port}'
-    default_model = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
-
-    ok_str = os.environ.get('LLM_OK_MODELS', '')
-    if not ok_str:
-        return default_model
-
-    ok_models = [m.strip() for m in ok_str.split(',') if m.strip()]
-    if not ok_models:
-        return default_model
-
-    try:
-        req = urllib.request.Request(f'{base}/api/v1/models')
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-
-        ok_loaded = []
-        not_ok_loaded = []
-        for m in data.get('models', data.get('data', [])):
-            instances = m.get('loaded_instances', [])
-            if not instances:
-                continue
-            mid = m.get('key', m.get('id', ''))
-            ok_name = _match_ok_model(mid, ok_models)
-            if ok_name:
-                ok_loaded.append((m, ok_name))
-            else:
-                not_ok_loaded.append(m)
-
-        if ok_loaded:
-            best_m, best_name = min(ok_loaded, key=lambda x: ok_models.index(x[1]))
-            for m in not_ok_loaded:
-                for inst in m.get('loaded_instances', []):
-                    _lm_unload_instance(base, inst['id'], m.get('key', m.get('id', '')))
-            _log_info(f'LM using loaded OK model: {best_name}')
-            return best_name
-
-        for m in not_ok_loaded:
-            for inst in m.get('loaded_instances', []):
-                _lm_unload_instance(base, inst['id'], m.get('key', m.get('id', '')))
-
-        _lm_load_model(base, ok_models[0])
-        return ok_models[0]
-
-    except Exception as e:
-        _log_info(f'LM model management failed, fallback to MIO_LM_MODEL: {e}')
-        return default_model
+def _llm_endpoint_supports_management(base_url):
+    """エンドポイントがモデル管理API（load/unload）に対応しているか判定する。
+    LM Studio系は /api/v1/models が存在する。FreeToken等は非対応。"""
+    data = _llm_discover_models_lmstudio(base_url)
+    return data is not None, data
 
 
-def _lm_client():
-    """ローカルLLM（LMStudio）クライアントと使用モデル名を返す。
-    LLM_OK_MODELS設定時はモデルの自動管理（アンロード/ロード）を行う。"""
+def _lm_client(requested_model=None):
+    """マルチエンドポイント対応のローカルLLMクライアント。
+    接続フロー:
+    1. 各エンドポイントの /v1/models でアクティブモデル一覧を取得
+    2. 要求モデルがアクティブなエンドポイントがあればそこに接続
+    3. なければモデル管理API対応エンドポイントでロード試行
+    4. どこにもなければエラー
+
+    返値: (anthropic.Anthropic client, model_name)
+    """
     import anthropic as _anthropic
-    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
-    client = _anthropic.Anthropic(
-        base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)
-    model = _ensure_lm_model(lm_host, lm_port)
-    return client, model
+
+    endpoints = _llm_endpoints()
+    ok_models = _llm_ok_models()
+    target_model = requested_model or ok_models[0]
+
+    endpoint_models = {}
+    for ep in endpoints:
+        models = _llm_discover_models(ep)
+        endpoint_models[ep] = models
+
+    for ep in endpoints:
+        for active_model in endpoint_models[ep]:
+            matched = _match_ok_model(active_model, [target_model])
+            if matched:
+                _log_info(f'LLM direct match: {matched} at {ep}')
+                client = _anthropic.Anthropic(
+                    base_url=ep, api_key='lmstudio', timeout=300.0)
+                return client, matched
+
+    if not requested_model:
+        for model_candidate in ok_models:
+            for ep in endpoints:
+                for active_model in endpoint_models[ep]:
+                    matched = _match_ok_model(active_model, [model_candidate])
+                    if matched:
+                        _log_info(f'LLM found OK model: {matched} at {ep}')
+                        client = _anthropic.Anthropic(
+                            base_url=ep, api_key='lmstudio', timeout=300.0)
+                        return client, matched
+
+    for ep in endpoints:
+        supported, mgmt_data = _llm_endpoint_supports_management(ep)
+        if not supported:
+            continue
+        try:
+            if mgmt_data:
+                for m in mgmt_data.get('models', mgmt_data.get('data', [])):
+                    instances = m.get('loaded_instances', [])
+                    mid = m.get('key', m.get('id', ''))
+                    if not _match_ok_model(mid, ok_models):
+                        for inst in instances:
+                            _lm_unload_instance(ep, inst['id'], mid)
+            _lm_load_model(ep, target_model)
+            _log_info(f'LLM loaded {target_model} at {ep}')
+            client = _anthropic.Anthropic(
+                base_url=ep, api_key='lmstudio', timeout=300.0)
+            return client, target_model
+        except Exception as e:
+            _log_info(f'LLM load failed at {ep}: {e}')
+            continue
+
+    raise RuntimeError(f'No LLM endpoint available for model {target_model}. '
+                       f'Endpoints tried: {endpoints}')
 
 
 def _sublimate_chunk(client, model, text):
@@ -6035,8 +6100,6 @@ def api_batch_start():
         backend=data.get('backend') or None,
         force=bool(data.get('force', False)),
         api_key=data.get('api_key') or None,
-        lm_host=data.get('lm_host') or None,
-        lm_port=data.get('lm_port') or None,
     )
     if not ok:
         return jsonify(info), 409 if info.get('error') == 'already running' else 400
@@ -6059,8 +6122,6 @@ def api_rating_batch_start():
         backend=data.get('backend') or None,
         force=bool(data.get('force', False)),
         api_key=data.get('api_key') or None,
-        lm_host=data.get('lm_host') or None,
-        lm_port=data.get('lm_port') or None,
     )
     if not ok:
         return jsonify(info), 409 if info.get('error') == 'already running' else 400

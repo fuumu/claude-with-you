@@ -16,8 +16,10 @@ generate_summary_layers.py — rawエントリから2層（要約）・3層（�
     ANTHROPIC_API_KEY  Anthropic APIキー
 
   lmstudioバックエンド使用時:
-    LM_STUDIO_HOST     LMStudioのホスト（省略時: 192.168.10.32）
-    LM_STUDIO_PORT     LMStudioのポート（省略時: 1234）
+    LLM_ENDPOINTS      エンドポイントリスト（カンマ区切り、省略時: 192.168.10.32:1234,192.168.10.32:1919）
+    LLM_OK_MODELS      使用可能モデルリスト（カンマ区切り、省略時: google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4）
+    LM_STUDIO_HOST     （後方互換）LLM_ENDPOINTS未設定時のフォールバック
+    LM_STUDIO_PORT     （後方互換）LLM_ENDPOINTS未設定時のフォールバック
 
 実行例:
   python scripts/generate_summary_layers.py
@@ -51,11 +53,43 @@ except ImportError:
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 MIO_API_TOKEN     = os.environ.get('MIO_API_TOKEN', '')
 MIO_SERVER_URL    = os.environ.get('MIO_SERVER_URL', 'http://localhost:5002').rstrip('/')
-LM_STUDIO_HOST    = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
-LM_STUDIO_PORT    = os.environ.get('LM_STUDIO_PORT', '1234')
+
+_DEFAULT_ENDPOINTS = '192.168.10.32:1234,192.168.10.32:1919'
+_DEFAULT_OK_MODELS = 'google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4'
 
 DEFAULT_MODEL_ANTHROPIC  = 'claude-haiku-4-5-20251001'
 DEFAULT_MODEL_LMSTUDIO   = os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')
+
+
+def _get_llm_endpoints():
+    ep_str = os.environ.get('LLM_ENDPOINTS', '')
+    if ep_str:
+        eps = [e.strip() for e in ep_str.split(',') if e.strip()]
+        if eps:
+            return [f'http://{e}' if not e.startswith('http') else e for e in eps]
+    lm_host = os.environ.get('LM_STUDIO_HOST', '192.168.10.32')
+    lm_port = os.environ.get('LM_STUDIO_PORT', '1234')
+    return [f'http://{lm_host}:{lm_port}']
+
+
+def _discover_models(base_url, timeout=3):
+    try:
+        req = urllib.request.Request(f'{base_url}/v1/models')
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        return [m.get('id', m.get('key', '')) for m in data.get('data', data.get('models', [])) if m.get('id', m.get('key', ''))]
+    except Exception:
+        return []
+
+
+def _find_endpoint_for_model(model, endpoints=None):
+    """モデルがアクティブなエンドポイントを探す。見つかればURL、なければNone。"""
+    eps = endpoints or _get_llm_endpoints()
+    for ep in eps:
+        active = _discover_models(ep)
+        if model in active:
+            return ep
+    return None
 RATE_LIMIT_SLEEP = 0.5
 
 SUMMARY_MARKER = '## 2層: 要約'
@@ -89,13 +123,14 @@ def check_env(backend: str):
         sys.exit(1)
 
 
-def make_client(backend: str) -> anthropic.Anthropic:
+def make_client(backend: str, model: str = None) -> anthropic.Anthropic:
     if backend == 'lmstudio':
-        return anthropic.Anthropic(
-            base_url=f'http://{LM_STUDIO_HOST}:{LM_STUDIO_PORT}',
-            api_key='lmstudio',
-            timeout=300.0,
-        )
+        endpoints = _get_llm_endpoints()
+        if model:
+            ep = _find_endpoint_for_model(model, endpoints)
+            if ep:
+                return anthropic.Anthropic(base_url=ep, api_key='lmstudio', timeout=300.0)
+        return anthropic.Anthropic(base_url=endpoints[0], api_key='lmstudio', timeout=300.0)
     return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
@@ -222,14 +257,15 @@ def generate_keywords_only(client: anthropic.Anthropic, model: str, title: str, 
 def main(backend: str, model: str, dry_run: bool):
     print(f"バックエンド: {backend}")
     if backend == 'lmstudio':
-        print(f"LMStudio   : http://{LM_STUDIO_HOST}:{LM_STUDIO_PORT}")
+        endpoints = _get_llm_endpoints()
+        print(f"エンドポイント: {', '.join(endpoints)}")
     print(f"モデル     : {model}")
     print(f"サーバー   : {MIO_SERVER_URL}")
     print(f"dry-run    : {dry_run}")
     print(f"強制再処理 : {FORCE_REPROCESS}")
     print()
 
-    client = make_client(backend)
+    client = make_client(backend, model)
 
     print("インデックスを取得中...")
     try:

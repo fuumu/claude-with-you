@@ -932,7 +932,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ※ 長文は段落境界で約6000字にチャンク分割→個別昇華→結合。rating は各チャンクの最高値
 ※ 昇華ルールは _SUBLIMATION_STYLE_RULES に一元管理され、conversation_digest safe_mode も
   同じ文体ルールを使う（v3.71 から。既存ダイジェストキャッシュは force=true で再生成）
-※ LLM: MIO_LM_MODEL（ローカルLMStudio）
+※ LLM: マルチエンドポイント対応（LLM_ENDPOINTS / LLM_OK_MODELS、v3.92）
 ```
 
 ### oplog_list（v3.88）
@@ -1049,10 +1049,11 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
 | `MIO_ALLOWED_ORIGINS` | （空） | 許可 Origin（カンマ区切り）。空の場合は Origin 検証をスキップ |
 | `ANTHROPIC_API_KEY` | （空） | 設定時、ZIP インポート後に要約バッチを自動起動 |
-| `LM_STUDIO_HOST` | `192.168.x.x` | LMStudio のホスト（手動バッチ用・ご自身の環境のIPに置き換え） |
-| `LM_STUDIO_PORT` | `1234` | LMStudio のポート |
-| `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | ローカルLLM処理（要約バッチ・会話ダイジェスト）で使う LMStudio のモデル名（v3.65） |
-| `LLM_OK_MODELS` | （空） | ダイジェスト・レーティング・昇華等に使ってよいモデルのカンマ区切りリスト。設定するとローカルLLM呼び出し前にモデル自動管理（不要モデルのアンロード→目的モデルのロード）が有効に。先頭がデフォルト。未設定時は MIO_LM_MODEL をそのまま使用（v3.83） |
+| `LLM_ENDPOINTS` | `192.168.10.32:1234,192.168.10.32:1919` | LLMエンドポイントリスト（カンマ区切り、host:port形式）。各エンドポイントの `/v1/models` を叩いてモデルを自動発見。モデル管理API対応エンドポイント（LM Studio）では自動ロード/アンロード、非対応（FreeToken等）では発見のみ（v3.92） |
+| `LLM_OK_MODELS` | `google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4` | ダイジェスト・レーティング・昇華等に使ってよいモデルのカンマ区切りリスト。先頭がデフォルト。モデル管理API対応エンドポイントでは自動ロード/アンロードが有効（v3.92） |
+| `LM_STUDIO_HOST` | `192.168.10.32` | （非推奨）`LLM_ENDPOINTS` 未設定時のフォールバック |
+| `LM_STUDIO_PORT` | `1234` | （非推奨）`LLM_ENDPOINTS` 未設定時のフォールバック |
+| `MIO_LM_MODEL` | `google/gemma-4-26b-a4b` | （非推奨）`LLM_OK_MODELS` 未設定時のフォールバック |
 | `MIO_NIGHTLY_BATCH_HOUR` | `3` | 夜間自動バッチの実行時刻（JST、0-23）。`off` で無効化（v3.16） |
 | `MIO_NIGHTLY_BATCH_BACKEND` | `lmstudio` | 夜間バッチのバックエンド（`lmstudio` / `anthropic`） |
 | `SENDGRID_API_KEY` | （空） | お友達システム：承認メール送信用 SendGrid API キー |
@@ -1156,7 +1157,8 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.90）**
+**実装済み（v3.9〜v3.92）**
+- LLMバックエンド マルチエンドポイント対応（v3.92）— `LLM_ENDPOINTS` 環境変数（カンマ区切り host:port）で複数のローカルLLMエンドポイントを指定可能に。接続フロー: ① 各エンドポイントの `/v1/models` でアクティブモデルを自動発見 ② 要求モデルがアクティブなエンドポイントに直接接続 ③ なければモデル管理API対応エンドポイント（LM Studio）でロード試行（FreeToken等の非対応エンドポイントはスキップ）④ どこにもなければエラー。`LLM_OK_MODELS` のデフォルトも拡充（`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`）。旧変数（`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`）は `LLM_ENDPOINTS`/`LLM_OK_MODELS` 未設定時のフォールバックとして後方互換維持。`_start_summary_batch`/`_start_rating_batch` から lm_host/lm_port 引数を廃止し `_lm_client()` に接続ロジックを集約。`scripts/generate_summary_layers.py` も同等のマルチエンドポイント対応。`.env` の対話的更新スクリプト `scripts/manage_llm_endpoints.py` を新設
 - プロジェクト管理システム＋CoreMem_list ファイルサイズ表示（v3.90）— ① `project_create` / `project_list` MCPツール新設（ツール数 35→37）。`/data/projects/{name}/` にプロジェクト専用の CoreMem 名前空間を作成し、テンプレートファイル群（PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/）を自動配置 ② CoreMem 4ツール（save/read/list/delete）に `target` 引数追加。`target` にプロジェクト名を指定するとプロジェクト内ファイルを操作（省略時はホーム = /data/artifacts/）。100%後方互換。パストラバーサル防止・`_template` 予約名禁止 ③ CoreMem_read の出席簿チェックインはホームのみ（target 指定時は登録なし）、conv_artifacts フォールバックもホームのみ ④ `CoreMem_list` にファイルサイズ（bytes）を追加。admin.html の CoreMem 一覧で KB 表示 ⑤ TS 層（coremem.ts）も同等の target 対応・size 対応を実装。REST `/api/coremem?target=` で同一機能
 - お友達システム — 登録申請・メール承認・専用 MCP セッション・記憶管理（v3.9〜v3.12）
 - `CoreMem_delete` ツール・`DELETE /api/coremem/<name>`・logs.html Unicode 表示修正（v3.13）

@@ -326,7 +326,7 @@ Starts in a background thread once `POST /import` completes, unless another batc
 The backend is auto-selected:
 
 - `ANTHROPIC_API_KEY` set → `anthropic` (`claude-haiku-4-5-20251001`)
-- not set → `lmstudio` (the `MIO_LM_MODEL` model at `LM_STUDIO_HOST:LM_STUDIO_PORT`, no billing)
+- not set → `lmstudio` (multi-endpoint auto-discovery via `LLM_ENDPOINTS`, no billing)
 
 **Implementation:** end of `import_zip()` → the `_start_summary_batch()` helper (`memory/app/main.py`)
 
@@ -441,7 +441,7 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | Branching | `raw` → generate layers 2/3/4 from the full conversation, append to body, add `summarized` tag / not `raw` and no keywords (already `summarized`, or **a memory_write-originated body entry**) → generate **keywords only** from the body (or layer-2 summary) and update `keywords` only (body/tags unchanged, v3.48) |
 | Skip condition | layer-2 and layer-3 markers present **and** `keywords` already generated |
 | Model (anthropic) | `claude-haiku-4-5-20251001` |
-| Model (lmstudio) | `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`, v3.65) |
+| Model (lmstudio) | First model in `LLM_OK_MODELS`. Multi-endpoint auto-discovery and connection (v3.92) |
 | Rate limiting | 0.5 s sleep between items |
 | Idempotency | checked via markers + presence of `keywords` (entry drops out of the target set once generated) |
 
@@ -464,7 +464,7 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | Backend | Default model | Other candidates |
 |-------------|----------------|---------|
 | anthropic | `claude-haiku-4-5-20251001` | — |
-| lmstudio | `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`) | `qwen/qwen3.6-35b-a3b`, `liquid/lfm2-24b-a2b` |
+| lmstudio | First model in `LLM_OK_MODELS` (default `google/gemma-4-26b-a4b`) | `google/gemma-4-e4b`, `Qwen3.6-35B-A3B-NVFP4` |
 
 **Required environment variables (for the CLI script):**
 
@@ -473,9 +473,8 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | `MIO_API_TOKEN` | mio-memory Bearer auth | (required) |
 | `ANTHROPIC_API_KEY` | Claude API auth (anthropic backend) | (required) |
 | `MIO_SERVER_URL` | mio-memory server URL | `http://localhost:5002` |
-| `LM_STUDIO_HOST` | LMStudio host (lmstudio backend) | `192.168.10.32` |
-| `LM_STUDIO_PORT` | LMStudio port | `1234` |
-| `MIO_LM_MODEL` | Model name for the lmstudio backend (v3.65) | `google/gemma-4-26b-a4b` |
+| `LLM_ENDPOINTS` | LLM endpoint list (v3.92) | `192.168.10.32:1234,192.168.10.32:1919` |
+| `LLM_OK_MODELS` | Acceptable model list (v3.92) | `google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4` |
 
 The `MIO_SERVER_URL` default assumes in-container execution. When running outside the container, add `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` to `.env`.
 
@@ -994,8 +993,8 @@ Generates a digest of conversation logs using a local LLM (LMStudio). Two-stage 
 ### LLM connection
 
 Same pattern as `batch_run_summary_layers`:
-- `anthropic.Anthropic(base_url=f'http://{lm_host}:{lm_port}', api_key='lmstudio', timeout=300.0)`
-- Model: `MIO_LM_MODEL` env var (default `google/gemma-4-26b-a4b`, v3.65)
+- Multi-endpoint auto-discovery and connection via `_lm_client()` (v3.92)
+- Model: first model in `LLM_OK_MODELS` (default `google/gemma-4-26b-a4b`)
 
 ### safe_mode
 
@@ -1439,7 +1438,7 @@ Prevents unbounded LLM processing when a client disconnects:
 
 ### LLM
 
-`MIO_LM_MODEL` (LMStudio, same as the rating batch), shared via `_lm_client()`.
+First model in `LLM_OK_MODELS`. Multi-endpoint auto-discovery and connection, shared via `_lm_client()` (v3.92).
 
 ### Inbox Auto-Sublimation Pipeline (v3.75, work order #6)
 
