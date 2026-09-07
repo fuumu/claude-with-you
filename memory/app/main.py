@@ -721,6 +721,9 @@ elif _LOG_LEVEL == 'info':
 else:
     logging.getLogger('werkzeug').setLevel(logging.INFO)
 
+import collections as _collections
+_llm_log_buffer = _collections.deque(maxlen=100)
+
 def _log_debug(msg):
     if _LOG_LEVEL == 'debug':
         log.debug(msg)
@@ -728,6 +731,13 @@ def _log_debug(msg):
 def _log_info(msg):
     if _LOG_LEVEL in ('debug', 'info'):
         log.info(msg)
+
+def _log_llm(msg):
+    """LLMバックエンド関連のログ。標準ログ + リングバッファに記録。"""
+    from datetime import datetime, timezone, timedelta as _td
+    ts = datetime.now(timezone(_td(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
+    _llm_log_buffer.append(f'[{ts}] {msg}')
+    _log_info(msg)
 
 def _log_error(msg):
     if _LOG_LEVEL != 'off':
@@ -5619,10 +5629,10 @@ def _llm_discover_models(base_url):
             mid = m.get('id', m.get('key', ''))
             if mid:
                 models.append(mid)
-        _log_info(f'LLM discover {base_url}: {models}')
+        _log_llm(f'LLM discover {base_url}: {models}')
         return models
     except Exception as e:
-        _log_info(f'LLM discover failed for {base_url}: {e}')
+        _log_llm(f'LLM discover failed for {base_url}: {e}')
         return []
 
 
@@ -5650,9 +5660,9 @@ def _lm_unload_instance(base_url, instance_id, model_id=''):
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             resp.read()
-        _log_info(f'LM unloaded: {model_id} (instance: {instance_id})')
+        _log_llm(f'LM unloaded: {model_id} (instance: {instance_id})')
     except Exception as e:
-        _log_info(f'LM unload failed for {instance_id}: {e}')
+        _log_llm(f'LM unload failed for {instance_id}: {e}')
 
 
 def _lm_load_model(base_url, model_id):
@@ -5665,7 +5675,7 @@ def _lm_load_model(base_url, model_id):
         headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=180) as resp:
         resp.read()
-    _log_info(f'LM loaded: {model_id}')
+    _log_llm(f'LM loaded: {model_id}')
 
 
 def _match_ok_model(mid, ok_models):
@@ -5713,7 +5723,7 @@ def _lm_client(requested_model=None):
             for active_model in endpoint_models[ep]:
                 matched = _match_ok_model(active_model, [requested_model])
                 if matched:
-                    _log_info(f'LLM direct match: {matched} at {ep}')
+                    _log_llm(f'LLM direct match: {matched} at {ep}')
                     client = _anthropic.Anthropic(
                         base_url=ep, api_key='lmstudio', timeout=300.0)
                     return client, matched
@@ -5725,18 +5735,18 @@ def _lm_client(requested_model=None):
             matched = _match_ok_model(active_model, ok_models)
             if matched:
                 priority = ok_models.index(matched)
-                _log_info(f'LLM active OK candidate: {matched} (priority {priority}) at {ep}')
+                _log_llm(f'LLM active OK candidate: {matched} (priority {priority}) at {ep}')
                 if priority < best_priority:
                     best_priority = priority
                     best_candidate = (ep, matched)
     if best_candidate:
         ep, model_name = best_candidate
-        _log_info(f'LLM using active OK model: {model_name} at {ep}')
+        _log_llm(f'LLM using active OK model: {model_name} at {ep}')
         client = _anthropic.Anthropic(
             base_url=ep, api_key='lmstudio', timeout=300.0)
         return client, model_name
 
-    _log_info(f'LLM no active OK model found, will attempt load')
+    _log_llm(f'LLM no active OK model found, will attempt load')
     load_target = requested_model or ok_models[0]
     for ep in endpoints:
         supported, mgmt_data = _llm_endpoint_supports_management(ep)
@@ -5751,12 +5761,12 @@ def _lm_client(requested_model=None):
                         for inst in instances:
                             _lm_unload_instance(ep, inst['id'], mid)
             _lm_load_model(ep, load_target)
-            _log_info(f'LLM loaded {load_target} at {ep}')
+            _log_llm(f'LLM loaded {load_target} at {ep}')
             client = _anthropic.Anthropic(
                 base_url=ep, api_key='lmstudio', timeout=300.0)
             return client, load_target
         except Exception as e:
-            _log_info(f'LLM load failed at {ep}: {e}')
+            _log_llm(f'LLM load failed at {ep}: {e}')
             continue
 
     raise RuntimeError(f'No LLM endpoint available for model {load_target}. '
@@ -6138,6 +6148,54 @@ def api_rating_batch_start():
     if not ok:
         return jsonify(info), 409 if info.get('error') == 'already running' else 400
     return jsonify(info)
+
+
+# ── LLM診断 REST API ─────────────────────────────────────────────────
+
+@app.route('/api/llm-status')
+@require_auth
+def api_llm_status():
+    """LLMバックエンドの現在の状態を返す（診断用）。
+    各エンドポイントのアクティブモデル、選択ロジックの結果、直近ログ。"""
+    endpoints = _llm_endpoints()
+    ok_models = _llm_ok_models()
+
+    endpoint_info = {}
+    for ep in endpoints:
+        models = _llm_discover_models(ep)
+        supported, _ = _llm_endpoint_supports_management(ep)
+        ok_active = []
+        for m in models:
+            matched = _match_ok_model(m, ok_models)
+            if matched:
+                ok_active.append({'model': m, 'ok_name': matched,
+                                  'priority': ok_models.index(matched)})
+        endpoint_info[ep] = {
+            'active_models': models,
+            'management_api': supported,
+            'ok_active': ok_active,
+        }
+
+    best = None
+    best_priority = len(ok_models)
+    for ep in endpoints:
+        for item in endpoint_info[ep]['ok_active']:
+            if item['priority'] < best_priority:
+                best_priority = item['priority']
+                best = {'endpoint': ep, 'model': item['ok_name'],
+                        'priority': item['priority']}
+
+    would_load = None
+    if not best:
+        would_load = ok_models[0] if ok_models else None
+
+    return jsonify({
+        'endpoints': endpoint_info,
+        'ok_models': ok_models,
+        'selection': best or {'action': 'would_load', 'model': would_load},
+        'recent_logs': list(_llm_log_buffer),
+        'server_time': now_jst(),
+    })
 
 
 # ── 伏せ字 REST API ──────────────────────────────────────────────────
