@@ -3,6 +3,10 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.93 (2026-09-07) - llm_status MCPツール追加（38本化）
+    - LLM診断情報をMCPツール経由で取得可能に（REST /api/llm-status と同一データ）
+    - 各エンドポイントのアクティブモデル・OKリストマッチ・選択結果・直近ログを返す
+
   v3.92 (2026-09-07) - LLMバックエンド マルチエンドポイント対応
     - LLM_ENDPOINTS環境変数で複数エンドポイント指定可能
     - 各エンドポイントの /v1/models でモデル自動発見→直接マッチ→ロード試行→フォールバック
@@ -11,7 +15,7 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
     - 旧変数（LM_STUDIO_HOST/PORT/MIO_LM_MODEL）はフォールバックとして後方互換維持
 
   v3.90 (2026-08-25) - プロジェクト管理体制 + CoreMemファイルサイズ表示
-    - project_create / project_list MCPツール新設（37本化）
+    - project_create / project_list MCPツール新設
     - CoreMem系4ツール（save/read/list/delete）に target 引数追加（プロジェクト切り替え）
     - target指定時は projects/{target}/ にパス解決。後方互換100%（targetなし=家）
     - パストラバーサル防止バリデーション付き
@@ -643,7 +647,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.92'
+VERSION = '3.93'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -7288,6 +7292,11 @@ _MCP_TOOLS = [
         }, "required": ["id"]}
     },
     {
+        "name": "llm_status",
+        "description": "LLMバックエンドの現在の状態を返す診断ツール。各エンドポイントのアクティブモデル一覧、OKリストとのマッチ結果、モデル選択ロジックの判定結果、直近のLLMログを返す。問題調査時にまずこのツールで状況を確認すること。",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
         "name": "batch_run_summary_layers",
         "description": "未処理(raw)エントリの2層要約・3層シンボリック圧縮を生成するバッチを起動する。status_only=trueで進捗確認のみ行う",
         "inputSchema": {"type": "object", "properties": {
@@ -8087,6 +8096,43 @@ def _handle_tool_call_raw(name, arguments):
             return {"error": f"message not found: {msg_id}"}
         os.remove(path)
         return {"deleted": msg_id}
+
+    elif name == "llm_status":
+        endpoints = _llm_endpoints()
+        ok_models = _llm_ok_models()
+        endpoint_info = {}
+        for ep in endpoints:
+            models = _llm_discover_models(ep)
+            supported, _ = _llm_endpoint_supports_management(ep)
+            ok_active = []
+            for m in models:
+                matched = _match_ok_model(m, ok_models)
+                if matched:
+                    ok_active.append({'model': m, 'ok_name': matched,
+                                      'priority': ok_models.index(matched)})
+            endpoint_info[ep] = {
+                'active_models': models,
+                'management_api': supported,
+                'ok_active': ok_active,
+            }
+        best = None
+        best_priority = len(ok_models)
+        for ep in endpoints:
+            for item in endpoint_info[ep]['ok_active']:
+                if item['priority'] < best_priority:
+                    best_priority = item['priority']
+                    best = {'endpoint': ep, 'model': item['ok_name'],
+                            'priority': item['priority']}
+        would_load = None
+        if not best:
+            would_load = ok_models[0] if ok_models else None
+        return {
+            'endpoints': endpoint_info,
+            'ok_models': ok_models,
+            'selection': best or {'action': 'would_load', 'model': would_load},
+            'recent_logs': list(_llm_log_buffer),
+            'server_time': now_jst(),
+        }
 
     elif name == "batch_run_summary_layers":
         if arguments.get("status_only"):

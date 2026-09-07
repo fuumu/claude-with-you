@@ -604,11 +604,12 @@ conversation_share(uuid: str)
 | 出席簿 | 1 | attendance_view |
 | 昇華 | 1 | sublimate |
 | 操作ログ | 1 | oplog_list |
+| LLM診断 | 1 | llm_status |
 | プロジェクト | 2 | project_create, project_list |
-| **通常セッション合計** | **37** | |
+| **通常セッション合計** | **38** | |
 | **友達セッション** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の37ツールは使用不可。
+※ 友達セッションは `/mcp?token=<friend_token>` でアクセスした場合のみ有効。通常の38ツールは使用不可。
 
 ### 会話ログ注記（log_annotate, v3.22）
 

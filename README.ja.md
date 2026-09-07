@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.90","mcp_tool_count":37}
+# {"status":"ok","version":"3.93","mcp_tool_count":38}
 ```
 
 ### 5. Claude Code への登録
@@ -1157,7 +1157,8 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.92）**
+**実装済み（v3.9〜v3.93）**
+- `llm_status` MCPツール（v3.93）— Claudeセッションから直接呼び出せるLLMバックエンド診断ツール（ツール数 37→38）。各エンドポイントのアクティブモデル一覧、OKリストとのマッチ結果、モデル選択ロジックの判定結果、直近LLMログ100件を返す。REST `GET /api/llm-status` と同一データ
 - LLMバックエンド マルチエンドポイント対応（v3.92）— `LLM_ENDPOINTS` 環境変数（カンマ区切り host:port）で複数のローカルLLMエンドポイントを指定可能に。接続フロー: ① 各エンドポイントの `/v1/models` でアクティブモデルを自動発見 ② 要求モデルがアクティブなエンドポイントに直接接続 ③ なければモデル管理API対応エンドポイント（LM Studio）でロード試行（FreeToken等の非対応エンドポイントはスキップ）④ どこにもなければエラー。`LLM_OK_MODELS` のデフォルトも拡充（`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`）。旧変数（`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`）は `LLM_ENDPOINTS`/`LLM_OK_MODELS` 未設定時のフォールバックとして後方互換維持。`_start_summary_batch`/`_start_rating_batch` から lm_host/lm_port 引数を廃止し `_lm_client()` に接続ロジックを集約。`scripts/generate_summary_layers.py` も同等のマルチエンドポイント対応。`.env` の対話的更新スクリプト `scripts/manage_llm_endpoints.py` を新設
 - プロジェクト管理システム＋CoreMem_list ファイルサイズ表示（v3.90）— ① `project_create` / `project_list` MCPツール新設（ツール数 35→37）。`/data/projects/{name}/` にプロジェクト専用の CoreMem 名前空間を作成し、テンプレートファイル群（PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/）を自動配置 ② CoreMem 4ツール（save/read/list/delete）に `target` 引数追加。`target` にプロジェクト名を指定するとプロジェクト内ファイルを操作（省略時はホーム = /data/artifacts/）。100%後方互換。パストラバーサル防止・`_template` 予約名禁止 ③ CoreMem_read の出席簿チェックインはホームのみ（target 指定時は登録なし）、conv_artifacts フォールバックもホームのみ ④ `CoreMem_list` にファイルサイズ（bytes）を追加。admin.html の CoreMem 一覧で KB 表示 ⑤ TS 層（coremem.ts）も同等の target 対応・size 対応を実装。REST `/api/coremem?target=` で同一機能
 - お友達システム — 登録申請・メール承認・専用 MCP セッション・記憶管理（v3.9〜v3.12）

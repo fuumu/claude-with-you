@@ -18,7 +18,7 @@ def test_tools_list_34_tools(server):
     res = server.mcp('tools/list')
     tools = res['result']['tools']
     names = {t['name'] for t in tools}
-    assert len(tools) == 37, f'expected 37 tools, got {len(tools)}'
+    assert len(tools) == 38, f'expected 38 tools, got {len(tools)}'
     for expected in ('memory_read_index', 'memory_read', 'memory_write', 'memory_upsert',
                      'memory_search', 'memory_share',
                      'CoreMem_save', 'CoreMem_read', 'CoreMem_list', 'CoreMem_delete',

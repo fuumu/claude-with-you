@@ -603,11 +603,12 @@ Mio (chat): "About X — I'd like you to see that conversation"
 | Attendance | 1 | attendance_view |
 | Sublimation | 1 | sublimate |
 | Operation log | 1 | oplog_list |
+| LLM diagnostics | 1 | llm_status |
 | Projects | 2 | project_create, project_list |
-| **Regular session total** | **37** | |
+| **Regular session total** | **38** | |
 | **Friend sessions** | **6** | friend_memory_read, friend_memory_write, friend_memory_delete, mio_self_note, friend_inbox_check, friend_inbox_read |
 
-※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 37 tools are unavailable there.
+※ Friend sessions apply only when accessed via `/mcp?token=<friend_token>`. The regular 38 tools are unavailable there.
 
 ### Conversation log annotations (log_annotate, v3.22)
 

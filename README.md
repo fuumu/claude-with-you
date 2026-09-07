@@ -48,7 +48,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.90","mcp_tool_count":37}
+# {"status":"ok","version":"3.93","mcp_tool_count":38}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -656,7 +656,8 @@ claude-with-you/
 - SysMemory dump versioning
 - mio-memory direct auth for Claude Code
 
-**Implemented (v3.9–v3.92)**
+**Implemented (v3.9–v3.93)**
+- `llm_status` MCP tool (v3.93) — LLM backend diagnostic tool accessible from Claude sessions (tool count 37→38). Returns per-endpoint active models, OK-list match results, model selection logic outcome, and recent LLM log entries (100-entry ring buffer). Same data as REST `GET /api/llm-status`
 - Multi-endpoint LLM backend (v3.92) — `LLM_ENDPOINTS` env var (comma-separated host:port) supports multiple local LLM endpoints. Connection flow: ① probe each endpoint's `/v1/models` for active models ② direct-connect if the requested model is already active ③ try model load on management-capable endpoints (LM Studio); skip management-incapable ones (FreeToken) ④ error if no endpoint available. `LLM_OK_MODELS` default expanded (`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`). Legacy vars (`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`) preserved as fallback. lm_host/lm_port args removed from `_start_summary_batch`/`_start_rating_batch`, connection logic consolidated in `_lm_client()`. `scripts/generate_summary_layers.py` updated for multi-endpoint. New `scripts/manage_llm_endpoints.py` for interactive `.env` management
 - Project management system + CoreMem_list file size (v3.90) — ① `project_create` / `project_list` MCP tools (tool count 35→37). Creates project-scoped CoreMem namespaces under `/data/projects/{name}/` with template files (PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/). ② All 4 CoreMem tools (save/read/list/delete) gain `target` parameter to operate on project-scoped files (omit for home = /data/artifacts/). 100% backward compatible. Path traversal prevention + `_template` reserved name. ③ CoreMem_read attendance checkin is home-only (skipped when target is set); conv_artifacts fallback also home-only. ④ `CoreMem_list` now includes file `size` (bytes). Admin UI shows KB. ⑤ TS layer (coremem.ts) has matching target + size support. REST `/api/coremem?target=` for the same functionality
 - Inbox auto-sublimation pipeline + admin UI improvements (v3.75) — ① auto-sublimation: `inbox_post` to=chat with title containing `【生】` triggers automatic raw backup to ExtMemory (rating=adult, tags=バカンス日記) + placeholder swap + async sublimate; on completion title becomes `【未承認】` (success) or `【要人手】` (needs human); raw text never stays in inbox ② admin inbox: timed-standing (expires_at) display (remaining days, color-coded, near-expiry in red) + action buttons (change deadline, promote to permanent, demote to timed, clear expiry) ③ admin attendance: uuid/memory_id/inbox_id now clickable links navigating to admin Logs/Memory/Inbox tabs

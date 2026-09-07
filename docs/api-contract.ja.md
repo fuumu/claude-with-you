@@ -113,7 +113,7 @@ python -m venv .venv
 - `subscriptions/listen` → SSE（`notifications/subscriptions/acknowledged` + keep-alive コメント）
 - OAuth 強化: 認可応答リダイレクトに `iss`（RFC 9207）／DCR で `application_type` 受理（既定 `web`）／`grant_type=refresh_token`（発行・使用ごとローテーション・再利用は `invalid_grant`・`scope` 縮小可）／`/.well-known/oauth-authorization-server/<suffix>` にも応答・`grant_types_supported` に `refresh_token`
 
-## 5. MCP ツール（37本）の返却形状（要点）
+## 5. MCP ツール（38本）の返却形状（要点）
 
 引数の詳細は README.ja.md / CoreMem `protocol_guide_detail.md` を参照。ここではテストで固定化した返却形状のみ列挙する。
 
