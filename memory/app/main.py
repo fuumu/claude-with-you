@@ -5603,7 +5603,7 @@ def _llm_ok_models():
     return [os.environ.get('MIO_LM_MODEL', 'google/gemma-4-26b-a4b')]
 
 
-_LLM_CONNECT_TIMEOUT = 3
+_LLM_CONNECT_TIMEOUT = 5
 
 
 def _llm_discover_models(base_url):
@@ -5619,6 +5619,7 @@ def _llm_discover_models(base_url):
             mid = m.get('id', m.get('key', ''))
             if mid:
                 models.append(mid)
+        _log_info(f'LLM discover {base_url}: {models}')
         return models
     except Exception as e:
         _log_info(f'LLM discover failed for {base_url}: {e}')
@@ -5724,6 +5725,7 @@ def _lm_client(requested_model=None):
             matched = _match_ok_model(active_model, ok_models)
             if matched:
                 priority = ok_models.index(matched)
+                _log_info(f'LLM active OK candidate: {matched} (priority {priority}) at {ep}')
                 if priority < best_priority:
                     best_priority = priority
                     best_candidate = (ep, matched)
@@ -5734,6 +5736,7 @@ def _lm_client(requested_model=None):
             base_url=ep, api_key='lmstudio', timeout=300.0)
         return client, model_name
 
+    _log_info(f'LLM no active OK model found, will attempt load')
     load_target = requested_model or ok_models[0]
     for ep in endpoints:
         supported, mgmt_data = _llm_endpoint_supports_management(ep)
