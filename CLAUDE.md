@@ -88,6 +88,9 @@ Friend sessions (6 tools, exposed when `/mcp?token=<friend_token>` is used):
 - `friend_inbox_check` — check for messages from Mio (unread count + message list)
 - `friend_inbox_read` — read a specific inbox message and mark as read
 
+**LLM diagnostic API (v3.92):**
+- `GET /api/llm-status` — returns per-endpoint active models, management-API support, model selection result, and last 100 LLM-related log entries with timestamps; no docker logs needed to diagnose model selection issues
+
 **Batch summary API:**
 - `GET /api/batch/status` — returns `_batch_status` dict (running, total, processed, errors, skipped)
 - `POST /api/batch/start` — start background summary thread (`backend: "anthropic"` or `"lmstudio"`; omitted = auto-select)
