@@ -25,8 +25,9 @@ client → [ts/ TypeScript server] → [memory/app/main.py (Flask)]
            ├ POST /api/memory/reindex      … TS native (index.json rebuild)
            ├ /api/inbox* (list/post/read/update/delete) … TS native
            ├ /api/coremem* (list/save/versioned read/merge/delete) … TS native
-           ├ /api/conversations* (search/index/rebuild/fetch/annotations/
-           │    share/view/rating)         … TS native (only digest forwarded)
+           ├ /api/conversations* (search/index/fetch/annotations/
+           │    share/view/rating)         … TS native (digest and index/rebuild forwarded;
+           │    rebuild unified on Python for v3.96+ title improvement/participants, 2026-09-28)
            ├ /.well-known/oauth-*          … TS native
            ├ /oauth/{register,authorize,token} … TS native (PKCE, DCR)
            ├ /mcp transport layer          … TS native (dual-era:

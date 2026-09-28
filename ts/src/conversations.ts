@@ -1,10 +1,14 @@
 /**
  * TS-1 リング3: 会話ログ REST（/api/conversations*）。
- * main.py の api_conversations_search / index / index_rebuild / get /
+ * main.py の api_conversations_search / index / get /
  * annotations / share / view / rating と同一契約。
  *
  * digest（POST /api/conversations/<uuid>/digest）はローカルLLM連携が必要な
  * ためリング5まで Python 転送のまま（このモジュールは担当しない）。
+ *
+ * index/rebuild も 2026-09-28 から Python 転送。TS 版は v3.70 相当で止まっており、
+ * v3.85 以降の model/hidden 保全・v3.96 以降のタイトル改善/participants 抽出が
+ * 抜けていた（プロキシ経由だと Python 側の修正が一切効かなかった）。
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -168,50 +172,6 @@ function handleIndex(res: http.ServerResponse, url: URL): void {
   });
 }
 
-/** POST /api/conversations/index/rebuild — 会話ファイル走査で _index.json を再構築 */
-function handleRebuild(res: http.ServerResponse): void {
-  let rebuilt = 0;
-  const newIndex: ConvMeta[] = [];
-  let files: string[] = [];
-  try {
-    files = fs.readdirSync(CONVERSATIONS_DIR);
-  } catch {
-    files = [];
-  }
-  for (const fname of files) {
-    if (!fname.endsWith('.json') || fname.startsWith('_')) continue;
-    let conv: Record<string, unknown>;
-    try {
-      conv = JSON.parse(fs.readFileSync(path.join(CONVERSATIONS_DIR, fname), 'utf-8'));
-    } catch {
-      continue;
-    }
-    let uid = String(conv.uuid || conv.id || '');
-    if (!uid) uid = fname.slice(0, -5);
-    const meta: ConvMeta = {
-      uuid: uid,
-      title: String(conv.name || conv.title || uid.slice(0, 8)),
-      created_at: 'created_at' in conv ? (conv.created_at as string) : '',
-      updated_at:
-        'updated_at' in conv
-          ? (conv.updated_at as string)
-          : 'created_at' in conv
-            ? (conv.created_at as string)
-            : '',
-      message_count: Array.isArray(conv.chat_messages) ? conv.chat_messages.length : 0,
-    };
-    // rating 系メタは会話ファイルから引き継ぐ（v3.70: 従来は rebuild で消えていた）
-    for (const k of ['rating', 'rating_reason', 'rating_source', 'rating_skip_reason']) {
-      if (conv[k]) meta[k] = conv[k];
-    }
-    newIndex.push(meta);
-    rebuilt += 1;
-  }
-  sortDescByUpdated(newIndex);
-  saveConvIndex(newIndex);
-  sendJson(res, 200, { rebuilt });
-}
-
 /** POST /api/conversations/share/<uuid> — 共有トークン発行（デフォルト24h） */
 async function handleShare(
   req: http.IncomingMessage,
@@ -346,8 +306,6 @@ export async function handleConversations(
     route = { handle: () => handleSearch(res, url) };
   } else if (p === '/api/conversations/index' && method === 'GET') {
     route = { handle: () => handleIndex(res, url) };
-  } else if (p === '/api/conversations/index/rebuild' && method === 'POST') {
-    route = { handle: () => handleRebuild(res) };
   } else {
     const share = /^\/api\/conversations\/share\/([^/]+)$/.exec(p);
     const annotations = /^\/api\/conversations\/([^/]+)\/annotations$/.exec(p);

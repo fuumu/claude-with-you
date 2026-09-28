@@ -24,8 +24,9 @@ main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScrip
                  ├ POST /api/memory/reindex         … TS ネイティブ（index.json 再構築）
                  ├ /api/inbox*（一覧/投稿/既読/更新/削除） … TS ネイティブ
                  ├ /api/coremem*（一覧/保存/版指定読み/マージ/削除） … TS ネイティブ
-                 ├ /api/conversations*（検索/index/rebuild/取得/注記/
-                 │    share/view/rating）           … TS ネイティブ（digest のみ転送）
+                 ├ /api/conversations*（検索/index/取得/注記/
+                 │    share/view/rating）           … TS ネイティブ（digest・index/rebuild は転送。
+                 │    rebuild は v3.96+ のタイトル改善/participants 抽出を Python に一本化、2026-09-28）
                  ├ /.well-known/oauth-*             … TS ネイティブ
                  ├ /oauth/{register,authorize,token} … TS ネイティブ（PKCE・DCR）
                  ├ /mcp トランスポート層             … TS ネイティブ（デュアル時代:

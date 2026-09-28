@@ -121,6 +121,21 @@ def test_rebuild_improves_default_titles(server, make_conv_zip):
     assert raw.get('name') != 'Greeting', f'JSON file name should be updated: {raw.get("name")}'
 
 
+def test_rebuild_improves_preexisting_greeting_file(server):
+    """v3.96 以前に取り込まれた Greeting 会話（import 時改善を通っていない）を rebuild 単独で直す。
+    TS プロキシ経由でも効くこと（旧 TS 版 rebuild はタイトル改善を持たず、本番で効かなかった）"""
+    conv = make_conversation(title='Greeting', texts=['古いログの最初の発言', 'はい'])
+    fpath = os.path.join(server.data_root, 'conversations', f"{conv['uuid']}.json")
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
+    with open(fpath, 'w', encoding='utf-8') as f:
+        json.dump(conv, f, ensure_ascii=False)
+    r = server.post('/api/conversations/index/rebuild')
+    assert r.status_code == 200
+    assert r.json().get('titles_improved', 0) >= 1, r.json()
+    with open(fpath, encoding='utf-8') as f:
+        assert json.load(f)['name'].startswith('古いログの最初の発言')
+
+
 def test_rebuild_improves_evening_greeting(server, make_conv_zip):
     """v3.99: 'Evening greeting' and similar patterns should also be improved"""
     conv = make_conversation(title='Evening greeting', texts=['こんばんは', 'やあ'])
