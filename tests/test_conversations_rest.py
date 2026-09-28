@@ -99,6 +99,43 @@ def test_rest_conversations_index_rebuild(server, make_conv_zip):
         assert key in d['items'][0], key
 
 
+def test_rebuild_improves_default_titles(server, make_conv_zip):
+    """v3.96: rebuild should improve default titles like 'Greeting' to first user message"""
+    conv = make_conversation(title='Greeting', texts=['おはようございます', 'おはよう！'])
+    _import_zip(server, make_conv_zip, [conv], name='greeting.zip')
+    # After import, title might already be improved by _save_conversations
+    d = server.get(f'/api/conversations/index?search=おはよう').json()
+    if d['total'] == 0:
+        # Title was NOT improved during import — rebuild should fix it
+        r = server.post('/api/conversations/index/rebuild')
+        assert r.status_code == 200
+        rd = r.json()
+        assert rd.get('titles_improved', 0) >= 1, f'rebuild response: {rd}'
+        d = server.get(f'/api/conversations/index?search=おはよう').json()
+    assert d['total'] >= 1, 'Title should be improved from Greeting to first user message'
+    item = next(e for e in d['items'] if e['uuid'] == conv['uuid'])
+    assert 'おはよう' in item['title']
+    assert item['title'] != 'Greeting'
+    # Verify the JSON file was also updated
+    raw = server.get(f"/api/conversations/{conv['uuid']}").json()
+    assert raw.get('name') != 'Greeting', f'JSON file name should be updated: {raw.get("name")}'
+
+
+def test_rebuild_extracts_participants(server, make_conv_zip):
+    """v3.96: rebuild should extract participants from conversation messages"""
+    conv = make_conversation(title='participant test')
+    # Add model to a message
+    conv['chat_messages'][1]['model'] = 'claude-opus-4-6'
+    _import_zip(server, make_conv_zip, [conv], name='participants.zip')
+    r = server.post('/api/conversations/index/rebuild')
+    assert r.status_code == 200
+    d = server.get(f"/api/conversations/index?search=participant test").json()
+    assert d['total'] >= 1
+    item = next(e for e in d['items'] if e['uuid'] == conv['uuid'])
+    assert 'participants' in item, f'participants missing from index: {item}'
+    assert 'claude-opus-4-6' in item['participants']
+
+
 def test_rest_conversation_get_full_json(server, make_conv_zip):
     conv = make_conversation(title='r3v取得会話', texts=['ひとつ', 'ふたつ'])
     _import_zip(server, make_conv_zip, [conv], name='r3v4.zip')

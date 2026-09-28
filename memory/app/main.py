@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.98 (2026-09-28) - _msg_text文字列content対応・rebuildデバッグ情報強化
+    - _msg_text: content がブロックリストでなく文字列の場合も正しくテキスト抽出
+      （従来はstringをforで1文字ずつ走査→全スキップ→空文字フォールバックだった）
+    - rebuild: 書き戻し失敗時のエラーログ追加（従来は except pass で無音失敗）
+    - rebuild: レスポンスに participants_filled カウント追加（デバッグ用）
+    - rebuild: タイトル改善不可時のログに first_user メッセージ構造を出力
   v3.97 (2026-09-28) - rebuild/import時のタイトル改善・participants書き戻しバグ修正
     - rebuild: _improve_conv_titleとparticipants抽出結果を会話JSONに書き戻すよう修正
       （従来はインデックスにのみ反映され、会話JSONには未反映だった）
@@ -678,7 +684,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.97'
+VERSION = '3.98'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1411,13 +1417,16 @@ def _extract_participants(conv):
 
 def _msg_text(msg):
     """メッセージからテキスト本文を抽出するヘルパー"""
-    text = msg.get('text') or ''
-    if not text:
-        for block in (msg.get('content') or []):
+    content = msg.get('content')
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        for block in content:
             if isinstance(block, dict) and block.get('type') == 'text':
-                text = block.get('text', '')
-                break
-    return text
+                t = block.get('text', '')
+                if t.strip():
+                    return t
+    return msg.get('text') or ''
 
 
 @app.route('/api/conversations/index/rebuild', methods=['POST'])
@@ -1462,17 +1471,21 @@ def api_conversations_index_rebuild():
                 titles_default += 1
                 if not improved:
                     titles_no_auto += 1
-                    _log_info(f'rebuild: default title but no auto: {uid[:8]} name={conv.get("name")!r} title_field={conv.get("title")!r} msgs={len(conv.get("chat_messages") or [])}')
+                    first_user = None
+                    for _m in (conv.get('chat_messages') or [])[:5]:
+                        _r = _m.get('sender') or _m.get('role') or ''
+                        if _r in ('human', 'user'):
+                            first_user = {'role': _r, 'text_preview': _msg_text(_m)[:60], 'keys': list(_m.keys())[:8]}
+                            break
+                    _log_info(f'rebuild: default title but no auto: {uid[:8]} name={conv.get("name")!r} title_field={conv.get("title")!r} msgs={len(conv.get("chat_messages") or [])} first_user={first_user}')
             if improved:
                 title = improved
                 titles_improved += 1
-                # v3.96: 改善タイトルを会話JSONに書き戻す
                 if conv.get('name'):
                     conv['name'] = improved
                 else:
                     conv['title'] = improved
                 conv_dirty = True
-            # v3.96: participants 抽出・書き戻し
             participants = _extract_participants(conv)
             if participants and conv.get('participants') != participants:
                 conv['participants'] = participants
@@ -1481,8 +1494,8 @@ def api_conversations_index_rebuild():
                 try:
                     with open(fpath, 'w', encoding='utf-8') as f:
                         json.dump(conv, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log_error(f'rebuild: failed to write back {uid[:8]}: {e}')
             meta = {
                 'uuid':          uid,
                 'title':         title,
@@ -1503,8 +1516,9 @@ def api_conversations_index_rebuild():
             rebuilt += 1
     new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     _save_conv_index(new_index)
-    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled} titles_improved={titles_improved} titles_default={titles_default} titles_no_auto={titles_no_auto}')
-    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved, 'titles_default': titles_default, 'titles_no_auto': titles_no_auto})
+    participants_filled = sum(1 for e in new_index if e.get('participants'))
+    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled} titles_improved={titles_improved} titles_default={titles_default} titles_no_auto={titles_no_auto} participants_filled={participants_filled}')
+    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved, 'titles_default': titles_default, 'titles_no_auto': titles_no_auto, 'participants_filled': participants_filled})
 
 @app.route('/api/conversations/cleanup-empty', methods=['POST'])
 @require_auth
