@@ -121,6 +121,43 @@ def test_rebuild_improves_default_titles(server, make_conv_zip):
     assert raw.get('name') != 'Greeting', f'JSON file name should be updated: {raw.get("name")}'
 
 
+def test_rebuild_improves_evening_greeting(server, make_conv_zip):
+    """v3.99: 'Evening greeting' and similar patterns should also be improved"""
+    conv = make_conversation(title='Evening greeting', texts=['こんばんは', 'やあ'])
+    _import_zip(server, make_conv_zip, [conv], name='evening.zip')
+    r = server.post('/api/conversations/index/rebuild')
+    assert r.status_code == 200
+    d = server.get(f"/api/conversations/index?search=こんばんは").json()
+    assert d['total'] >= 1, 'Evening greeting should be improved to first user message'
+    item = next(e for e in d['items'] if e['uuid'] == conv['uuid'])
+    assert item['title'] != 'Evening greeting'
+
+
+def test_rebuild_improves_title_text_only_messages(server, make_conv_zip):
+    """v3.99: messages with only 'text' field (no 'content') should be handled"""
+    conv = make_conversation(title='Greeting', texts=['テストだよ', '了解'])
+    for m in conv['chat_messages']:
+        del m['content']
+    _import_zip(server, make_conv_zip, [conv], name='textonly.zip')
+    r = server.post('/api/conversations/index/rebuild')
+    assert r.status_code == 200
+    d = server.get(f"/api/conversations/index?search=テストだよ").json()
+    assert d['total'] >= 1, 'Title should be improved from text-only messages'
+
+
+def test_rebuild_debug_no_auto(server, make_conv_zip):
+    """v3.99: rebuild response includes debug info for titles that could not be improved"""
+    conv = make_conversation(title='Greeting', texts=[])
+    conv['chat_messages'] = []
+    _import_zip(server, make_conv_zip, [conv], name='empty.zip')
+    r = server.post('/api/conversations/index/rebuild')
+    assert r.status_code == 200
+    rd = r.json()
+    if rd.get('titles_no_auto', 0) > 0:
+        assert 'debug_no_auto' in rd, f'debug_no_auto should be in response: {rd}'
+        assert len(rd['debug_no_auto']) > 0
+
+
 def test_rebuild_extracts_participants(server, make_conv_zip):
     """v3.96: rebuild should extract participants from conversation messages"""
     conv = make_conversation(title='participant test')

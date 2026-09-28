@@ -3,6 +3,12 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.99 (2026-09-28) - デフォルトタイトル判定拡張・rebuildデバッグ情報をレスポンスに追加
+    - _is_default_title: 'Evening greeting', 'Morning greeting', 'Greeting to X' 等のパターンを
+      正規表現で検出するよう拡張（従来は完全一致のみで58件中約30件が対象外だった）
+    - rebuild: レスポンスに debug_no_auto（改善不可の先頭10件の詳細）を追加
+      → admin.html で展開表示され、原因特定が可能に
+    - admin.html: rebuild結果に改善不可の詳細を折りたたみ表示
   v3.98 (2026-09-28) - _msg_text文字列content対応・rebuildデバッグ情報強化
     - _msg_text: content がブロックリストでなく文字列の場合も正しくテキスト抽出
       （従来はstringをforで1文字ずつ走査→全スキップ→空文字フォールバックだった）
@@ -684,7 +690,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.98'
+VERSION = '3.99'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1437,6 +1443,7 @@ def api_conversations_index_rebuild():
     titles_improved = 0
     titles_default = 0
     titles_no_auto = 0
+    debug_no_auto = []
     new_index = []
     # v3.79: hidden フラグは会話JSONに保存されないため、旧インデックスから引き継ぐ
     old_index = {e.get('uuid'): e for e in _load_conv_index()}
@@ -1477,6 +1484,9 @@ def api_conversations_index_rebuild():
                         if _r in ('human', 'user'):
                             first_user = {'role': _r, 'text_preview': _msg_text(_m)[:60], 'keys': list(_m.keys())[:8]}
                             break
+                    debug_entry = {'uuid': uid[:8], 'name': conv.get('name'), 'title_field': conv.get('title'), 'msgs': len(conv.get('chat_messages') or []), 'first_user': first_user}
+                    if len(debug_no_auto) < 10:
+                        debug_no_auto.append(debug_entry)
                     _log_info(f'rebuild: default title but no auto: {uid[:8]} name={conv.get("name")!r} title_field={conv.get("title")!r} msgs={len(conv.get("chat_messages") or [])} first_user={first_user}')
             if improved:
                 title = improved
@@ -1518,7 +1528,10 @@ def api_conversations_index_rebuild():
     _save_conv_index(new_index)
     participants_filled = sum(1 for e in new_index if e.get('participants'))
     _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled} titles_improved={titles_improved} titles_default={titles_default} titles_no_auto={titles_no_auto} participants_filled={participants_filled}')
-    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved, 'titles_default': titles_default, 'titles_no_auto': titles_no_auto, 'participants_filled': participants_filled})
+    result = {'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved, 'titles_default': titles_default, 'titles_no_auto': titles_no_auto, 'participants_filled': participants_filled}
+    if debug_no_auto:
+        result['debug_no_auto'] = debug_no_auto
+    return jsonify(result)
 
 @app.route('/api/conversations/cleanup-empty', methods=['POST'])
 @require_auth
@@ -3463,11 +3476,19 @@ def _remark_entries_for_update(updated_uuids):
 # ── source_thread 自動紐づけ（v3.60）─────────────────────────────────
 
 # v3.96: デフォルトタイトル判定＋自動改善
-_DEFAULT_TITLES = {'greeting', 'new chat', 'untitled', 'new conversation', 'chat', ''}
+_DEFAULT_TITLES_EXACT = {'greeting', 'new chat', 'untitled', 'new conversation', 'chat', ''}
+_DEFAULT_TITLE_RE = re.compile(
+    r'^(?:(?:good\s+)?(?:morning|evening|afternoon|night)\s+)?'
+    r'greeting(?:\s+(?:exchange|to\s+\w+))?$',
+    re.IGNORECASE,
+)
 
 def _is_default_title(title):
     """Anthropicのデフォルトタイトルかどうか判定する"""
-    return (title or '').strip().lower() in _DEFAULT_TITLES
+    t = (title or '').strip().lower()
+    if t in _DEFAULT_TITLES_EXACT:
+        return True
+    return bool(_DEFAULT_TITLE_RE.match((title or '').strip()))
 
 def _auto_title_from_conv(conv, max_len=40):
     """会話の最初のユーザーメッセージ冒頭からタイトルを生成する"""
