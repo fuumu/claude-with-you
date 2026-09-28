@@ -1,6 +1,6 @@
 # API Contract Document (TS-0)
 
-*Target: mio-memory v3.90 / Written: 2026-07-13 / Last updated: 2026-08-27*
+*Target: mio-memory v3.96 / Written: 2026-07-13 / Last updated: 2026-09-28*
 
 This document pins down the externally promised behavior (the contract) of the current
 `memory/app/main.py`. **The executable contract is the characterization test suite in

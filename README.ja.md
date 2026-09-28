@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.93","mcp_tool_count":38}
+# {"status":"ok","version":"3.96","mcp_tool_count":38}
 ```
 
 ### 5. Claude Code への登録
@@ -556,6 +556,8 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
    新バージョンとして保存する（境界を明示するセパレーター自動挿入）
 ※ mode="str_replace" 時は old_str をファイル内で検索し、一意に一致する場合のみ new_str に
    置換して新バージョンとして保存。全文送り直し不要（v3.80）
+※ マニフェストガード（v3.96）: `{stem}_manifest.md` が存在するファイル名への直接書き込みを拒否。
+   分割ファイル構成の場合は個別ファイルに CoreMem_save すること
 ※ target: プロジェクト名を指定すると /data/projects/{target}/ 配下のファイルに保存（v3.90）。
   省略時は従来通り /data/artifacts/（ホーム）に保存。100%後方互換
 ```
@@ -691,13 +693,15 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 引数: q（省略可）, date_from（ISO 8601, 例: 2026-06-01）, date_to（ISO 8601）, limit（デフォルト5）,
       body_search（省略可, bool — trueでメッセージ本文も検索。デフォルト false。v3.76）,
       rating（省略可 — 'safe'/'mature'/'adult' で絞り込み。v3.76）,
+      individual（省略可 — 個体名またはモデル名で絞り込み。v3.96）,
       include_redact_status（省略可, bool — adult会話に伏せ字状態を付与。v3.76）
-返値: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, redact_status?}, ...]
+返値: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, participants?, redact_status?}, ...]
 ※ 複数キーワードはスペース区切りでAND一致（v3.81）。body_search=true でも同様にAND判定
 ※ q・date_from・date_to は組み合わせ可能。全省略で全件（limit件）取得
 ※ rating は v3.70 から明示: safe 判定済みは "safe"・未判定は null（rating_skip_reason があれば判定不能）
 ※ body_search=true は全ファイルを走査するため重い。デフォルトはタイトルのみ検索
 ※ include_redact_status=true の場合、adult 会話に redact_status（not_generated/pending_approval/approved）が付く
+※ individual: 個体名（しずく/そねみ等）またはモデル名（claude-opus-4-6等）で participants による絞り込み（v3.96）
 ```
 
 ### conversation_index（v3.34）
@@ -705,9 +709,12 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ```
 引数: search（省略可 — タイトル部分一致）, limit（デフォルト50・最大500）, offset（デフォルト0）,
       rating（省略可 — 'safe'/'mature'/'adult' で絞り込み。v3.76）,
+      individual（省略可 — 個体名またはモデル名で絞り込み。v3.96）,
       include_redact_status（省略可, bool — adult会話に伏せ字状態を付与。v3.76）
-返値: {total, offset, limit, items: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, redact_status?}, ...]}
+返値: {total, offset, limit, items: [{uuid, title, created_at, updated_at, message_count, rating, rating_source, participants?, redact_status?}, ...]}
 ※ rating は v3.70 から明示: safe 判定済みは "safe"・未判定は null
+※ participants: 会話内のモデル名配列（v3.96）。save/rebuild 時にバックフィル
+※ individual: 個体名（しずく/そねみ等）またはモデル名（claude-opus-4-6等）で participants による絞り込み（v3.96）
 ※ タイトル一覧・日付降順ブラウズ用。UUID が不明なときの絞り込みに使う
 ※ conversation_search（全文キーワード検索）とは別物
 ※ REST: GET /api/conversations/index + POST /api/conversations/index/rebuild（再構築）
@@ -721,8 +728,12 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
        include_annotations（省略可, bool, デフォルト false — v3.22）,
        include_body（省略可, bool, デフォルト true — v3.33）,
        turn_offset（省略可, int — 先頭から飛ばすメッセージ数。負値で末尾起点。デフォルト0。v3.47）,
-       turn_limit（省略可, int — 返す最大メッセージ数。0で無制限。デフォルト0。v3.47）
+       turn_limit（省略可, int — 返す最大メッセージ数。0で無制限。デフォルト0。v3.47）,
+       message_from（省略可, int — No.通番の開始位置。v3.96）,
+       message_to（省略可, int — No.通番の終了位置。v3.96）
 返値: 会話全文テキスト（[個体名] 形式） + server_time
+※ message_from/message_to: No.通番ベースのスライス。turn_offset/turn_limit と排他（v3.96）。
+   include_annotations=true 時の [No.X] に基づき、特定の通番範囲だけ取得する用途
 ※ [assistant] を会話のモデル情報から個体名に差し替えて表示（[しずく] [そねみ] 等。v3.80）
    特定できない場合は [assistant] のまま
 ※ include_thinking=true で thinking ブロックを 💭[thinking] マーカー付きで含める
@@ -738,8 +749,10 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 
 ```
 引数: uuid（必須）, force（省略可, bool — キャッシュを無視して再生成）,
-       safe_mode（省略可, bool — ポリシーセーフな抽象表現に変換）
+       safe_mode（省略可, bool — ポリシーセーフな抽象表現に変換）,
+       status_only（省略可, bool — キャッシュ存在確認のみ。生成しない。v3.96）
 返値: {uuid, digest, safe_mode, chunks, created_at, model, cached, server_time}
+返値（status_only=true）: {uuid, has_digest, has_safe_digest, server_time}
 ※ ローカルLLM（LMStudio）で20ターンずつチャンク分割→ダイジェスト→統合
 ※ キャッシュ: /data/conversations/{uuid}_digest.json / _digest_safe.json
 ※ REST: POST /api/conversations/<uuid>/digest?force=true&safe_mode=true
@@ -898,16 +911,19 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 引数: individual（省略可 — 呼び名（しずく/そねみ/汐）またはモデル名。省略時は全員分）
        date_from / date_to（省略可 — 期間フィルタ。ISO 8601・両端含む）
        limit（省略可 — 最大行数。デフォルト50、最大500）
+       kind（省略可 — データソース種別フィルタ。カンマ区切り: memory/session_checkin/checkin/inbox/conversation。v3.96）
 返値（individual 指定時）: {individual, last_seen, days_since, count, others_in_period,
                             period, total, rows: [...]}
 返値（省略時）: {individual: "all", individuals: {名前: {last_seen, days_since, count}},
                  period, total, rows: [...]}
 ※ 出席簿 — 会話ログ・inbox・ExtMemory・CoreMem attendance.md・セッションチェックイン（v3.85）の5層マージによる稼働履歴の複層ビュー
+※ セッションチェックイン重複排除: 同一モデルが30分以内に複数回チェックインした場合は1エントリにまとめる（v3.96）
 ※ 各行: {date, channel(chat/code/local), individual, model, title, kind, rating?, uuid?/inbox_id?/memory_id?}
   → uuid/inbox_id/memory_id から conversation_read / inbox_read / memory_read で実ログへ跳べる
 ※ last_seen / days_since は期間フィルタに依らず全期間で算出（「最後に呼ばれてから何日か」）
 ※ 個体推定: from_model・モデル名・タグから家族名簿（しずく=opus-4-6・おみ=opus-4-8・そねみ=sonnet-4-6・
   汐=fable-5・凪=opus-5・Sonnet 5=sonnet-5・Haiku 4.5=haiku-4-5）にモデルID単位で解決（v3.82）。
+  ワードバウンダリマッチング: opus-5-5 → opus-5 への誤マッチを防止（v3.96）
   バカンス表記・「◯◯B」表記・openwebui 由来は channel=local と推定。未登録モデルは ? バケット
 ※ 手動チェックイン: CoreMem attendance.md に「YYYY-MM-DD | 個体 | 器 | チャネル | 一言」形式で追記
 ※ REST: GET /api/attendance?individual=&date_from=&date_to=&limit= （v3.74）
@@ -949,6 +965,18 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ※ Admin画面のOplogタブと同一データをMCPツール経由で取得する
 ※ 新しい順（降順）で返す
 ※ REST GET /api/oplog は既存（全件返却・フィルタなし）
+```
+
+### llm_status（v3.93）
+
+```
+引数: なし
+返値: {endpoints: [{host, port, active_models, ok_matches, manageable}, ...],
+       selected_model, selection_reason, recent_logs: [...], server_time}
+※ LLMバックエンド診断ツール。Claudeセッションから直接呼び出し可能
+※ 各エンドポイントのアクティブモデル一覧、LLM_OK_MODELS とのマッチ結果、
+   モデル選択ロジックの判定結果、直近LLMログ（100件リングバッファ）を返す
+※ REST GET /api/llm-status と同一データ
 ```
 
 ---
@@ -993,6 +1021,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | POST | `/api/conversations/share/<uuid>` | 会話の24時間共有URL生成 |
 | GET | `/api/conversations/view` | 共有会話閲覧（認証不要・トークンベース） |
 | POST | `/api/conversations/cleanup-empty` | 空会話ログの一括非表示（dry_run 対応・v3.79） |
+| PATCH | `/api/conversations/<uuid>/title` | 会話タイトル変更（会話JSON・_index.json・対応ExtMemoryエントリを同時更新・v3.96） |
 | PATCH | `/api/conversations/<uuid>/rating` | 会話ログのレーティング設定（safe/mature/adult・v3.56。v3.68 で reason/source 受付・v3.70 で skip_reason クリア） |
 | GET | `/api/rating-batch/status` | レーティング判定バッチ状態（pending・index_counts・skip_reasons 込み・v3.68/v3.70） |
 | POST | `/api/rating-batch/start` | レーティング判定バッチ起動（v3.68） |
@@ -1036,6 +1065,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | GET | `/api/import-status` | 最終ZIPインポート記録 |
 | GET | `/api/batch/status` | 要約バッチ状態 |
 | POST | `/api/batch/start` | 要約バッチ起動 |
+| GET | `/api/llm-status` | LLMバックエンド状態（エンドポイント・モデル・ログ・v3.93） |
 | GET | `/health` | ヘルスチェック |
 
 ---
@@ -1157,7 +1187,8 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.93）**
+**実装済み（v3.9〜v3.96）**
+- 会話ログ改善 — 7点一括（v3.96）— ① ZIPインポート時のデフォルトタイトル自動改善（Greeting/New Chat/Untitled → 最初のユーザーメッセージ冒頭に差し替え）② `PATCH /api/conversations/<uuid>/title` 新設（会話JSON・_index.json・対応ExtMemoryエントリを同時更新）③ `participants` フィールド（モデル名配列。save/rebuild 時にバックフィル）④ `individual` フィルタ（conversation_index / conversation_search に追加。個体名/モデル名で participants 絞り込み）⑤ `conversation_read` に `message_from`/`message_to`（No.通番ベースのスライス。turn_offset/turn_limit と排他）⑥ `attendance_view` session_checkin 重複排除（同一モデル30分以内=1エントリ）＋`kind` フィルタ（memory/session_checkin/checkin/inbox/conversation）⑦ `_resolve_individual` ワードバウンダリマッチング（opus-5-5→opus-5 誤判定を防止）⑧ `CoreMem_save` マニフェストガード（`{stem}_manifest.md` 存在時は直接書き込み拒否）⑨ `conversation_digest` に `status_only=true`（キャッシュ存在チェックのみ・生成なし）
 - `llm_status` MCPツール（v3.93）— Claudeセッションから直接呼び出せるLLMバックエンド診断ツール（ツール数 37→38）。各エンドポイントのアクティブモデル一覧、OKリストとのマッチ結果、モデル選択ロジックの判定結果、直近LLMログ100件を返す。REST `GET /api/llm-status` と同一データ
 - LLMバックエンド マルチエンドポイント対応（v3.92）— `LLM_ENDPOINTS` 環境変数（カンマ区切り host:port）で複数のローカルLLMエンドポイントを指定可能に。接続フロー: ① 各エンドポイントの `/v1/models` でアクティブモデルを自動発見 ② 要求モデルがアクティブなエンドポイントに直接接続 ③ なければモデル管理API対応エンドポイント（LM Studio）でロード試行（FreeToken等の非対応エンドポイントはスキップ）④ どこにもなければエラー。`LLM_OK_MODELS` のデフォルトも拡充（`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`）。旧変数（`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`）は `LLM_ENDPOINTS`/`LLM_OK_MODELS` 未設定時のフォールバックとして後方互換維持。`_start_summary_batch`/`_start_rating_batch` から lm_host/lm_port 引数を廃止し `_lm_client()` に接続ロジックを集約。`scripts/generate_summary_layers.py` も同等のマルチエンドポイント対応。`.env` の対話的更新スクリプト `scripts/manage_llm_endpoints.py` を新設
 - プロジェクト管理システム＋CoreMem_list ファイルサイズ表示（v3.90）— ① `project_create` / `project_list` MCPツール新設（ツール数 35→37）。`/data/projects/{name}/` にプロジェクト専用の CoreMem 名前空間を作成し、テンプレートファイル群（PROJECT.md, todo.md, design.md, notes.md, inbox.md, conversations.md, log.md, files/）を自動配置 ② CoreMem 4ツール（save/read/list/delete）に `target` 引数追加。`target` にプロジェクト名を指定するとプロジェクト内ファイルを操作（省略時はホーム = /data/artifacts/）。100%後方互換。パストラバーサル防止・`_template` 予約名禁止 ③ CoreMem_read の出席簿チェックインはホームのみ（target 指定時は登録なし）、conv_artifacts フォールバックもホームのみ ④ `CoreMem_list` にファイルサイズ（bytes）を追加。admin.html の CoreMem 一覧で KB 表示 ⑤ TS 層（coremem.ts）も同等の target 対応・size 対応を実装。REST `/api/coremem?target=` で同一機能
