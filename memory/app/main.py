@@ -3,6 +3,22 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.96 (2026-09-28) - ログ機能改善7点バッチ
+    - インポート時デフォルトタイトル自動改善: Greeting/New Chat/Untitled等のデフォルトタイトルを
+      最初のユーザーメッセージ冒頭に自動置換（import_zip + _save_conversations + index/rebuild）
+    - PATCH /api/conversations/<uuid>/title: 会話タイトル変更API新設。会話JSON + _index.json +
+      対応ExtMemoryエントリのtitleを同時更新
+    - participants フィールド: 会話の全メッセージからモデル名を収集し配列で保持。
+      _extract_participants() 新設。_save_conversations + index/rebuild でバックフィル
+    - conversation_index / conversation_search に individual フィルタ追加:
+      個体名（しずく等）またはモデル名で会話を絞り込み可能
+    - conversation_read: message_from / message_to パラメータ追加（No.指定でスライス。
+      turn_offset/turn_limit との併用不可）
+    - attendance_view: session_checkin 重複削減（同一モデル30分以内は1件に抑制）+
+      kind フィルタ追加（memory/session_checkin/checkin/inbox/conversation）
+    - _resolve_individual: ワードバウンダリ付きマッチで opus-5-5 → opus-5 の誤マッチを防止
+    - CoreMem_save: {stem}_manifest.md が存在する名前への直接書き込みをエラーで拒否
+    - conversation_digest: status_only=true パラメータ追加（キャッシュ有無の確認のみ・生成しない）
   v3.95 (2026-09-07) - Qwen ThinkingBlockでLLMレスポンスパース失敗するバグ修正
     - _llm_extract_text()ヘルパー追加: ThinkingBlock(type!=text)をスキップしTextBlockのみ抽出
     - main.py内の全7箇所 + scripts/generate_summary_layers.py 2箇所を修正
@@ -657,7 +673,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.95'
+VERSION = '3.96'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1299,6 +1315,9 @@ def api_conversations_search():
         index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= to_ + 'T23:59:59']
     if terms and body_search:
         index = [e for e in index if _conv_body_match_terms(e, terms)]
+    individual = request.args.get('individual', '')
+    if individual:
+        index = [e for e in index if _conv_individual_match(e, individual)]
     index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     return jsonify(index[:limit])
 
@@ -1309,11 +1328,14 @@ def api_conversations_index():
     limit  = min(int(request.args.get('limit',  50)), 500)
     offset = max(int(request.args.get('offset',  0)), 0)
     include_hidden = request.args.get('include_hidden', '').lower() in ('true', '1')
+    individual = request.args.get('individual', '')
     index  = _load_conv_index()
     if not include_hidden:
         index = [e for e in index if not e.get('hidden')]
     if search:
         index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
+    if individual:
+        index = [e for e in index if _conv_individual_match(e, individual)]
     index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     total  = len(index)
     items  = index[offset:offset + limit]
@@ -1361,6 +1383,27 @@ def _extract_model_from_conv(conv):
     return None
 
 
+def _extract_participants(conv):
+    """会話の全メッセージからモデル名を収集し、重複排除した配列で返す（v3.96）"""
+    models = []
+    seen = set()
+    for msg in conv.get('chat_messages') or []:
+        if msg.get('sender') == 'human' or msg.get('role') == 'user':
+            continue
+        m = msg.get('model') or msg.get('modelName')
+        if m and m not in seen:
+            models.append(m)
+            seen.add(m)
+    # per-message model がない場合、トップレベルの model や _extract_model_from_conv の結果を使う
+    if not models:
+        top = conv.get('model')
+        if not top:
+            top = _extract_model_from_conv(conv)
+        if top:
+            models = [top]
+    return models
+
+
 def _msg_text(msg):
     """メッセージからテキスト本文を抽出するヘルパー"""
     text = msg.get('text') or ''
@@ -1377,6 +1420,7 @@ def _msg_text(msg):
 def api_conversations_index_rebuild():
     rebuilt = 0
     model_backfilled = 0
+    titles_improved = 0
     new_index = []
     # v3.79: hidden フラグは会話JSONに保存されないため、旧インデックスから引き継ぐ
     old_index = {e.get('uuid'): e for e in _load_conv_index()}
@@ -1404,13 +1448,22 @@ def api_conversations_index_rebuild():
                     except Exception:
                         pass
                     model_backfilled += 1
+            title = conv.get('name') or conv.get('title') or uid[:8]
+            improved = _improve_conv_title(conv)
+            if improved:
+                title = improved
+                titles_improved += 1
             meta = {
                 'uuid':          uid,
-                'title':         conv.get('name') or conv.get('title') or uid[:8],
+                'title':         title,
                 'created_at':    conv.get('created_at', ''),
                 'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
                 'message_count': len(conv.get('chat_messages') or []),
             }
+            # v3.96: participants 抽出
+            participants = _extract_participants(conv)
+            if participants:
+                meta['participants'] = participants
             for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason',
                       'model', 'source'):
                 if conv.get(k):
@@ -1422,8 +1475,8 @@ def api_conversations_index_rebuild():
             rebuilt += 1
     new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     _save_conv_index(new_index)
-    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled}')
-    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled})
+    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled} titles_improved={titles_improved}')
+    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved})
 
 @app.route('/api/conversations/cleanup-empty', methods=['POST'])
 @require_auth
@@ -1478,6 +1531,18 @@ def api_conversations_annotations(uuid):
 def api_conversations_digest(uuid):
     force = request.args.get('force', '').lower() in ('true', '1')
     safe_mode = request.args.get('safe_mode', '').lower() in ('true', '1')
+    status_only = request.args.get('status_only', '').lower() in ('true', '1')
+    if status_only:
+        conv_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}.json')
+        if not os.path.exists(conv_path):
+            return jsonify({'error': f'conversation not found: {uuid}'}), 404
+        normal_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_digest.json')
+        safe_path = os.path.join(CONVERSATIONS_DIR, f'{uuid}_digest_safe.json')
+        return jsonify({
+            'uuid': uuid, 'status_only': True,
+            'has_digest': os.path.exists(normal_path),
+            'has_safe_digest': os.path.exists(safe_path),
+        })
     result = _conversation_digest(uuid, force=force, safe_mode=safe_mode)
     if 'error' in result:
         return jsonify(result), 404
@@ -2046,6 +2111,13 @@ def api_coremem_save(name):
     if not _validate_artifact_name(name):
         abort(400)
     base_dir = _resolve_rest_target()
+    # v3.96: manifest ガード
+    stem, ext = os.path.splitext(name)
+    if ext == '.md' and not stem.endswith('_manifest'):
+        artifacts_dir = base_dir or ARTIFACTS_DIR
+        manifest_path = os.path.join(artifacts_dir, f'{stem}_manifest.md')
+        if os.path.exists(manifest_path) or os.path.islink(manifest_path):
+            return jsonify({'error': f'{name} は分割管理されています'}), 409
     data = request.get_json()
     if not data or 'content' not in data:
         abort(400)
@@ -3037,6 +3109,46 @@ def api_conversation_rating(conv_uuid):
                     'rating_reason': reason, 'rating_source': source})
 
 
+@app.route('/api/conversations/<conv_uuid>/title', methods=['PATCH'])
+@require_auth
+def api_conversation_title(conv_uuid):
+    """会話ログのタイトル変更（v3.96）。
+    body: {"title": "新しいタイトル"}
+    会話JSON・_index.json・対応するExtMemoryエントリのtitleを同時更新"""
+    fpath = os.path.join(CONVERSATIONS_DIR, f'{conv_uuid}.json')
+    if not os.path.exists(fpath):
+        abort(404)
+    data = request.get_json(silent=True) or {}
+    new_title = (data.get('title') or '').strip()
+    if not new_title:
+        return jsonify({'error': 'title is required'}), 400
+    with open(fpath, encoding='utf-8') as f:
+        conv = json.load(f)
+    old_title = conv.get('name') or conv.get('title') or ''
+    conv['name'] = new_title
+    if 'title' in conv:
+        conv['title'] = new_title
+    with open(fpath, 'w', encoding='utf-8') as f:
+        json.dump(conv, f, ensure_ascii=False, indent=2)
+    index = _load_conv_index()
+    for m in index:
+        if m.get('uuid') == conv_uuid:
+            m['title'] = new_title
+    _save_conv_index(index)
+    # ExtMemoryエントリのタイトルも更新
+    for entry in load_all_entries():
+        if entry.get('source_thread') == conv_uuid and not entry.get('deleted'):
+            entry_title = entry.get('title', '')
+            if entry_title.startswith('[会話] '):
+                entry['title'] = f'[会話] {new_title}'
+                entry['updated_at'] = now_jst()
+                with open(f'{DATA_DIR}/{entry["id"]}.json', 'w') as ef:
+                    json.dump(entry, ef, ensure_ascii=False, indent=2)
+    rebuild_index()
+    _log_info(f'conversation title: {conv_uuid} "{old_title}" -> "{new_title}"')
+    return jsonify({'uuid': conv_uuid, 'title': new_title, 'old_title': old_title})
+
+
 @app.route('/api/conv-artifacts')
 @require_auth
 def api_conv_artifacts_list():
@@ -3118,6 +3230,24 @@ def _conv_rating_match(entry, rating_filter):
     if rating_filter == 'safe':
         return r == 'safe'
     return r == rating_filter
+
+
+def _conv_individual_match(entry, individual_filter):
+    """インデックスエントリが指定個体/モデルに合致するか判定（v3.96）。
+    participants 配列があればそれを検索、なければ model フィールドで判定"""
+    resolved = _resolve_individual(individual_filter)
+    participants = entry.get('participants') or []
+    if not participants:
+        m = entry.get('model', '')
+        if m:
+            participants = [m]
+    for p in participants:
+        p_individual = _resolve_individual(p)
+        if resolved and p_individual == resolved:
+            return True
+        if individual_filter.lower() in str(p).lower():
+            return True
+    return False
 
 
 def _conv_redact_status(uuid):
@@ -3211,13 +3341,20 @@ def _save_conversations(conversations):
                     conv[k] = old[k]
         with open(fpath, 'w', encoding='utf-8') as f:
             json.dump(conv, f, ensure_ascii=False, indent=2)
+        title = conv.get('name') or conv.get('title') or uid[:8]
+        improved = _improve_conv_title(conv)
+        if improved:
+            title = improved
         meta = {
             'uuid':          uid,
-            'title':         conv.get('name') or conv.get('title') or uid[:8],
+            'title':         title,
             'created_at':    conv.get('created_at', ''),
             'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
             'message_count': msg_count,
         }
+        participants = _extract_participants(conv)
+        if participants:
+            meta['participants'] = participants
         for k in _CONV_SERVER_FIELDS:
             if conv.get(k):
                 meta[k] = conv[k]
@@ -3275,6 +3412,36 @@ def _remark_entries_for_update(updated_uuids):
 
 
 # ── source_thread 自動紐づけ（v3.60）─────────────────────────────────
+
+# v3.96: デフォルトタイトル判定＋自動改善
+_DEFAULT_TITLES = {'greeting', 'new chat', 'untitled', 'new conversation', 'chat', ''}
+
+def _is_default_title(title):
+    """Anthropicのデフォルトタイトルかどうか判定する"""
+    return (title or '').strip().lower() in _DEFAULT_TITLES
+
+def _auto_title_from_conv(conv, max_len=40):
+    """会話の最初のユーザーメッセージ冒頭からタイトルを生成する"""
+    for m in conv.get('chat_messages', []):
+        role = m.get('sender') or m.get('role') or ''
+        if role not in ('human', 'user'):
+            continue
+        text = _msg_text(m).strip()
+        if not text:
+            continue
+        text = text.replace('\n', ' ').strip()
+        if len(text) > max_len:
+            text = text[:max_len] + '…'
+        return text
+    return None
+
+def _improve_conv_title(conv):
+    """デフォルトタイトルなら自動改善したタイトルを返す。改善不要ならNone"""
+    title = conv.get('name') or conv.get('title') or ''
+    if not _is_default_title(title):
+        return None
+    return _auto_title_from_conv(conv)
+
 
 _MEMORY_ID_RE = re.compile(r'memory_id\s*[:：]\s*[`"\'*＊「]*([0-9]{8}_[0-9]{6}_[^\s`"\'。、，,）)\]】」…]+)')
 
@@ -3401,6 +3568,9 @@ def import_zip():
                 continue
 
             title = conv.get('name') or conv.get('title') or uid[:8]
+            improved = _improve_conv_title(conv)
+            if improved:
+                title = improved
             ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
             entry_id = f'{ts}_{i:04d}_{uid[:8]}'
             entry = {
@@ -5342,13 +5512,23 @@ def _save_session_checkins_raw(entries):
         _log_error(f'session_checkins write error: {e}')
 
 
+_SESSION_CHECKIN_DEDUP_MINUTES = 30
+
 def _session_checkin(model=None, permanent=True):
     """セッションチェックインを記録する。
     permanent=True: 本登録（モデル名付き、TTLなし）
-    permanent=False: 仮登録（モデル不明、TTL付き）"""
+    permanent=False: 仮登録（モデル不明、TTL付き）
+    v3.96: 同一モデルの重複抑制（30分以内は1件に）"""
     entries = _load_session_checkins()
     now_ts = now_jst()
+    now_dt = datetime.now(JST)
     if not permanent:
+        # 仮登録も重複抑制
+        for e in reversed(entries):
+            if e.get('model') == 'モデル不明' and e.get('ttl_minutes') is not None:
+                ts = _parse_iso_ts(e.get('timestamp', ''))
+                if ts and (now_dt - ts).total_seconds() < _SESSION_CHECKIN_DEDUP_MINUTES * 60:
+                    return
         entries.append({
             'model': 'モデル不明',
             'individual': None,
@@ -5357,6 +5537,13 @@ def _session_checkin(model=None, permanent=True):
         })
     else:
         individual = _resolve_individual(model) if model else None
+        # 同一モデルの本登録が短時間で重複するのを防ぐ
+        for e in reversed(entries):
+            if e.get('model') == model and e.get('ttl_minutes') is None:
+                ts = _parse_iso_ts(e.get('timestamp', ''))
+                if ts and (now_dt - ts).total_seconds() < _SESSION_CHECKIN_DEDUP_MINUTES * 60:
+                    return
+                break
         entries.append({
             'model': model or 'モデル不明',
             'individual': individual,
@@ -5410,7 +5597,8 @@ _LOCAL_MARKER_RE = _re.compile(r'バカンス|vacation|ローカル|local|gemma|
 
 
 def _resolve_individual(*texts):
-    """モデル名・呼び名・タグ群から個体名を推定する。未登録モデルは None（フォールバック禁止）"""
+    """モデル名・呼び名・タグ群から個体名を推定する。未登録モデルは None（フォールバック禁止）。
+    v3.96: ワードバウンダリ付きマッチで opus-5-5 → opus-5 の誤マッチを防止"""
     joined = ' '.join(str(t) for t in texts if t)
     if not joined:
         return None
@@ -5418,10 +5606,21 @@ def _resolve_individual(*texts):
         if name in joined:
             return name
     low = joined.lower()
+    best = None
+    best_len = -1
     for name, patterns in _FAMILY_ROSTER.items():
-        if any(p in low for p in patterns):
-            return name
-    return None
+        for p in patterns:
+            idx = low.find(p)
+            if idx < 0:
+                continue
+            # ワードバウンダリ: パターンの直後が英数字・ハイフン・ドットなら部分一致→スキップ
+            end = idx + len(p)
+            if end < len(low) and low[end] in '0123456789abcdefghijklmnopqrstuvwxyz-.':
+                continue
+            if len(p) > best_len:
+                best_len = len(p)
+                best = name
+    return best
 
 
 def _is_local_actor(models):
@@ -5515,9 +5714,12 @@ def _attendance_rows():
     return rows
 
 
-def _attendance_view(individual=None, date_from='', date_to='', limit=50):
-    """出席簿ビュー本体。individual 指定時は最終稼働日・経過日数・期間内の他個体サマリ付き"""
+def _attendance_view(individual=None, date_from='', date_to='', limit=50, kind_filter=None):
+    """出席簿ビュー本体。individual 指定時は最終稼働日・経過日数・期間内の他個体サマリ付き。
+    kind_filter: set of kind values to include (v3.96)"""
     all_rows = _attendance_rows()
+    if kind_filter:
+        all_rows = [r for r in all_rows if r.get('kind') in kind_filter]
     resolved = _resolve_individual(individual) if individual else None
 
     def _match(r):
@@ -6322,8 +6524,10 @@ def api_attendance():
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
     limit = int(request.args.get('limit', '50'))
+    kind_raw = request.args.get('kind', '')
+    kinds = set(k.strip() for k in kind_raw.split(',') if k.strip()) if kind_raw else None
     return jsonify(_attendance_view(individual=individual, date_from=date_from,
-                                    date_to=date_to, limit=limit))
+                                    date_to=date_to, limit=limit, kind_filter=kinds))
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -7200,26 +7404,28 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_index",
-        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。各アイテムに rating（safe/mature/adult・未判定は null）と rating_source（auto/manual）を含む（v3.70）。rating フィルタで特定レーティングのみ絞り込み可（v3.76）。キーワード全文検索はconversation_search、中身の取得はconversation_read",
+        "description": "会話ログのタイトル一覧を日付降順で返す。UUIDが不明なときの絞り込みに使う。各アイテムに rating・participants（参加モデル配列）を含む。individual フィルタで特定個体の会話のみ絞り込み可",
         "inputSchema": {"type": "object", "properties": {
             "search": {"type": "string",  "description": "タイトルに対する部分一致フィルタ（省略可）"},
             "limit":  {"type": "integer", "description": "最大取得件数（デフォルト50、最大500）"},
             "offset": {"type": "integer", "description": "スキップ件数（ページネーション用、デフォルト0）"},
-            "rating": {"type": "string",  "description": "ratingで絞り込み（'safe'/'mature'/'adult'）。省略時はフィルタなし（v3.76）"},
-            "include_redact_status": {"type": "boolean", "description": "trueの場合、adult会話に伏せ字状態（redact_status: not_generated/pending_approval/approved）を付与。デフォルト: false（v3.76）"}
+            "rating": {"type": "string",  "description": "ratingで絞り込み（'safe'/'mature'/'adult'）。省略時はフィルタなし"},
+            "individual": {"type": "string", "description": "個体名またはモデル名で絞り込み（例: 'しずく' / 'claude-opus-4-6'）。participants配列を検索（v3.96）"},
+            "include_redact_status": {"type": "boolean", "description": "trueの場合、adult会話に伏せ字状態（redact_status: not_generated/pending_approval/approved）を付与。デフォルト: false"}
         }, "required": []}
     },
     {
         "name": "conversation_search",
-        "description": "過去の会話ログをキーワード・日付で検索する。複数キーワードはスペース区切りでAND一致（v3.81）。タイトルと一致する会話のメタデータ（uuid・タイトル・日付・件数・rating・rating_source）を返す（rating は v3.70 から明示。未判定は null）。body_search=trueでメッセージ本文も検索（重い）。rating フィルタで特定レーティングのみ絞り込み可（v3.76）",
+        "description": "過去の会話ログをキーワード・日付で検索する。複数キーワードはスペース区切りでAND一致。body_search=trueでメッセージ本文も検索。individual フィルタで特定個体の会話のみ絞り込み可",
         "inputSchema": {"type": "object", "properties": {
-            "q":         {"type": "string",  "description": "検索キーワード（スペース区切りでAND一致・v3.81）"},
+            "q":         {"type": "string",  "description": "検索キーワード（スペース区切りでAND一致）"},
             "date_from": {"type": "string",  "description": "検索開始日（ISO 8601形式 例: 2026-06-01）"},
             "date_to":   {"type": "string",  "description": "検索終了日（ISO 8601形式 例: 2026-06-30）"},
             "limit":     {"type": "integer", "description": "最大取得件数（デフォルト5）"},
-            "body_search": {"type": "boolean", "description": "trueの場合、メッセージ本文も検索対象にする（タイトル不一致でも本文ヒットなら返す）。デフォルト: false"},
+            "body_search": {"type": "boolean", "description": "trueの場合、メッセージ本文も検索対象にする。デフォルト: false"},
+            "individual": {"type": "string", "description": "個体名またはモデル名で絞り込み（例: 'しずく' / 'claude-opus-4-6'）。participants配列を検索（v3.96）"},
             "rating":    {"type": "string",  "description": "ratingで絞り込み（'safe'/'mature'/'adult'）。省略時はフィルタなし"},
-            "include_redact_status": {"type": "boolean", "description": "trueの場合、adult会話に伏せ字状態（redact_status: not_generated/pending_approval/approved）を付与。デフォルト: false"}
+            "include_redact_status": {"type": "boolean", "description": "trueの場合、adult会話に伏せ字状態を付与。デフォルト: false"}
         }, "required": []}
     },
     {
@@ -7238,26 +7444,29 @@ _MCP_TOOLS = [
     },
     {
         "name": "conversation_read",
-        "description": "指定したUUIDの会話の全メッセージを取得する。conversation_searchで見つけた会話の中身を読む。include_thinking=trueでthinkingブロックも含める（データに存在する場合）。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）。include_body=falseで本文を省略し注記のみ取得可能。turn_offset/turn_limitでメッセージ単位スライス（turn_offset負値=末尾起点・turn_limit=0で全件）",
+        "description": "指定したUUIDの会話の全メッセージを取得する。include_thinking=trueでthinkingブロックも含める。include_annotations=trueで注記をインライン表示（各行に[No.X]通番付き）。メッセージ範囲指定: message_from/message_to（No.指定・直感的）またはturn_offset/turn_limit（従来互換）",
         "inputSchema": {"type": "object", "properties": {
             "uuid": {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
             "include_thinking": {"type": "boolean", "description": "trueの場合、thinkingブロックも💭[thinking]マーカー付きで含める。デフォルト: false"},
             "thinking_limit": {"type": "integer", "description": "thinking 1件あたりの文字数上限（デフォルト1500、0以下で無制限）"},
             "include_annotations": {"type": "boolean", "description": "trueの場合、log_annotateで積んだ注記を該当位置にインライン表示し、各メッセージに[No.X]通番を付ける。デフォルト: false"},
             "include_body": {"type": "boolean", "description": "falseの場合、本文を省略し注記のみ返す（include_annotations=trueと併用）。デフォルト: true"},
-            "turn_offset": {"type": "integer", "description": "先頭から飛ばすメッセージ数。負値で末尾起点（例: -6 = 最後の6件）。デフォルト: 0"},
-            "turn_limit": {"type": "integer", "description": "返す最大メッセージ数。0=無制限（全件）。デフォルト: 0"},
-            "include_raw": {"type": "boolean", "description": "rating=adult の会話はデフォルトで safe ダイジェストに差し替えられる。trueを明示すると原文を返す（v3.56）"},
-            "redact": {"type": "boolean", "description": "rating=adult の会話で承認済み伏せ字ログを返す。未生成・未承認なら生成手順を案内する（v3.69）"}
+            "message_from": {"type": "integer", "description": "表示開始のメッセージ番号（No.X の X。1始まり）。message_to と併用。turn_offset/turn_limit との併用不可（v3.96）"},
+            "message_to": {"type": "integer", "description": "表示終了のメッセージ番号（この番号を含む）。省略時は message_from から末尾まで（v3.96）"},
+            "turn_offset": {"type": "integer", "description": "先頭から飛ばすメッセージ数。負値で末尾起点。message_from との併用不可。デフォルト: 0"},
+            "turn_limit": {"type": "integer", "description": "返す最大メッセージ数。0=無制限。message_from との併用不可。デフォルト: 0"},
+            "include_raw": {"type": "boolean", "description": "rating=adult の会話でも原文を返す"},
+            "redact": {"type": "boolean", "description": "rating=adult の会話で承認済み伏せ字ログを返す"}
         }, "required": ["uuid"]}
     },
     {
         "name": "conversation_digest",
-        "description": "会話ログのダイジェストを生成・取得する。ローカルLLMで要約。safe_mode=trueでポリシーセーフな抽象表現に変換",
+        "description": "会話ログのダイジェストを生成・取得する。ローカルLLMで要約。safe_mode=trueでポリシーセーフな抽象表現に変換。status_only=trueでキャッシュ有無の確認のみ（生成しない・v3.96）",
         "inputSchema": {"type": "object", "properties": {
-            "uuid":      {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
-            "force":     {"type": "boolean", "description": "trueでキャッシュを無視して再生成。デフォルト: false"},
-            "safe_mode": {"type": "boolean", "description": "trueでポリシーセーフな抽象表現に変換。デフォルト: false"}
+            "uuid":        {"type": "string", "description": "会話のUUID（conversation_searchで取得）"},
+            "force":       {"type": "boolean", "description": "trueでキャッシュを無視して再生成。デフォルト: false"},
+            "safe_mode":   {"type": "boolean", "description": "trueでポリシーセーフな抽象表現に変換。デフォルト: false"},
+            "status_only": {"type": "boolean", "description": "trueでキャッシュ状態の確認のみ（生成しない）。デフォルト: false"}
         }, "required": ["uuid"]}
     },
     {
@@ -7433,7 +7642,8 @@ _MCP_TOOLS = [
             "individual": {"type": "string", "description": "呼び名（しずく/そねみ/汐）またはモデル名。省略時は全員分の個体別サマリ"},
             "date_from":  {"type": "string", "description": "期間開始日（ISO 8601 例: 2026-06-01）"},
             "date_to":    {"type": "string", "description": "期間終了日（同・両端含む）"},
-            "limit":      {"type": "integer", "description": "最大行数（デフォルト50、最大500）"}
+            "limit":      {"type": "integer", "description": "最大行数（デフォルト50、最大500）"},
+            "kind":       {"type": "string", "description": "行のソース種別フィルタ。カンマ区切りで複数指定可。値: memory / session_checkin / checkin / inbox / conversation（v3.96）"}
         }, "required": []}
     },
     {
@@ -7623,6 +7833,15 @@ def _handle_tool_call_raw(name, arguments):
             base_dir = _resolve_artifacts_dir(target)
             if not os.path.isdir(base_dir):
                 return {"error": f"project not found: {target}"}
+        # v3.96: manifest が存在する名前への直接書き込みをガード
+        stem, ext = os.path.splitext(n)
+        if ext == '.md' and not stem.endswith('_manifest'):
+            manifest_name = f'{stem}_manifest.md'
+            artifacts_dir = base_dir or ARTIFACTS_DIR
+            manifest_path = os.path.join(artifacts_dir, manifest_name)
+            if os.path.exists(manifest_path) or os.path.islink(manifest_path):
+                return {"error": f"{n} は分割管理されています（{manifest_name} が存在）。"
+                        f"個別の分割ファイルに書き込むか、manifest を削除してから書き込んでください"}
         if m == "str_replace":
             result = _artifacts_save(n, "", source_conversation_uuid=arguments.get("source_conversation_uuid"),
                                      mode="str_replace",
@@ -7757,12 +7976,15 @@ def _handle_tool_call_raw(name, arguments):
         limit  = min(int(arguments.get("limit",  50)), 500)
         offset = max(int(arguments.get("offset",  0)), 0)
         rating_filter = arguments.get("rating")
+        individual_filter = arguments.get("individual")
         include_redact_status = bool(arguments.get("include_redact_status", False))
         index  = [e for e in _load_conv_index() if not e.get('hidden')]
         if search:
             index = [e for e in index if search in (e.get('title', '') + ' ' + e.get('uuid', '')).lower()]
         if rating_filter:
             index = [e for e in index if _conv_rating_match(e, rating_filter)]
+        if individual_filter:
+            index = [e for e in index if _conv_individual_match(e, individual_filter)]
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
         total = len(index)
         items = [_conv_rating_view(e) for e in index[offset:offset + limit]]
@@ -7781,6 +8003,7 @@ def _handle_tool_call_raw(name, arguments):
         limit     = min(int(arguments.get("limit", 5)), 50)
         body_search = bool(arguments.get("body_search", False))
         rating_filter = arguments.get("rating")
+        individual_filter = arguments.get("individual")
         include_redact_status = bool(arguments.get("include_redact_status", False))
         index     = [e for e in _load_conv_index() if not e.get('hidden')]
         if terms and not body_search:
@@ -7791,6 +8014,8 @@ def _handle_tool_call_raw(name, arguments):
             index = [e for e in index if (e.get('updated_at') or e.get('created_at', '')) <= date_to + 'T23:59:59']
         if rating_filter:
             index = [e for e in index if _conv_rating_match(e, rating_filter)]
+        if individual_filter:
+            index = [e for e in index if _conv_individual_match(e, individual_filter)]
         if terms and body_search:
             index = [e for e in index if _conv_body_match_terms(e, terms)]
         index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
@@ -7834,8 +8059,19 @@ def _handle_tool_call_raw(name, arguments):
         include_body        = bool(arguments.get("include_body", True))
         raw_tl = arguments.get("thinking_limit")
         thinking_limit = int(raw_tl) if raw_tl is not None else 1500  # 0 / 負数 = 無制限
-        turn_offset = int(arguments.get("turn_offset", 0) or 0)  # 負値=末尾起点
-        turn_limit  = int(arguments.get("turn_limit", 0) or 0)   # 0=無制限
+        # v3.96: message_from/message_to（No.指定）→ turn_offset/turn_limit に変換
+        msg_from = arguments.get("message_from")
+        msg_to   = arguments.get("message_to")
+        if msg_from is not None:
+            msg_from = int(msg_from)
+            turn_offset = max(msg_from - 1, 0)
+            if msg_to is not None:
+                turn_limit = max(int(msg_to) - turn_offset, 0)
+            else:
+                turn_limit = 0
+        else:
+            turn_offset = int(arguments.get("turn_offset", 0) or 0)  # 負値=末尾起点
+            turn_limit  = int(arguments.get("turn_limit", 0) or 0)   # 0=無制限
         fpath = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
         if not os.path.exists(fpath):
             return {"error": f"conversation not found: {uid}"}
@@ -7975,6 +8211,19 @@ def _handle_tool_call_raw(name, arguments):
         uid = arguments.get("uuid", "")
         if not uid:
             return {"error": "uuid is required"}
+        if bool(arguments.get("status_only", False)):
+            conv_path = os.path.join(CONVERSATIONS_DIR, f'{uid}.json')
+            if not os.path.exists(conv_path):
+                return {"error": f"conversation not found: {uid}"}
+            normal_path = os.path.join(CONVERSATIONS_DIR, f'{uid}_digest.json')
+            safe_path = os.path.join(CONVERSATIONS_DIR, f'{uid}_digest_safe.json')
+            return {
+                "uuid": uid,
+                "status_only": True,
+                "has_digest": os.path.exists(normal_path),
+                "has_safe_digest": os.path.exists(safe_path),
+                "server_time": now_jst(),
+            }
         return _conversation_digest(
             uid,
             force=bool(arguments.get("force", False)),
@@ -8277,11 +8526,14 @@ def _handle_tool_call_raw(name, arguments):
 
     elif name == "attendance_view":
         try:
+            kind_filter = arguments.get("kind")
+            kinds = set(k.strip() for k in kind_filter.split(',')) if kind_filter else None
             return _attendance_view(
                 individual=arguments.get("individual") or None,
                 date_from=str(arguments.get("date_from") or ''),
                 date_to=str(arguments.get("date_to") or ''),
                 limit=min(int(arguments.get("limit", 50)), 500),
+                kind_filter=kinds,
             )
         except Exception as e:
             _log_error(f'attendance_view error: {e}')
