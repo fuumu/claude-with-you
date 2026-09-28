@@ -3,6 +3,11 @@ mio-memory v3.58  —  Streamable HTTP MCP transport
 準拠仕様: MCP 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 変���履歴:
+  v3.97 (2026-09-28) - rebuild/import時のタイトル改善・participants書き戻しバグ修正
+    - rebuild: _improve_conv_titleとparticipants抽出結果を会話JSONに書き戻すよう修正
+      （従来はインデックスにのみ反映され、会話JSONには未反映だった）
+    - _save_conversations: タイトル改善・participants抽出を会話JSON保存前に行うよう順序変更
+      （従来は保存後に改善していたため会話JSONには反映されなかった）
   v3.96 (2026-09-28) - ログ機能改善7点バッチ
     - インポート時デフォルトタイトル自動改善: Greeting/New Chat/Untitled等のデフォルトタイトルを
       最初のユーザーメッセージ冒頭に自動置換（import_zip + _save_conversations + index/rebuild）
@@ -673,7 +678,7 @@ from flask import Flask, request, jsonify, abort, Response, send_from_directory
 
 app = Flask(__name__)
 
-VERSION = '3.96'
+VERSION = '3.97'
 
 # データルート。運用は常にデフォルト /data（docker マウント）。
 # MIO_DATA_ROOT はローカル特性テスト（tests/）が一時ディレクトリを指すためのフック
@@ -1449,10 +1454,28 @@ def api_conversations_index_rebuild():
                         pass
                     model_backfilled += 1
             title = conv.get('name') or conv.get('title') or uid[:8]
+            conv_dirty = False
             improved = _improve_conv_title(conv)
             if improved:
                 title = improved
                 titles_improved += 1
+                # v3.96: 改善タイトルを会話JSONに書き戻す
+                if conv.get('name'):
+                    conv['name'] = improved
+                else:
+                    conv['title'] = improved
+                conv_dirty = True
+            # v3.96: participants 抽出・書き戻し
+            participants = _extract_participants(conv)
+            if participants and conv.get('participants') != participants:
+                conv['participants'] = participants
+                conv_dirty = True
+            if conv_dirty:
+                try:
+                    with open(fpath, 'w', encoding='utf-8') as f:
+                        json.dump(conv, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
             meta = {
                 'uuid':          uid,
                 'title':         title,
@@ -1460,8 +1483,6 @@ def api_conversations_index_rebuild():
                 'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
                 'message_count': len(conv.get('chat_messages') or []),
             }
-            # v3.96: participants 抽出
-            participants = _extract_participants(conv)
             if participants:
                 meta['participants'] = participants
             for k in ('rating', 'rating_reason', 'rating_source', 'rating_skip_reason',
@@ -3339,12 +3360,20 @@ def _save_conversations(conversations):
             for k in _CONV_SERVER_FIELDS:
                 if k in old and k not in conv:
                     conv[k] = old[k]
-        with open(fpath, 'w', encoding='utf-8') as f:
-            json.dump(conv, f, ensure_ascii=False, indent=2)
+        # v3.96: タイトル改善・participants抽出を会話JSONに書き戻してから保存
         title = conv.get('name') or conv.get('title') or uid[:8]
         improved = _improve_conv_title(conv)
         if improved:
             title = improved
+            if conv.get('name'):
+                conv['name'] = improved
+            else:
+                conv['title'] = improved
+        participants = _extract_participants(conv)
+        if participants:
+            conv['participants'] = participants
+        with open(fpath, 'w', encoding='utf-8') as f:
+            json.dump(conv, f, ensure_ascii=False, indent=2)
         meta = {
             'uuid':          uid,
             'title':         title,
@@ -3352,7 +3381,6 @@ def _save_conversations(conversations):
             'updated_at':    conv.get('updated_at', conv.get('created_at', '')),
             'message_count': msg_count,
         }
-        participants = _extract_participants(conv)
         if participants:
             meta['participants'] = participants
         for k in _CONV_SERVER_FIELDS:
