@@ -1426,6 +1426,8 @@ def api_conversations_index_rebuild():
     rebuilt = 0
     model_backfilled = 0
     titles_improved = 0
+    titles_default = 0
+    titles_no_auto = 0
     new_index = []
     # v3.79: hidden フラグは会話JSONに保存されないため、旧インデックスから引き継ぐ
     old_index = {e.get('uuid'): e for e in _load_conv_index()}
@@ -1456,6 +1458,11 @@ def api_conversations_index_rebuild():
             title = conv.get('name') or conv.get('title') or uid[:8]
             conv_dirty = False
             improved = _improve_conv_title(conv)
+            if _is_default_title(title):
+                titles_default += 1
+                if not improved:
+                    titles_no_auto += 1
+                    _log_info(f'rebuild: default title but no auto: {uid[:8]} name={conv.get("name")!r} title_field={conv.get("title")!r} msgs={len(conv.get("chat_messages") or [])}')
             if improved:
                 title = improved
                 titles_improved += 1
@@ -1496,8 +1503,8 @@ def api_conversations_index_rebuild():
             rebuilt += 1
     new_index.sort(key=lambda e: e.get('updated_at') or e.get('created_at', ''), reverse=True)
     _save_conv_index(new_index)
-    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled} titles_improved={titles_improved}')
-    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved})
+    _log_info(f'conversations_index_rebuild: rebuilt={rebuilt} model_backfilled={model_backfilled} titles_improved={titles_improved} titles_default={titles_default} titles_no_auto={titles_no_auto}')
+    return jsonify({'rebuilt': rebuilt, 'model_backfilled': model_backfilled, 'titles_improved': titles_improved, 'titles_default': titles_default, 'titles_no_auto': titles_no_auto})
 
 @app.route('/api/conversations/cleanup-empty', methods=['POST'])
 @require_auth
