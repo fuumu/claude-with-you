@@ -1539,3 +1539,46 @@ titles (Greeting, etc.) by their content, and allow filtering by model name (`in
 ### Note
 
 The TS proxy under `ts/` forwards conversations index/rebuild to Python (rebuild's title improvement and participants extraction live only on the Python side).
+
+---
+
+## 27. LLM backend selection and diagnostics (v3.92–v3.95)
+
+### Purpose
+
+Automatically choose the local LLM (LM Studio / FreeToken, etc.) used by digest, summary, rating,
+sublimation and redaction from multiple endpoints, and let Claude sessions inspect the choice.
+
+### Configuration
+
+| Variable | Meaning |
+|----------|---------|
+| `LLM_ENDPOINTS` | Comma-separated endpoint list (`host:port`). When unset, one entry is built from `LM_STUDIO_HOST` / `LM_STUDIO_PORT` |
+| `LLM_OK_MODELS` | Comma-separated list of acceptable models, **earlier = higher priority**. Falls back to `MIO_LM_MODEL` |
+
+### Model discovery (`_llm_discover_models`, v3.94)
+
+1. Prefer `/api/v1/models` (LM Studio management API) and return only models with `loaded_instances`
+   (actually loaded) — `/v1/models` lists every downloaded model
+2. If the management API is unsupported (FreeToken, etc.) or fails, fall back to `/v1/models`
+3. A connection failure yields an empty list (5s connect timeout)
+
+### Client selection (`_lm_client`)
+
+1. Collect active models from all endpoints
+2. If `requested_model` is given, a direct match for it wins
+3. Otherwise pick the best active model that is in `LLM_OK_MODELS` (lowest priority index) — no load needed
+4. If no active OK model exists anywhere, on a management-capable endpoint unload loaded non-OK models, then load the first OK model
+5. If nothing works, raise `RuntimeError`. Endpoints without the management API are discover-only (never loaded)
+
+### Response parsing (v3.95)
+
+Qwen and similar models return a leading `ThinkingBlock`; treating the first block as `.text` broke parsing.
+`_llm_extract_text()` extracts only `type == "text"` blocks (every digest / summary / rating / sublimation / redaction call,
+and `scripts/generate_summary_layers.py` as well).
+
+### Diagnostics (v3.92 REST / v3.93 MCP)
+
+- `GET /api/llm-status` and the MCP tool `llm_status` (no arguments, same data)
+- Returns `endpoints{ep: {active_models, management_api, ok_active[]}}` / `ok_models` / `selection` (chosen `endpoint`, `model`, `priority`, or `would_load`) / `recent_logs` (ring buffer of the last 100 entries) / `server_time`
+- Check this first for LLM trouble (no need for docker logs)

@@ -1510,3 +1510,46 @@ CoreMem のファイル空間をプロジェクト単位で分離する。ホー
 ### 補足
 
 `ts/` の TS プロキシは conversations index/rebuild を Python へ転送する（rebuild のタイトル改善・participants 抽出は Python 側に一本化）。
+
+---
+
+## 27. LLMバックエンド選択と診断（v3.92〜v3.95）
+
+### 目的
+
+ダイジェスト・要約・レーティング・昇華・伏せ字が使うローカルLLM（LM Studio / FreeToken 等）を、
+複数エンドポイントから自動で選び、選択結果を Claude セッションからも確認できるようにする。
+
+### 設定
+
+| 変数 | 意味 |
+|------|------|
+| `LLM_ENDPOINTS` | エンドポイントのカンマ区切りリスト（`host:port`）。未設定時は `LM_STUDIO_HOST` / `LM_STUDIO_PORT` から1件構築 |
+| `LLM_OK_MODELS` | 使用してよいモデルのカンマ区切りリスト。**先頭ほど優先**。未設定時は `MIO_LM_MODEL` |
+
+### モデル発見（`_llm_discover_models`・v3.94）
+
+1. `/api/v1/models`（LM Studio の管理API）を優先し、`loaded_instances` を持つ（＝実際にロード中の）モデルだけを返す
+   — `/v1/models` はダウンロード済み全モデルを返してしまうため
+2. 管理API非対応（FreeToken 等）または失敗時は `/v1/models` にフォールバック
+3. 接続失敗は空リスト（接続タイムアウト5秒）
+
+### クライアント選択（`_lm_client`）
+
+1. 全エンドポイントでアクティブモデルを取得
+2. `requested_model` 指定時は、そのモデルの直接マッチを最優先
+3. なければ、アクティブモデルのうち `LLM_OK_MODELS` に含まれるものから、リスト順で最良（priority が最小）を選ぶ（ロード不要）
+4. アクティブなOKモデルがどこにもなければ、管理API対応エンドポイントで、OK外のロード済みモデルをアンロードしてから先頭のOKモデルをロード
+5. 全滅なら `RuntimeError`。管理API非対応のエンドポイントは発見のみでロードしない
+
+### レスポンス解析（v3.95）
+
+Qwen 等は `ThinkingBlock` を先頭に返すため、先頭ブロックを `.text` とみなすとパースに失敗していた。
+`_llm_extract_text()` が `type == "text"` のブロックだけを抽出する（ダイジェスト・要約・レーティング・昇華・伏せ字の全呼び出し、
+`scripts/generate_summary_layers.py` も同様）。
+
+### 診断（v3.92 REST / v3.93 MCP）
+
+- `GET /api/llm-status` と MCP ツール `llm_status`（引数なし・同一データ）
+- 返却: `endpoints{ep: {active_models, management_api, ok_active[]}}` / `ok_models` / `selection`（選ばれた `endpoint`・`model`・`priority`、なければ `would_load`）/ `recent_logs`（直近100件のリングバッファ）/ `server_time`
+- LLM 周りの不調は、まずこれで状況を確認する（docker logs 不要）
