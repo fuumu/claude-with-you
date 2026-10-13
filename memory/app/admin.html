@@ -3613,23 +3613,45 @@ function openEntityById(id) {
 
 // ── Redact tab ──────────────────────────────────────────────────────
 let _redactCurrentUuid = null;
+let _redactItems = [];
+let _redactDateSort = '';  // '' = サーバー順（作成日降順）/ 'asc' / 'desc'
+
+function toggleRedactDateSort() {
+  _redactDateSort = _redactDateSort === 'desc' ? 'asc' : 'desc';
+  renderRedactList();
+}
 
 async function loadRedactStatus() {
   const list = document.getElementById('redact-list');
   list.innerHTML = '<em>Loading...</em>';
   try {
     const r = await fetch('/api/conversations/redact-status', {headers: authHeaders()});
-    const items = await r.json();
-    if (!items.length) { list.innerHTML = '<em>No adult-rated conversations found.</em>'; return; }
+    _redactItems = await r.json();
+    renderRedactList();
+  } catch(e) { list.innerHTML = '<em style="color:red">Error: '+e.message+'</em>'; }
+}
+
+function renderRedactList() {
+  const list = document.getElementById('redact-list');
+  let items = _redactItems;
+  if (!items.length) { list.innerHTML = '<em>No adult-rated conversations found.</em>'; return; }
+  if (_redactDateSort) {
+    const dir = _redactDateSort === 'asc' ? 1 : -1;
+    items = [...items].sort((a, b) => dir * (a.created_at || '').localeCompare(b.created_at || ''));
+  }
+  {
     const statusLabel = {not_generated: '未生成', pending_approval: '未承認', approved: '承認済'};
     const statusColor = {not_generated: '#e74c3c', pending_approval: '#f39c12', approved: '#27ae60'};
-    let html = '<table style="width:100%;border-collapse:collapse"><tr><th style="text-align:left;padding:4px 8px">Title</th><th style="padding:4px 8px">Status</th><th style="padding:4px 8px">Masked</th><th style="padding:4px 8px">Actions</th></tr>';
+    const dateArrow = _redactDateSort === 'asc' ? ' ▲' : _redactDateSort === 'desc' ? ' ▼' : '';
+    let html = `<table style="width:100%;border-collapse:collapse"><tr><th style="text-align:left;padding:4px 8px">Title</th><th style="padding:4px 8px;cursor:pointer" onclick="toggleRedactDateSort()" title="クリックで日付ソート切り替え">Date${dateArrow}</th><th style="padding:4px 8px">Status</th><th style="padding:4px 8px">Masked</th><th style="padding:4px 8px">Actions</th></tr>`;
     for (const it of items) {
       const sc = statusColor[it.status] || '#888';
       const sl = statusLabel[it.status] || it.status;
       const mc = it.mask_count != null ? it.mask_count : '-';
+      const dt = (it.created_at || '').slice(0, 10) || '-';
       html += `<tr style="border-top:1px solid var(--border)">`;
       html += `<td style="padding:6px 8px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.uuid}">${it.title || it.uuid} <button class="id-action-btn" onclick="openConvInLogs('${it.uuid}')" title="Open log">Open</button> <button class="id-action-btn" onclick="copyIdInline(this,'${it.uuid}',event)" title="Copy UUID">Copy</button></td>`;
+      html += `<td style="padding:6px 8px;text-align:center;white-space:nowrap">${dt}</td>`;
       html += `<td style="padding:6px 8px;text-align:center"><span style="color:${sc};font-weight:600">${sl}</span></td>`;
       html += `<td style="padding:6px 8px;text-align:center">${mc}</td>`;
       html += `<td style="padding:6px 8px;text-align:center">`;
@@ -3645,7 +3667,7 @@ async function loadRedactStatus() {
     }
     html += '</table>';
     list.innerHTML = html;
-  } catch(e) { list.innerHTML = '<em style="color:red">Error: '+e.message+'</em>'; }
+  }
 }
 
 async function generateRedact(uuid) {
