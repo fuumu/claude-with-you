@@ -1,6 +1,6 @@
 # API Contract Document (TS-0)
 
-*Target: mio-memory v3.96 / Written: 2026-07-13 / Last updated: 2026-09-28*
+*Target: mio-memory v3.99 / Written: 2026-07-13 / Last updated: 2026-09-28*
 
 This document pins down the externally promised behavior (the contract) of the current
 `memory/app/main.py`. **The executable contract is the characterization test suite in
@@ -188,7 +188,7 @@ response shapes pinned by tests.
 
 | Group | Path | Essentials |
 |---|---|---|
-| conversations | `/api/conversations/*` | search (`q`/`from`/`to`/`limit`/`body_search`, updated_at desc) / index (`search`/`limit`≤500/`offset`, `{total,offset,limit,items}`) / rebuild (`{rebuilt}`) / `<uuid>` fetch (404) / annotations (`[]` when none) / share POST (`{token,url,expires_at}`, `expires_in` accepted) / view GET (no auth; bad token 404, expired 410) / rating PATCH (400 unless safe/mature/adult; clears `rating_skip_reason`) / rebuild preserves rating metadata (reason/source/skip_reason, v3.70) |
+| conversations | `/api/conversations/*` | search (`q`/`from`/`to`/`limit`/`body_search`, updated_at desc) / index (`search`/`limit`≤500/`offset`, `{total,offset,limit,items}`) / rebuild (`{rebuilt, model_backfilled, titles_improved, titles_default, titles_no_auto, participants_filled}` plus `debug_no_auto` when present; improved titles/participants are written back to the conversation JSON, v3.97–v3.99) / `<uuid>` fetch (404) / annotations (`[]` when none) / share POST (`{token,url,expires_at}`, `expires_in` accepted) / view GET (no auth; bad token 404, expired 410) / rating PATCH (400 unless safe/mature/adult; clears `rating_skip_reason`) / rebuild preserves rating metadata (reason/source/skip_reason, v3.70) |
 | coremem | `/api/coremem*` | list `[{name,version,updated_at}]` / POST `{content}` → 201 `{name,version,version_str}` (sequential versions) / `?version=N` reads old version / DELETE removes all versions `{deleted}` (404 if missing) / manifest-merged; `?raw=true` bypasses |
 | inbox | `/api/inbox*` | GET list / POST (`expires_at`/`ttl_days` timed standing, exclusive with persistent → 400; expired ones demote to read at check time, v3.70) / PATCH read・unread / PATCH partial update (accepts `expires_at`/`ttl_days`/`read`, v3.70) / DELETE |
 | album | `/api/album/*` | list (`include_adult` query param) / image / upload / PATCH meta (incl. rating, guard_message) / DELETE / share (shared image needs no auth) |

@@ -1482,3 +1482,31 @@ CoreMem のファイル空間をプロジェクト単位で分離する。ホー
 ### REST
 
 `GET /api/projects` — プロジェクト一覧（MCP `project_list` と同一ロジック）。
+
+---
+
+## 26. 会話ログ改善（v3.96〜v3.99）
+
+### 目的
+
+インポートした会話ログの一覧性・検索性を上げる。デフォルトタイトル（Greeting 等）で埋もれたログを
+内容から判別できるようにし、モデル名での絞り込み（`individual`）を可能にする。
+
+### 仕組み
+
+| 要素 | 内容 |
+|------|------|
+| デフォルトタイトル判定 `_is_default_title` | 完全一致（`greeting` / `new chat` / `untitled` / `new conversation` / `chat` / 空）＋正規表現（`[Good ]Morning/Evening/Afternoon/Night greeting`、`Greeting exchange`、`Greeting to X`）。v3.99 で正規表現を追加 |
+| タイトル改善 `_improve_conv_title` | デフォルトタイトルを最初のユーザーメッセージ冒頭に置換。会話JSONに `name` があれば `name`、なければ `title` を書き換える |
+| 本文抽出 `_msg_text` | `content` がブロックリスト／文字列のどちらでも本文を取り出す（文字列対応は v3.98） |
+| participants 抽出 `_extract_participants` | 全メッセージからモデル名を収集し配列で保持。`individual` フィルタ（個体名またはモデル名）の対象 |
+| `PATCH /api/conversations/<uuid>/title` | 手動タイトル変更。会話JSON・`_index.json`・対応ExtMemoryエントリを同時更新 |
+
+### 書き込みタイミング
+
+- インポート時（`_save_conversations`）: 会話JSON保存**前**にタイトル改善と participants 抽出を行う（v3.97。保存後に行うと会話JSONに反映されない）
+- 再構築時（`POST /api/conversations/index/rebuild`）: 改善結果を会話JSON本体へ書き戻す（v3.97）。書き込み失敗はエラーログに残す（v3.98）。レスポンスの `titles_default` / `titles_no_auto` / `participants_filled` / `debug_no_auto`（改善不可の先頭10件）で取りこぼしを調査できる（v3.99）。admin.html は `debug_no_auto` を折りたたみ表示する
+
+### 補足
+
+`ts/` の TS プロキシは conversations index/rebuild を Python へ転送する（rebuild のタイトル改善・participants 抽出は Python 側に一本化）。

@@ -48,7 +48,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.96","mcp_tool_count":38}
+# {"status":"ok","version":"3.99","mcp_tool_count":38}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -349,7 +349,7 @@ All REST endpoints require `Authorization: Bearer YOUR_TOKEN`.
 | GET | `/api/conversations/` | Search conversations |
 | GET | `/api/conversations/<uuid>` | Get conversation |
 | GET | `/api/conversations/index` | Conversation index (pagination, search, v3.34) |
-| POST | `/api/conversations/index/rebuild` | Rebuild conversation index (v3.34) |
+| POST | `/api/conversations/index/rebuild` | Rebuild conversation index (v3.34). Improved titles / participants are written back to the conversation JSON (v3.97). Response: `rebuilt` / `model_backfilled` / `titles_improved` / `titles_default` / `titles_no_auto` / `participants_filled` / `debug_no_auto` (only when present, v3.99) |
 | GET | `/api/conversations/<uuid>/annotations` | List a conversation's annotations (read-only, v3.42) |
 | POST | `/api/conversations/<uuid>/digest` | Generate/retrieve conversation digest (`?force=true&safe_mode=true`, v3.53) |
 | POST | `/api/conversations/<uuid>/redact` | Generate redacted version (v3.69) |
@@ -657,7 +657,8 @@ claude-with-you/
 - SysMemory dump versioning
 - mio-memory direct auth for Claude Code
 
-**Implemented (v3.9–v3.96)**
+**Implemented (v3.9–v3.99)**
+- Conversation log fixes, v3.97–v3.99 — fixes for the v3.96 title auto-improvement / participants extraction not being persisted to conversation JSON and missing some default titles. ① v3.97: `index/rebuild` now writes improved titles and participants back to the conversation JSON itself (previously index-only); `_save_conversations` improves/extracts before saving ② v3.98: `_msg_text` extracts text when `content` is a plain string (previously iterated per character and fell back to empty); write-back failures are now logged ③ v3.99: default-title detection extended from exact match to a regex (`Evening greeting` / `Morning greeting` / `Greeting to X`, etc.); `index/rebuild` response gains `titles_default` / `titles_no_auto` / `participants_filled` / `debug_no_auto` (details of up to 10 un-improvable entries, only when present), shown collapsed in the admin.html rebuild result
 - Conversation log improvements — 7-point batch (v3.96) — ① ZIP import auto-improves default titles (Greeting/New Chat/Untitled → first user message excerpt) ② `PATCH /api/conversations/<uuid>/title` for renaming conversations (updates JSON, index, and ExtMemory) ③ `participants` field extracted from conversation messages (model name array); backfilled on save/rebuild ④ `individual` filter on `conversation_index` / `conversation_search` (by individual name or model name) ⑤ `conversation_read` `message_from`/`message_to` params for No.-based slicing (mutually exclusive with `turn_offset`/`turn_limit`) ⑥ `attendance_view` session_checkin dedup (same model within 30min = 1 entry) + `kind` filter (memory/session_checkin/checkin/inbox/conversation) ⑦ Word-boundary matching in `_resolve_individual` prevents opus-5-5→opus-5 misidentification ⑧ `CoreMem_save` manifest guard: rejects writes to names with existing `{stem}_manifest.md` ⑨ `conversation_digest` `status_only=true` (cache existence check without generation)
 - `llm_status` MCP tool (v3.93) — LLM backend diagnostic tool accessible from Claude sessions (tool count 37→38). Returns per-endpoint active models, OK-list match results, model selection logic outcome, and recent LLM log entries (100-entry ring buffer). Same data as REST `GET /api/llm-status`
 - Multi-endpoint LLM backend (v3.92) — `LLM_ENDPOINTS` env var (comma-separated host:port) supports multiple local LLM endpoints. Connection flow: ① probe each endpoint's `/v1/models` for active models ② direct-connect if the requested model is already active ③ try model load on management-capable endpoints (LM Studio); skip management-incapable ones (FreeToken) ④ error if no endpoint available. `LLM_OK_MODELS` default expanded (`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`). Legacy vars (`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`) preserved as fallback. lm_host/lm_port args removed from `_start_summary_batch`/`_start_rating_batch`, connection logic consolidated in `_lm_client()`. `scripts/generate_summary_layers.py` updated for multi-endpoint. New `scripts/manage_llm_endpoints.py` for interactive `.env` management

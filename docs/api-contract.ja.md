@@ -1,6 +1,6 @@
 # API 契約ドキュメント（TS-0）
 
-*対象: mio-memory v3.96 / 作成: 2026-07-13 / 最終更新: 2026-09-28*
+*対象: mio-memory v3.99 / 作成: 2026-07-13 / 最終更新: 2026-09-28*
 
 このドキュメントは、現行 `memory/app/main.py` が外部に約束している挙動（契約）を固定化するためのもの。
 **実行可能な契約は `tests/` の特性テストスイート**であり、本書はその地図にあたる。
@@ -172,7 +172,7 @@ python -m venv .venv
 
 | グループ | パス | 契約の要点 |
 |---|---|---|
-| conversations | `/api/conversations/*` | 検索（`q`/`from`/`to`/`limit`/`body_search`・updated_at 降順）/ index（`search`/`limit`≤500/`offset`・`{total,offset,limit,items}`）/ rebuild（`{rebuilt}`）/ `<uuid>` 取得（404）/ annotations（空なら `[]`）/ share POST（`{token,url,expires_at}`・`expires_in` 指定可）/ view GET（認証不要・不正 404・期限切れ 410）/ rating PATCH（safe/mature/adult 以外は 400・`rating_skip_reason` クリア）/ rebuild は rating 系メタ（reason/source/skip_reason）を保全（v3.70） |
+| conversations | `/api/conversations/*` | 検索（`q`/`from`/`to`/`limit`/`body_search`・updated_at 降順）/ index（`search`/`limit`≤500/`offset`・`{total,offset,limit,items}`）/ rebuild（`{rebuilt, model_backfilled, titles_improved, titles_default, titles_no_auto, participants_filled}`＋該当時 `debug_no_auto`。改善タイトル・participants は会話JSONへ書き戻す。v3.97〜v3.99）/ `<uuid>` 取得（404）/ annotations（空なら `[]`）/ share POST（`{token,url,expires_at}`・`expires_in` 指定可）/ view GET（認証不要・不正 404・期限切れ 410）/ rating PATCH（safe/mature/adult 以外は 400・`rating_skip_reason` クリア）/ rebuild は rating 系メタ（reason/source/skip_reason）を保全（v3.70） |
 | coremem | `/api/coremem*` | 一覧 `[{name,version,updated_at}]` / POST `{content}`→201 `{name,version,version_str}`（版番号は連番）/ `?version=N` で旧版 / DELETE は全版削除 `{deleted}`（対象なし 404）/ manifest マージ返却。`?raw=true` で素通し |
 | inbox | `/api/inbox*` | GET一覧 / POST（`expires_at`/`ttl_days` 期間常駐・persistent と排他 400・期限切れはチェック時既読降格, v3.70）/ PATCH read・unread / PATCH 部分更新（`expires_at`/`ttl_days`/`read` 受付, v3.70）/ DELETE |
 | album | `/api/album/*` | 一覧（`include_adult` 対応）/ 画像 / upload / PATCH メタ（rating・guard_message 含む）/ DELETE / share（共有画像は認証不要）（v3.77） |

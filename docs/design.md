@@ -1511,3 +1511,31 @@ rejected by validation. Manifest merge works within projects.
 ### REST
 
 `GET /api/projects` — project list (same logic as MCP `project_list`).
+
+---
+
+## 26. Conversation log improvements (v3.96–v3.99)
+
+### Purpose
+
+Make imported conversation logs easier to browse and search: tell apart logs buried under default
+titles (Greeting, etc.) by their content, and allow filtering by model name (`individual`).
+
+### Mechanism
+
+| Element | Description |
+|---------|-------------|
+| Default-title detection `_is_default_title` | Exact match (`greeting` / `new chat` / `untitled` / `new conversation` / `chat` / empty) plus a regex (`[Good ]Morning/Evening/Afternoon/Night greeting`, `Greeting exchange`, `Greeting to X`). Regex added in v3.99 |
+| Title improvement `_improve_conv_title` | Replaces a default title with the opening of the first user message. Rewrites `name` if the conversation JSON has one, otherwise `title` |
+| Text extraction `_msg_text` | Extracts text whether `content` is a block list or a plain string (string support in v3.98) |
+| Participants extraction `_extract_participants` | Collects model names from all messages into an array; the target of the `individual` filter (individual name or model name) |
+| `PATCH /api/conversations/<uuid>/title` | Manual rename. Updates the conversation JSON, `_index.json` and the corresponding ExtMemory entry together |
+
+### When it is written
+
+- On import (`_save_conversations`): title improvement and participants extraction run **before** the conversation JSON is saved (v3.97; doing it after saving left the JSON unchanged)
+- On rebuild (`POST /api/conversations/index/rebuild`): results are written back to the conversation JSON itself (v3.97). Write failures are logged as errors (v3.98). The response fields `titles_default` / `titles_no_auto` / `participants_filled` / `debug_no_auto` (first 10 un-improvable entries) help investigate misses (v3.99). admin.html shows `debug_no_auto` collapsed
+
+### Note
+
+The TS proxy under `ts/` forwards conversations index/rebuild to Python (rebuild's title improvement and participants extraction live only on the Python side).

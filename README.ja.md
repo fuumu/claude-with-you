@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.96","mcp_tool_count":38}
+# {"status":"ok","version":"3.99","mcp_tool_count":38}
 ```
 
 ### 5. Claude Code への登録
@@ -1010,7 +1010,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | GET | `/api/conversations/` | 会話一覧・検索 |
 | GET | `/api/conversations/<uuid>` | 会話取得 |
 | GET | `/api/conversations/index` | 会話インデックス（ページング・検索対応・v3.34） |
-| POST | `/api/conversations/index/rebuild` | 会話インデックス再構築（v3.34） |
+| POST | `/api/conversations/index/rebuild` | 会話インデックス再構築（v3.34）。タイトル改善・participants は会話JSONへ書き戻す（v3.97）。レスポンス: `rebuilt` / `model_backfilled` / `titles_improved` / `titles_default` / `titles_no_auto` / `participants_filled` / `debug_no_auto`（該当時のみ。v3.99） |
 | GET | `/api/conversations/<uuid>/annotations` | 会話の注記一覧（読み取り専用・v3.42） |
 | POST | `/api/conversations/<uuid>/digest` | 会話ログダイジェスト生成/取得（`?force=true&safe_mode=true`・v3.53） |
 | POST | `/api/conversations/<uuid>/redact` | 伏せ字版生成（v3.69） |
@@ -1187,7 +1187,8 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.96）**
+**実装済み（v3.9〜v3.99）**
+- 会話ログ改善の修正3連（v3.97〜v3.99）— v3.96 のタイトル自動改善・participants 抽出が会話JSONへ永続化されず、一部のデフォルトタイトルを拾えていなかった不具合の修正。① v3.97: `index/rebuild` が改善タイトル・participants を会話JSON本体へ書き戻すよう修正（従来はインデックスのみ反映）。`_save_conversations` も保存前に改善・抽出する順序へ変更 ② v3.98: `_msg_text` が `content` が文字列の場合も本文を抽出するよう修正（従来は1文字ずつ走査して全スキップ→空文字になっていた）。書き戻し失敗をエラーログ化 ③ v3.99: デフォルトタイトル判定を完全一致から正規表現へ拡張（`Evening greeting` / `Morning greeting` / `Greeting to X` 等）。`index/rebuild` のレスポンスに `titles_default`（デフォルトタイトル総数）/ `titles_no_auto`（自動改善不可の件数）/ `participants_filled` / `debug_no_auto`（改善不可の先頭10件の詳細、該当時のみ）を追加し、admin.html の rebuild 結果に折りたたみ表示
 - 会話ログ改善 — 7点一括（v3.96）— ① ZIPインポート時のデフォルトタイトル自動改善（Greeting/New Chat/Untitled → 最初のユーザーメッセージ冒頭に差し替え）② `PATCH /api/conversations/<uuid>/title` 新設（会話JSON・_index.json・対応ExtMemoryエントリを同時更新）③ `participants` フィールド（モデル名配列。save/rebuild 時にバックフィル）④ `individual` フィルタ（conversation_index / conversation_search に追加。個体名/モデル名で participants 絞り込み）⑤ `conversation_read` に `message_from`/`message_to`（No.通番ベースのスライス。turn_offset/turn_limit と排他）⑥ `attendance_view` session_checkin 重複排除（同一モデル30分以内=1エントリ）＋`kind` フィルタ（memory/session_checkin/checkin/inbox/conversation）⑦ `_resolve_individual` ワードバウンダリマッチング（opus-5-5→opus-5 誤判定を防止）⑧ `CoreMem_save` マニフェストガード（`{stem}_manifest.md` 存在時は直接書き込み拒否）⑨ `conversation_digest` に `status_only=true`（キャッシュ存在チェックのみ・生成なし）
 - `llm_status` MCPツール（v3.93）— Claudeセッションから直接呼び出せるLLMバックエンド診断ツール（ツール数 37→38）。各エンドポイントのアクティブモデル一覧、OKリストとのマッチ結果、モデル選択ロジックの判定結果、直近LLMログ100件を返す。REST `GET /api/llm-status` と同一データ
 - LLMバックエンド マルチエンドポイント対応（v3.92）— `LLM_ENDPOINTS` 環境変数（カンマ区切り host:port）で複数のローカルLLMエンドポイントを指定可能に。接続フロー: ① 各エンドポイントの `/v1/models` でアクティブモデルを自動発見 ② 要求モデルがアクティブなエンドポイントに直接接続 ③ なければモデル管理API対応エンドポイント（LM Studio）でロード試行（FreeToken等の非対応エンドポイントはスキップ）④ どこにもなければエラー。`LLM_OK_MODELS` のデフォルトも拡充（`google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4`）。旧変数（`LM_STUDIO_HOST`/`PORT`/`MIO_LM_MODEL`）は `LLM_ENDPOINTS`/`LLM_OK_MODELS` 未設定時のフォールバックとして後方互換維持。`_start_summary_batch`/`_start_rating_batch` から lm_host/lm_port 引数を廃止し `_lm_client()` に接続ロジックを集約。`scripts/generate_summary_layers.py` も同等のマルチエンドポイント対応。`.env` の対話的更新スクリプト `scripts/manage_llm_endpoints.py` を新設
