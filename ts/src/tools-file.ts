@@ -31,10 +31,52 @@ function filePathFor(id: string, ext: string): string {
   return ext ? path.join(UPLOADS_DIR, `${id}.${ext}`) : path.join(UPLOADS_DIR, id);
 }
 
-function loadMeta(id: string): Meta | null {
+/** メタデータは {id}.meta.json（実体 {id}.{ext} と ext=json でも衝突しない） */
+function metaPathFor(id: string): string {
+  return path.join(UPLOADS_DIR, `${id}.meta.json`);
+}
+
+function looksLikeMeta(file: string, id: string): boolean {
+  try {
+    const d = JSON.parse(fs.readFileSync(file, 'utf-8')) as unknown;
+    return typeof d === 'object' && d !== null && !Array.isArray(d)
+      && (d as Meta).id === id && 'ext' in (d as Meta);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 既存アップロードのメタデータパス（なければ null）。旧形式（メタが {id}.json）しかなければ
+ * {id}.meta.json へ退避してから返す（main.py _upload_meta_path と同一）。
+ * {id}.meta.json が既にある場合、{id}.json は ext=json の実体なので触らない
+ */
+function existingMetaPath(id: string): string | null {
   if (!safeId(id)) return null;
-  const p = path.join(UPLOADS_DIR, `${id}.json`);
-  if (!fs.existsSync(p)) return null;
+  const p = metaPathFor(id);
+  if (fs.existsSync(p)) return p;
+  const legacy = path.join(UPLOADS_DIR, `${id}.json`);
+  if (fs.existsSync(legacy) && looksLikeMeta(legacy, id)) {
+    fs.renameSync(legacy, p);
+    return p;
+  }
+  return null;
+}
+
+/** file_list 等の前に旧形式メタを一括退避する（main.py _uploads_migrate_all と同一） */
+function migrateAllMeta(): void {
+  if (!fs.existsSync(UPLOADS_DIR) || !fs.statSync(UPLOADS_DIR).isDirectory()) return;
+  for (const fname of fs.readdirSync(UPLOADS_DIR).sort()) {
+    if (!fname.endsWith('.json') || fname.endsWith('.meta.json')) continue;
+    const id = fname.slice(0, -'.json'.length);
+    if (fs.existsSync(metaPathFor(id))) continue; // 新形式が既にある → この .json は実体
+    existingMetaPath(id);
+  }
+}
+
+function loadMeta(id: string): Meta | null {
+  const p = existingMetaPath(id);
+  if (!p) return null;
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as Meta;
 }
 
@@ -60,9 +102,6 @@ const fileUpload: Handler = async (args) => {
     filename = pathname.slice(pathname.lastIndexOf('/') + 1) || `download_${uploadId}`;
   }
   const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() : '';
-  // 拡張子 json は実体 {id}.json とメタデータ {id}.json が同一パスに衝突する（Python 版の既知の
-  // 不具合）。データ形式不変の方針でバグを複製しないよう、挙動の単一情報源として Python へ回す
-  if (ext === 'json') return FORWARD;
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
   let data: Buffer;
@@ -99,7 +138,7 @@ const fileUpload: Handler = async (args) => {
     tags,
     uploaded_at: nowJst(),
   };
-  writeJson(path.join(UPLOADS_DIR, `${uploadId}.json`), meta);
+  writeJson(metaPathFor(uploadId), meta);
   appendOplog('file_upload', uploadId, null, { id: uploadId, filename: safeFilename, size: data.length });
   return {
     id: uploadId,
@@ -142,9 +181,10 @@ const fileRead: Handler = (args) => {
 const fileList: Handler = (args) => {
   const wanted = Array.isArray(args.tags) && args.tags.length > 0 ? args.tags.map(String) : null;
   const items: Meta[] = [];
+  migrateAllMeta();
   if (fs.existsSync(UPLOADS_DIR) && fs.statSync(UPLOADS_DIR).isDirectory()) {
     for (const fname of fs.readdirSync(UPLOADS_DIR).sort()) {
-      if (!fname.endsWith('.json')) continue;
+      if (!fname.endsWith('.meta.json')) continue; // {id}.json は実体（ext=json）の可能性
       let meta: Meta;
       try {
         meta = JSON.parse(fs.readFileSync(path.join(UPLOADS_DIR, fname), 'utf-8')) as Meta;
@@ -156,7 +196,7 @@ const fileList: Handler = (args) => {
         if (!wanted.some((t) => entryTags.includes(t.toLowerCase()))) continue;
       }
       items.push({
-        id: 'id' in meta ? meta.id : fname.replace('.json', ''),
+        id: 'id' in meta ? meta.id : fname.slice(0, -'.meta.json'.length),
         filename: 'filename' in meta ? meta.filename : '',
         mimetype: 'mimetype' in meta ? meta.mimetype : '',
         size: 'size' in meta ? meta.size : 0,
@@ -176,8 +216,8 @@ const fileDelete: Handler = (args) => {
   if (!meta) return { error: `Upload not found: ${id}` };
   const fp = filePathFor(id, String(meta.ext ?? ''));
   if (fs.existsSync(fp)) fs.unlinkSync(fp);
-  const metaFile = path.join(UPLOADS_DIR, `${id}.json`);
-  if (fs.existsSync(metaFile)) fs.unlinkSync(metaFile); // ext=json の衝突データでは上で既に消えている
+  const metaFile = metaPathFor(id);
+  if (fs.existsSync(metaFile)) fs.unlinkSync(metaFile);
   appendOplog('file_delete', id, { id }, null);
   return { deleted: id, server_time: nowJst() };
 };
