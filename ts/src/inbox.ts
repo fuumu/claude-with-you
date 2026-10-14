@@ -79,15 +79,30 @@ export interface InboxMessage {
   [key: string]: unknown;
 }
 
+/**
+ * 宛先 to の検証（main.py _inbox_to_valid と同一）。friend:{token} の token 部分はディレクトリ名に
+ * なるため safeId で検証する。それ以外の値はディレクトリに使われないのでそのまま許容
+ */
+export function inboxToValid(to: unknown): boolean {
+  if (typeof to === 'string' && to.startsWith('friend:')) {
+    return safeId(to.slice('friend:'.length));
+  }
+  return true;
+}
+
 function inboxDir(to?: string | null): string {
+  if (!inboxToValid(to)) throw new Error(`invalid inbox target: ${String(to)}`);
   if (to && to.startsWith('friend:')) {
     return path.join(INBOX_DIR, 'friend', to.slice('friend:'.length));
   }
   return INBOX_DIR;
 }
 
+/** main.py _safe_id と同一の判定（区切り文字・..・NUL・空文字を弾く） */
 export function safeId(id: string): boolean {
-  return !!id && !id.includes('/') && !id.includes('\\') && !id.includes('..');
+  return (
+    !!id && !id.includes('/') && !id.includes('\\') && !id.includes('..') && !id.includes('\x00')
+  );
 }
 
 function inboxPath(msgId: string, to?: string | null): string {
@@ -277,6 +292,10 @@ export async function handleInbox(
       const to = url.searchParams.get('to');
       const full = (url.searchParams.get('full') ?? 'false').toLowerCase() === 'true';
       const unreadOnly = url.searchParams.get('status') === 'new';
+      if (!inboxToValid(to)) {
+        sendJson(res, 400, { error: `invalid to: ${to}` });
+        return true;
+      }
       const msgs = loadInboxMessages(to, unreadOnly);
       if (full) {
         sendJson(res, 200, msgs);
@@ -294,6 +313,10 @@ export async function handleInbox(
       }
       if (!data.to || !data.title) {
         sendJson(res, 400, { error: 'to and title are required' });
+        return true;
+      }
+      if (!inboxToValid(data.to)) {
+        sendJson(res, 400, { error: `invalid to: ${String(data.to)}` });
         return true;
       }
       const exp = resolveExpiresAt(data);

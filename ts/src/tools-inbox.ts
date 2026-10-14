@@ -11,6 +11,7 @@ import { sessionCheckinUpgrade } from './attendance.js';
 import {
   findInboxFile,
   inboxStanding,
+  inboxToValid,
   loadInboxMessages,
   normInboxModels,
   postInboxMessage,
@@ -38,6 +39,7 @@ const inboxCheck: Handler = (args) => {
   const includeRead = truthy(args.include_read);
   // v3.85: mymodel による出席簿チェックイン（仮登録→本登録昇格）
   if (truthy(args.mymodel)) sessionCheckinUpgrade(String(args.mymodel));
+  if (!inboxToValid(to)) return { error: `invalid to: ${to}` };
 
   let msgs = loadInboxMessages(to, !includeRead);
 
@@ -124,6 +126,7 @@ const inboxPost: Handler = (args) => {
   const title = args.title === undefined || args.title === null ? '' : String(args.title);
   const body = args.body === undefined || args.body === null ? '' : String(args.body);
   if (!to || !title) return { error: 'to and title are required' };
+  if (!inboxToValid(to)) return { error: `invalid to: ${to}` };
   // 【生】宛の退避→非同期昇華は postInboxMessage 内で処理される（llm-tasks.ts のフック）
 
   const persistent = truthy(args.persistent);

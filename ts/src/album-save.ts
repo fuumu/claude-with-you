@@ -18,7 +18,7 @@ import sharp from 'sharp';
 import { DATA_ROOT } from './data.js';
 import { logInfo } from './llm.js';
 import { pyBasename } from './tool-types.js';
-import { appendOplog, jstStamp, nowJst, writeJson } from './write.js';
+import { appendOplog, idSlug, jstStamp, nowJst, writeJson } from './write.js';
 
 const ALBUM_DIR = path.join(DATA_ROOT, 'album');
 const MAX_SIDE = 1024;
@@ -159,9 +159,7 @@ export async function albumSave(
   const height = outMd.height ?? 0;
 
   const tags = Array.isArray(args.tags) ? (args.tags as unknown[]).map(String) : null;
-  const tagSlug = Array.from((tags && tags.length > 0 ? tags[0] : 'photo').replace(/ /g, '_'))
-    .slice(0, 20)
-    .join('');
+  const tagSlug = idSlug(tags && tags.length > 0 ? tags[0] : 'photo');
   const albumId = `${jstStamp()}_${tagSlug}`;
 
   fs.writeFileSync(path.join(ALBUM_DIR, `${albumId}.${ext}`), out);

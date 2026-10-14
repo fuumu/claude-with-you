@@ -16,6 +16,21 @@ import { extractLayer3 } from './search.js';
 
 export const OPLOG_FILE = path.join(DATA_ROOT, 'oplog.json');
 
+/**
+ * タグ等から ID の一部（スラッグ）を作る（main.py _id_slug と同一）。ファイル名に埋め込まれるため、
+ * 空白・スラッシュ・バックスラッシュは _ に、親ディレクトリ参照（..）と NUL は除去する。
+ * 長さは Python の [:n] に合わせてコードポイント単位で maxlen まで。
+ * path.join は '..' を文字列上で正規化するため、無害化しないと tags: ['../../x'] で DATA_DIR の外へ書ける
+ */
+export function idSlug(value: unknown, maxlen = 20): string {
+  let s = String(value ?? '')
+    .replace(/ /g, '_')
+    .replace(/[/\\]/g, '_')
+    .replace(/\x00/g, '');
+  while (s.includes('..')) s = s.replace(/\.\./g, '');
+  return Array.from(s).slice(0, maxlen).join('');
+}
+
 /** UNIXミリ秒を Python datetime.isoformat()（JST）互換文字列にする */
 export function jstIsoFromMs(ms: number): string {
   const d = new Date(ms + 9 * 3600 * 1000);
@@ -107,7 +122,7 @@ export function appendOplog(
 export function createEntry(data: Record<string, unknown>): MemoryEntry | null {
   if (!data || !data.title) return null;
   const tags = Array.isArray(data.tags) ? (data.tags as string[]) : [];
-  const tagSlug = tags.length > 0 ? String(tags[0] ?? '').replace(/ /g, '_').slice(0, 20) : 'note';
+  const tagSlug = tags.length > 0 ? idSlug(tags[0]) : 'note';
   const entryId = `${jstStamp()}_${tagSlug}`;
   const now = nowJst();
   const entry: MemoryEntry = {
@@ -141,9 +156,7 @@ function argOr(args: Record<string, unknown>, key: string, dflt: unknown): unkno
  */
 export function mcpWriteEntry(args: Record<string, unknown>): MemoryEntry {
   const tags = Array.isArray(args.tags) && args.tags.length > 0 ? (args.tags as unknown[]) : [];
-  // Python の [:20] はコードポイント単位（絵文字等の astral 文字を1と数える）
-  const tagSlug =
-    tags.length > 0 ? Array.from(String(tags[0]).replace(/ /g, '_')).slice(0, 20).join('') : 'note';
+  const tagSlug = tags.length > 0 ? idSlug(tags[0]) : 'note';
   const entryId = `${jstStamp()}_${tagSlug}`;
   const entry: MemoryEntry = {
     id: entryId,
