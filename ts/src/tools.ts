@@ -4,8 +4,9 @@
  * - tools/list: main.py の _MCP_TOOLS を生成したスナップショット（tool-defs.ts）を返す。
  *   定義の同期は scripts/gen_ts_tool_defs.py と tests/test_mcp_core.py の照合テストで担保する。
  * - tools/call: ツール名でハンドラーに振り分ける。ハンドラーは既存の TS モジュール
- *   （data / search / write）の関数を呼ぶ。未移行ツールは null を返し、呼び出し側（mcp.ts）が
- *   従来どおり Python へ転送する（段階移行）。
+ *   （data / search / write / coremem / inbox / conversations …）の関数を呼ぶ。
+ *   未移行ツールは null を返し、呼び出し側（mcp.ts）が従来どおり Python へ転送する（段階移行）。
+ *   グループ別のハンドラーは tools-*.ts に置き、ここで登録する。
  *
  * レスポンス形状は main.py の _handle_tool_call / _process_mcp_message と同一:
  *   result = { content: [{ type: 'text', text: JSON(結果 + server_time + server_version) }] }
@@ -17,32 +18,15 @@ import path from 'node:path';
 import { DATA_ROOT, loadEntry, loadIndexList } from './data.js';
 import { hierarchicalSearch, randomIndexSample, ratingExcluded } from './search.js';
 import { TOOL_DEFS, ToolDef } from './tool-defs.js';
+import { Args, FORWARD, Handler, ToolContext, truthy, toInt } from './tool-types.js';
+import { COREMEM_HANDLERS } from './tools-coremem.js';
+import { INBOX_HANDLERS } from './tools-inbox.js';
 import { jstIsoFromMs, mcpUpsertEntry, mcpWriteEntry, nowJst, writeJson } from './write.js';
+
+export type { ToolContext } from './tool-types.js';
 
 const SHARE_TOKENS_FILE = path.join(DATA_ROOT, 'share_tokens.json');
 const BASE_URL = process.env.MIO_BASE_URL ?? 'http://localhost:5002';
-
-type Args = Record<string, unknown>;
-
-export interface ToolContext {
-  /** Python 側 VERSION（/health の version。server_version に載せる） */
-  serverVersion: string;
-}
-
-/** Python の bool() 互換の真偽判定（空配列・空オブジェクト・空文字・0・None は偽） */
-function truthy(v: unknown): boolean {
-  if (v === null || v === undefined || v === false || v === 0 || v === '') return false;
-  if (Array.isArray(v)) return v.length > 0;
-  if (typeof v === 'object') return Object.keys(v as object).length > 0;
-  return true;
-}
-
-/** Python の int() 相当。変換不能なら NaN */
-function toInt(v: unknown): number {
-  if (typeof v === 'number') return Math.trunc(v);
-  if (typeof v === 'string' && /^\s*[+-]?\d+\s*$/.test(v)) return parseInt(v, 10);
-  return NaN;
-}
 
 function injectServerTime(result: unknown, ctx: ToolContext): unknown {
   const st = nowJst();
@@ -58,9 +42,9 @@ function injectServerTime(result: unknown, ctx: ToolContext): unknown {
   return result;
 }
 
-// ── ハンドラー（memory 系・グループ1）─────────────────────────────────
+// ── グループ1: memory 系 ──────────────────────────────────────────────
 
-function memoryReadIndex(args: Args): unknown {
+const memoryReadIndex: Handler = (args) => {
   const index = loadIndexList();
   const incLocal = truthy(args.include_local);
   const incAdult = truthy(args.include_adult);
@@ -74,23 +58,21 @@ function memoryReadIndex(args: Args): unknown {
     );
   }
   return index.filter((e) => !ratingExcluded(e, incLocal, incAdult));
-}
+};
 
-function memoryRead(args: Args): unknown {
+const memoryRead: Handler = (args) => {
   const entry = loadEntry(String(args.id ?? ''));
   return entry ?? { error: 'not found' };
-}
+};
 
-function memoryWrite(args: Args): unknown {
-  return mcpWriteEntry(args);
-}
+const memoryWrite: Handler = (args) => mcpWriteEntry(args);
 
-function memoryUpsert(args: Args): unknown {
+const memoryUpsert: Handler = (args) => {
   if (!args.id) return { error: 'id is required' };
   return mcpUpsertEntry(args) ?? { error: 'invalid id' };
-}
+};
 
-function memorySearch(args: Args): unknown {
+const memorySearch: Handler = (args) => {
   try {
     const limit = args.limit !== undefined && args.limit !== null ? toInt(args.limit) : 10;
     const offset = args.offset !== undefined && args.offset !== null ? toInt(args.offset) : 0;
@@ -110,9 +92,9 @@ function memorySearch(args: Args): unknown {
   } catch (e) {
     return { error: String((e as Error).message ?? e), results: [], total: 0, has_more: false };
   }
-}
+};
 
-function memoryShare(args: Args): unknown {
+const memoryShare: Handler = (args) => {
   const entryId = String(args.id ?? '');
   if (!loadEntry(entryId)) return { error: `entry not found: ${entryId}` };
   const token = crypto.randomBytes(24).toString('base64url');
@@ -130,15 +112,17 @@ function memoryShare(args: Args): unknown {
     url: `${BASE_URL}/admin.html?token=${token}&id=${entryId}`,
     expires_at: expiresAt,
   };
-}
+};
 
-const HANDLERS: Record<string, (args: Args) => unknown> = {
+const HANDLERS: Record<string, Handler> = {
   memory_read_index: memoryReadIndex,
   memory_read: memoryRead,
   memory_write: memoryWrite,
   memory_upsert: memoryUpsert,
   memory_search: memorySearch,
   memory_share: memoryShare,
+  ...COREMEM_HANDLERS,
+  ...INBOX_HANDLERS,
 };
 
 // ── 公開 API ─────────────────────────────────────────────────────────
@@ -160,6 +144,8 @@ export function isNativeTool(name: string): boolean {
 export function callToolNative(name: string, args: unknown, ctx: ToolContext): Args | null {
   if (!isNativeTool(name)) return null;
   const a: Args = args && typeof args === 'object' && !Array.isArray(args) ? (args as Args) : {};
-  const result = injectServerTime(HANDLERS[name](a), ctx);
+  const raw = HANDLERS[name](a, ctx);
+  if (raw === FORWARD) return null; // ハンドラーが Python 転送を指定（LLM 依存の分岐など）
+  const result = injectServerTime(raw, ctx);
   return { content: [{ type: 'text', text: JSON.stringify(result) }] };
 }

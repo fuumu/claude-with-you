@@ -18,7 +18,7 @@ import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { handleConversations } from './conversations.js';
 import { handleCoremem } from './coremem.js';
 import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
-import { handleInbox } from './inbox.js';
+import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
@@ -258,7 +258,9 @@ function proxyToUpstream(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
     res.end(JSON.stringify({ error: 'upstream unavailable' }));
   });
-  req.pipe(proxyReq);
+  const buffered = (req as http.IncomingMessage & BufferedRequest).bufferedBody;
+  if (buffered) proxyReq.end(buffered);
+  else req.pipe(proxyReq);
 }
 
 const server = http.createServer((req, res) => {
@@ -285,6 +287,12 @@ const server = http.createServer((req, res) => {
         if (!verifyToken(extractBearer(req, parsed))) {
           sendJson(res, 401, { error: 'unauthorized' });
           return;
+        }
+        // POST /api/inbox は【生】宛の場合 Python へ回すため、ボディを先読みして再送可能にする
+        if (parsed.pathname === '/api/inbox' && req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c as Buffer);
+          (req as http.IncomingMessage & BufferedRequest).bufferedBody = Buffer.concat(chunks);
         }
         if (await handleInbox(req, res, parsed)) return;
       }
