@@ -31,7 +31,7 @@ CMD ["node", "dist/index.js"]
 ```
 - 依存ゼロ設計（node:http のみ）のため軽量。node:22-slim ベース
 - ビルド時に `npm install` → `npx tsc` でコンパイル
-- 外部パッケージなし（devDependencies の `@types/node` と `typescript` のみ）
+- 外部パッケージは `sharp`（Ring 5・画像処理）のみ（devDependencies は `@types/node` と `typescript`）
 
 **`docker-compose.parallel.yml`**（オーバーレイ）
 ```yaml

@@ -924,7 +924,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 ```
 
 - ID format: `YYYYMMDD_HHMMSS_{tag_slug}` (same as ExtMemory)
-- Images are resized to max 1024px on the long side (aspect ratio preserved, Pillow)
+- Images are resized to max 1024px on the long side (aspect ratio preserved, Pillow; the TS album_save does the same with sharp)
 - JPEG saved at quality 85; RGBA/P modes are converted to RGB
 
 ### MCP tools (5)

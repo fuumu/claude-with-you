@@ -32,3 +32,9 @@ export function toInt(v: unknown): number {
 export function argOr(args: Args, key: string, dflt: unknown): unknown {
   return key in args ? args[key] : dflt;
 }
+
+/** Python os.path.basename 互換（末尾が区切りなら空文字。Windows ではバックスラッシュも区切り） */
+export function pyBasename(p: string): string {
+  const i = Math.max(p.lastIndexOf('/'), process.platform === 'win32' ? p.lastIndexOf('\\') : -1);
+  return p.slice(i + 1);
+}

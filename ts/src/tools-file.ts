@@ -1,16 +1,16 @@
 /**
  * TS-1 リング4 グループ6: file（Uploads）系 MCP ツール（main.py と同一契約）。
- * file_read / file_list / file_delete と、URL 指定の file_upload をネイティブ化。
+ * file_upload / file_read / file_list / file_delete をネイティブ化。
  *
- * file_upload(file_path=...)（NAS ローカルパス）は FORWARD（Python）: 保存時の MIME 推定が
- * Python の mimetypes に依存し、TS で同一結果を保証できないため。URL 指定は
- * Content-Type ヘッダから MIME を取るので同一挙動で移せる。
+ * file_upload は url（Content-Type ヘッダから MIME）と file_path（NAS ローカルパス。拡張子から
+ * MIME 推定: mimetypes.ts が Python mimetypes の組み込みテーブル相当）の両方を処理する。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from './data.js';
 import { safeId } from './inbox.js';
-import { FORWARD, Handler } from './tool-types.js';
+import { guessMimeType } from './mimetypes.js';
+import { Handler, pyBasename } from './tool-types.js';
 import { appendOplog, nowJst, writeJson } from './write.js';
 
 const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
@@ -85,39 +85,48 @@ function idArg(args: Record<string, unknown>): string {
   return v === undefined || v === null ? '' : String(v);
 }
 
-/** file_upload(url=...)。url がなければ（file_path 指定・引数不足）Python の検証・MIME 推定に任せる */
+/** file_upload(url=... | file_path=...)。url が優先（main.py _upload_save と同じ） */
 const fileUpload: Handler = async (args) => {
-  if (!args.url) return FORWARD;
-  const url = String(args.url);
+  const url = args.url ? String(args.url) : '';
+  const filePath = args.file_path ? String(args.file_path) : '';
   let uploadId = nowJst().replace(/-/g, '').replace(/:/g, '').replace('T', '_').slice(0, 15);
 
   let filename = args.filename ? String(args.filename) : '';
-  if (!filename) {
-    let pathname = '';
-    try {
-      pathname = new URL(url).pathname;
-    } catch {
-      pathname = '';
-    }
-    filename = pathname.slice(pathname.lastIndexOf('/') + 1) || `download_${uploadId}`;
-  }
-  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() : '';
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
   let data: Buffer;
   let mime = 'application/octet-stream';
-  try {
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': 'mio-memory/upload' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!resp.ok) return { error: `download failed: HTTP ${resp.status}` };
-    mime = (resp.headers.get('content-type') ?? 'application/octet-stream').split(';')[0].trim();
-    data = Buffer.from(await resp.arrayBuffer());
-  } catch (e) {
-    return { error: `download failed: ${(e as Error).message}` };
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+  if (url) {
+    try {
+      const resp = await fetch(url, {
+        headers: { 'User-Agent': 'mio-memory/upload' },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!resp.ok) return { error: `download failed: HTTP ${resp.status}` };
+      mime = (resp.headers.get('content-type') ?? 'application/octet-stream').split(';')[0].trim();
+      data = Buffer.from(await resp.arrayBuffer());
+    } catch (e) {
+      return { error: `download failed: ${(e as Error).message}` };
+    }
+    if (!filename) {
+      let pathname = '';
+      try {
+        pathname = new URL(url).pathname;
+      } catch {
+        pathname = '';
+      }
+      filename = pathname.slice(pathname.lastIndexOf('/') + 1) || `download_${uploadId}`;
+    }
+  } else if (filePath) {
+    if (!fs.existsSync(filePath)) return { error: `File not found: ${filePath}` };
+    data = fs.readFileSync(filePath);
+    if (!filename) filename = pyBasename(filePath);
+    mime = guessMimeType(filename) ?? 'application/octet-stream';
+  } else {
+    return { error: 'url or file_path is required' };
   }
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() : '';
 
   const safeFilename = filename.replace(/\//g, '_').replace(/\\/g, '_');
   const dot = safeFilename.lastIndexOf('.');

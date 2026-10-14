@@ -20,6 +20,7 @@ import { handleCoremem } from './coremem.js';
 import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
 import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
+import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
 import { createEntry, deleteEntry, reindexAll, updateEntry } from './write.js';
@@ -288,12 +289,6 @@ const server = http.createServer((req, res) => {
           sendJson(res, 401, { error: 'unauthorized' });
           return;
         }
-        // POST /api/inbox は【生】宛の場合 Python へ回すため、ボディを先読みして再送可能にする
-        if (parsed.pathname === '/api/inbox' && req.method === 'POST') {
-          const chunks: Buffer[] = [];
-          for await (const c of req) chunks.push(c as Buffer);
-          (req as http.IncomingMessage & BufferedRequest).bufferedBody = Buffer.concat(chunks);
-        }
         if (await handleInbox(req, res, parsed)) return;
       }
       // リング3: coremem REST（全ルート認証必須）
@@ -304,7 +299,9 @@ const server = http.createServer((req, res) => {
         }
         if (await handleCoremem(req, res, parsed)) return;
       }
-      // リング3: conversations REST（認証はハンドラ内。digest は担当外 = プロキシ）
+      // リング5: LLM 依存 REST（digest / batch / rating-batch / llm-status）
+      if (await handleLlmRest(req, res, parsed)) return;
+      // リング3: conversations REST（認証はハンドラ内。digest は上の handleLlmRest が先に処理）
       if (parsed.pathname.startsWith('/api/conversations')) {
         if (await handleConversations(req, res, parsed)) return;
       }

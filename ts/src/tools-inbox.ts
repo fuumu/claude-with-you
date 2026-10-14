@@ -3,14 +3,13 @@
  * inbox_check / inbox_read / inbox_post / inbox_update / inbox_delete
  * 実装は inbox.ts（REST と共有）に委譲する。
  *
- * 例外: 【生】を含む chat 宛の inbox_post は原文退避→昇華（LLM・非同期スレッド）を伴う
- * ため FORWARD（Python へ転送）。Ring 5 で LLM クライアントと一緒に移行する。
+ * 【生】を含む chat 宛の inbox_post（原文退避→非同期昇華）は inbox.ts の postInboxMessage 内で
+ * 処理される（Ring 5。昇華ジョブ本体は llm-tasks.ts がフック登録）。
  */
 import fs from 'node:fs';
 import { sessionCheckinUpgrade } from './attendance.js';
 import {
   findInboxFile,
-  inboxNeedsSublimate,
   inboxStanding,
   loadInboxMessages,
   normInboxModels,
@@ -19,7 +18,7 @@ import {
   resolveExpiresAt,
   writeMsg,
 } from './inbox.js';
-import { FORWARD, Args, Handler, toInt, truthy } from './tool-types.js';
+import { Args, Handler, toInt, truthy } from './tool-types.js';
 import { jstIsoFromMs } from './write.js';
 
 /** main.py _inbox_model_match: stored（配列 or null）が query と OR 一致するか */
@@ -125,8 +124,7 @@ const inboxPost: Handler = (args) => {
   const title = args.title === undefined || args.title === null ? '' : String(args.title);
   const body = args.body === undefined || args.body === null ? '' : String(args.body);
   if (!to || !title) return { error: 'to and title are required' };
-  // 【生】宛は退避→昇華（LLM）を伴うため Python が処理する
-  if (inboxNeedsSublimate(to, title)) return FORWARD;
+  // 【生】宛の退避→非同期昇華は postInboxMessage 内で処理される（llm-tasks.ts のフック）
 
   const persistent = truthy(args.persistent);
   const exp = resolveExpiresAt(args);

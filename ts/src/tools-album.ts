@@ -1,15 +1,15 @@
 /**
  * TS-1 リング4 グループ5: album 系 MCP ツール（main.py _handle_tool_call_raw と同一契約）。
- * album_read / album_list / album_share / album_delete をネイティブ化。
+ * album_save / album_read / album_list / album_share / album_delete をネイティブ化。
  *
- * album_save は FORWARD（Python）のまま: 画像のデコード・リサイズ（長辺 1024px）・
- * 形式変換に画像ライブラリ（Pillow）が必要で、「外部依存なし」方針に反するため。
- * Ring 5 以降で依存の可否を含めて判断する。
+ * album_save は Ring 5 で sharp（libvips）を導入してネイティブ化した（album-save.ts）。
+ * Ring 4 では「外部依存なし」方針のため Python へ転送していた。
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from './data.js';
+import { albumSave } from './album-save.js';
 import { safeId } from './inbox.js';
 import { Handler, truthy } from './tool-types.js';
 import { appendOplog, jstIsoFromMs, nowJst, writeJson } from './write.js';
@@ -161,8 +161,21 @@ const albumDelete: Handler = (args) => {
   return { status: 'deleted', id };
 };
 
-// album_save は意図的に未登録（= Python へ転送）。理由はファイル冒頭を参照
+const albumSaveTool: Handler = (args, ctx) =>
+  albumSave(
+    {
+      url: args.url,
+      file_path: args.file_path,
+      comment: args.comment === undefined ? '' : args.comment,
+      tags: args.tags,
+      rating: args.rating,
+      guard_message: args.guard_message,
+    },
+    ctx.serverVersion,
+  );
+
 export const ALBUM_HANDLERS: Record<string, Handler> = {
+  album_save: albumSaveTool,
   album_read: albumRead,
   album_list: albumList,
   album_share: albumShare,

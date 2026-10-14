@@ -1,7 +1,7 @@
 /**
  * TS-1 リング4 グループ4: 会話ログ系 MCP ツール（main.py _handle_tool_call_raw と同一契約）。
  * conversation_index / conversation_search / conversation_share / conversation_read /
- * log_annotate / conversation_digest（status_only のみ。生成は LLM 依存のため FORWARD）
+ * log_annotate（conversation_digest は LLM 依存のため tools-llm.ts）
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { resolveIndividual } from './attendance.js';
 import { ConvMeta, CONVERSATIONS_DIR, convRatingView, DATA_ROOT, loadConvIndex } from './data.js';
 import { allTermsIn, queryTerms } from './search.js';
-import { FORWARD, Handler, toInt, truthy } from './tool-types.js';
+import { Handler, toInt, truthy } from './tool-types.js';
 import { jstIsoFromMs, nowJst, writeJson } from './write.js';
 
 const ANNOTATIONS_DIR = path.join(DATA_ROOT, 'annotations');
@@ -475,28 +475,10 @@ const logAnnotate: Handler = (args) => {
   return { ok: true, uuid: uid, seq: entry.seq, target: entry.target, created_at: entry.created_at };
 };
 
-const conversationDigest: Handler = (args) => {
-  const uid = str(args.uuid);
-  if (!uid) return { error: 'uuid is required' };
-  // status_only はファイル存在確認だけなのでネイティブ。生成（LLM）は Python へ（Ring 5）
-  if (!truthy(args.status_only)) return FORWARD;
-  if (!safeUuid(uid) || !fs.existsSync(convPath(uid))) {
-    return { error: `conversation not found: ${uid}` };
-  }
-  return {
-    uuid: uid,
-    status_only: true,
-    has_digest: fs.existsSync(path.join(CONVERSATIONS_DIR, `${uid}_digest.json`)),
-    has_safe_digest: fs.existsSync(path.join(CONVERSATIONS_DIR, `${uid}_digest_safe.json`)),
-    server_time: nowJst(),
-  };
-};
-
 export const CONVERSATION_HANDLERS: Record<string, Handler> = {
   conversation_index: conversationIndex,
   conversation_search: conversationSearch,
   conversation_share: conversationShare,
   conversation_read: conversationRead,
   log_annotate: logAnnotate,
-  conversation_digest: conversationDigest,
 };

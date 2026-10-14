@@ -9,17 +9,53 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
 import { parseIsoTs } from './attendance.js';
-import { DATA_ROOT } from './data.js';
-import { jstIsoFromMs, nowJst } from './write.js';
+import { DATA_DIR, DATA_ROOT } from './data.js';
+import { appendOplog, jstIsoFromMs, jstStamp, nowJst, rebuildIndex, writeJson } from './write.js';
 
 const INBOX_DIR = path.join(DATA_ROOT, 'inbox');
 
-/** 自動昇華パイプライン（v3.75）のトリガー。該当する投稿は LLM 依存のため Python が処理する */
+/** 自動昇華パイプライン（v3.75）のトリガー（Ring 5 で TS ネイティブ化） */
 const SUBLIMATE_TRIGGER = '【生】';
 
 /** main.py _inbox_needs_sublimate: 【生】を含む chat 宛の投稿か */
 export function inboxNeedsSublimate(to: unknown, title: unknown): boolean {
   return to === 'chat' && String(title ?? '').includes(SUBLIMATE_TRIGGER);
+}
+
+/**
+ * 非同期昇華ジョブの起動フック。llm-tasks.ts（LLM 依存）が登録する。inbox.ts は LLM に依存しないため
+ * フック経由にして循環 import を避ける
+ */
+export type SublimateHook = (msgId: string, originalBody: string, memoryId: string) => void;
+let sublimateHook: SublimateHook | null = null;
+export function registerSublimateHook(hook: SublimateHook): void {
+  sublimateHook = hook;
+}
+
+/** main.py _create_raw_backup_entry: 原文を ExtMemory に rating=adult / local_only で退避 */
+function createRawBackupEntry(title: string, body: string, inboxId: string, createdAt: string): string {
+  const entryId = `${jstStamp()}_バカンス日記`;
+  const entry = {
+    id: entryId,
+    created_at: nowJst(),
+    updated_at: nowJst(),
+    title,
+    body: `<!-- inbox自動退避: ${inboxId} / ${createdAt} -->
+
+${body}`,
+    tags: ['バカンス日記', '自動退避'],
+    source_thread: '',
+    importance: 'normal',
+    author: 'mio',
+    deleted: false,
+    rating: 'adult',
+    local_only: true,
+  };
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  writeJson(path.join(DATA_DIR, `${entryId}.json`), entry);
+  appendOplog('create', entryId, null, entry as unknown as Record<string, unknown>);
+  rebuildIndex();
+  return entryId;
 }
 
 /** index.ts が先読みしたリクエストボディ（Python へ回す場合に再送するため） */
@@ -178,12 +214,25 @@ export function postInboxMessage(
   const now = nowJst();
   const stamp = now.replace(/:/g, '').replace(/-/g, '').replace('T', '_').slice(0, 15);
   const msgId = `inbox_${stamp}_${crypto.randomBytes(4).toString('hex')}`;
+
+  // 自動昇華パイプライン（v3.75）: 【生】を含む chat 宛は即時退避→プレースホルダ化→非同期昇華
+  let title = String(data.title ?? '');
+  let body = String(data.body ?? '');
+  const originalBody = body;
+  const sublimateTrigger = inboxNeedsSublimate(to, title);
+  let memoryId: string | null = null;
+  if (sublimateTrigger) {
+    memoryId = createRawBackupEntry(title, originalBody, msgId, now);
+    body = `【処理中】昇華処理を実行中です。原文は ExtMemory \`${memoryId}\` に退避済みです。`;
+    title = title.split(SUBLIMATE_TRIGGER).join('【処理中】');
+  }
+
   const msg: InboxMessage = {
     id: msgId,
     to,
     from: typeof data.from === 'string' ? data.from : 'code',
-    title: String(data.title ?? ''),
-    body: String(data.body ?? ''),
+    title,
+    body,
     from_model: normModelField(data.from_model),
     to_model: normModelField(data.to_model),
     reply_to_id: replyToId || null, // REST POST は reply_to_id を受けない（main.py と同じ）。MCP のみ指定
@@ -193,6 +242,7 @@ export function postInboxMessage(
     expires_at: expiresAt ?? null,
   };
   writeMsg(path.join(dir, `${msgId}.json`), msg);
+  if (sublimateTrigger && memoryId && sublimateHook) sublimateHook(msgId, originalBody, memoryId);
   return msg;
 }
 
@@ -246,9 +296,6 @@ export async function handleInbox(
         sendJson(res, 400, { error: 'to and title are required' });
         return true;
       }
-      // 【生】を含む chat 宛は退避→昇華（LLM・非同期）が必要なため Python へ回す。
-      // ボディは index.ts が先読み済みなので、プロキシ側が再送する
-      if (inboxNeedsSublimate(data.to, data.title)) return false;
       const exp = resolveExpiresAt(data);
       if (exp.error) {
         sendJson(res, 400, { error: exp.error });

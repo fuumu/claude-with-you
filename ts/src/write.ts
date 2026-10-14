@@ -34,7 +34,7 @@ export function nowJst(): string {
 }
 
 /** Python strftime('%Y%m%d_%H%M%S')（JST）互換 */
-function jstStamp(): string {
+export function jstStamp(): string {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
   return (

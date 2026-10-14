@@ -268,3 +268,16 @@ def test_oplog_list_basic(server):
 
     d4 = server.tool('oplog_list', {'date_from': '2099-01-01'})
     assert d4['total'] == 0
+
+
+def test_generated_ts_defs_are_up_to_date():
+    """ts/src/tool-defs.ts・friend-defs.ts（main.py の _MCP_TOOLS / _FRIEND_MCP_TOOLS /
+    _DEFAULT_FRIEND_CORE から生成）が最新であること。ずれたら scripts/gen_ts_tool_defs.py を再実行する"""
+    import os
+    import subprocess
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(here, '..', 'scripts', 'gen_ts_tool_defs.py')
+    r = subprocess.run([sys.executable, '-I', script, '--check'], capture_output=True, text=True,
+                       encoding='utf-8', timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr

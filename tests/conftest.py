@@ -12,8 +12,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid as uuid_mod
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import requests
@@ -31,10 +33,131 @@ def _free_port() -> int:
     return port
 
 
+class MockLLM:
+    """テスト用のローカル LLM（Anthropic Messages 互換 `POST /v1/messages` + `/v1/models`）。
+
+    実 LM Studio（LAN）に接続しないよう、Python / TS の両サーバーの LLM_ENDPOINTS をここへ向ける。
+    プロンプトの特徴的な文言で応答を切り替える。tests から `server.llm` で操作する:
+      llm.set(mode='fail')     … /v1/messages が 500 を返す（LLM 障害のシミュレーション）
+      llm.set(rating='adult')  … レーティング判定の返答を変える（safe / mature / adult）
+      llm.calls                … 受信した /v1/messages の prompt 一覧
+      llm.serve('/x.png', bytes, 'image/png')  … 静的ファイル配信（album_save の url 用）
+    """
+
+    RATING_MARK = 'コンテンツレーティング判定'
+    SUBLIMATE_MARK = '「昇華」変換'
+    DIGEST_PART_MARK = '以下は会話ログの一部です'
+    DIGEST_ALL_MARK = '各パートのダイジェスト'
+    KEYWORDS_MARK = '検索に使うキーワードを3〜5個生成'
+    LAYERS_MARK = '## 2層: 要約'
+
+    def __init__(self):
+        self.mode = 'ok'
+        self.rating = 'safe'
+        self.calls = []
+        self.statics = {}
+        self._lock = threading.Lock()
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):  # 静かに
+                pass
+
+            def _send(self, status, body, ctype='application/json'):
+                data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode('utf-8')
+                self.send_response(status)
+                self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                path = self.path.split('?')[0]
+                if path == '/v1/models':
+                    return self._send(200, {'data': [{'id': 'mock-model'}]})
+                if path in outer.statics:
+                    ctype, data = outer.statics[path]
+                    return self._send(200, data, ctype)
+                self._send(404, {'error': 'not found'})
+
+            def do_POST(self):
+                n = int(self.headers.get('Content-Length') or 0)
+                raw = self.rfile.read(n) if n else b''
+                if self.path == '/v1/messages':
+                    try:
+                        req = json.loads(raw.decode('utf-8'))
+                    except ValueError:
+                        return self._send(400, {'error': 'bad json'})
+                    prompt = ''
+                    for m in req.get('messages', []):
+                        c = m.get('content')
+                        prompt += c if isinstance(c, str) else ''.join(
+                            b.get('text', '') for b in c if isinstance(b, dict))
+                    with outer._lock:
+                        outer.calls.append({'prompt': prompt, 'model': req.get('model'),
+                                            'max_tokens': req.get('max_tokens'),
+                                            'temperature': req.get('temperature')})
+                        mode, rating = outer.mode, outer.rating
+                    if mode == 'fail':
+                        return self._send(500, {'type': 'error',
+                                                'error': {'type': 'api_error', 'message': 'mock failure'}})
+                    text = outer.reply_for(prompt, rating)
+                    return self._send(200, {
+                        'id': 'msg_mock', 'type': 'message', 'role': 'assistant',
+                        'model': req.get('model', 'mock-model'),
+                        'content': [{'type': 'text', 'text': text}],
+                        'stop_reason': 'end_turn', 'stop_sequence': None,
+                        'usage': {'input_tokens': 1, 'output_tokens': 1}})
+                self._send(404, {'error': 'not found'})
+
+        self._httpd = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.port = self._httpd.server_address[1]
+        self.base = f'http://127.0.0.1:{self.port}'
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+
+    def reply_for(self, prompt, rating):
+        if self.RATING_MARK in prompt:
+            return json.dumps({'rating': rating, 'reason': 'モック判定'}, ensure_ascii=False)
+        if self.SUBLIMATE_MARK in prompt:
+            return '昇華済みのモックテキスト。波のように静かに満ちていく。'
+        if self.DIGEST_ALL_MARK in prompt:
+            return 'モック統合ダイジェスト'
+        if self.DIGEST_PART_MARK in prompt:
+            return 'モックチャンクダイジェスト'
+        if self.KEYWORDS_MARK in prompt:
+            return 'モックA, モックB, モックC'
+        if self.LAYERS_MARK in prompt:
+            return ('## 2層: 要約\nモックによる要約文です。会話の目的と結論を十分な長さで記述しています。\n\n'
+                    '## 3層: シンボリック圧縮\nモック圧縮\n\n'
+                    '## 4層: キーワード\nモック要約, テスト, 層')
+        return 'mock'
+
+    def set(self, mode=None, rating=None):
+        with self._lock:
+            if mode is not None:
+                self.mode = mode
+            if rating is not None:
+                self.rating = rating
+
+    def reset(self):
+        with self._lock:
+            self.mode, self.rating = 'ok', 'safe'
+            self.calls = []
+
+    def serve(self, path, data, content_type):
+        self.statics[path] = (content_type, data)
+        return self.base + path
+
+    def close(self):
+        self._httpd.shutdown()
+
+
 class Server:
     """テスト対象サーバーのハンドル。base_url とヘルパーを提供する"""
 
-    def __init__(self, base_url: str, token: str, data_root: str, proc):
+    def __init__(self, base_url: str, token: str, data_root: str, proc, llm=None):
+        self.llm = llm
         self.base_url = base_url
         self.token = token
         self.data_root = data_root
@@ -136,6 +259,19 @@ def server():
     front_port = _free_port() if ts1 else py_port
     front_url = f'http://127.0.0.1:{front_port}'
 
+    # 実 LAN の LM Studio に接続しないよう、LLM は常にテスト内のモックへ向ける。
+    # Python / TS の両サーバーに同じ設定を渡す（TS は環境を継承するだけでは漏れる）
+    llm = MockLLM()
+    llm_env = {
+        'LLM_ENDPOINTS': f'127.0.0.1:{llm.port}',
+        'LLM_OK_MODELS': 'mock-model',
+        'LM_STUDIO_HOST': '127.0.0.1',
+        'LM_STUDIO_PORT': '1',
+        'ANTHROPIC_API_KEY': '',
+        'MIO_NIGHTLY_BATCH_HOUR': 'off',
+        'MIO_IMPORT_AUTO_BATCH': 'off',
+    }
+
     env = dict(os.environ)
     env.update({
         'MIO_DATA_ROOT': tmpdir,
@@ -144,17 +280,12 @@ def server():
         'MIO_BASE_URL': front_url,
         'MIO_LOG_LEVEL': 'off',
         'MIO_SEED_WELCOME': 'off',
-        'MIO_NIGHTLY_BATCH_HOUR': 'off',
-        'ANTHROPIC_API_KEY': '',
-        # 要約バッチが実LMStudioに接続しないよう到達不能な宛先に向ける
-        'LM_STUDIO_HOST': '127.0.0.1',
-        'LM_STUDIO_PORT': '1',
-        'MIO_IMPORT_AUTO_BATCH': 'off',
         'PYTHONIOENCODING': 'utf-8',
         # main.py は encoding 指定なしの open() が多い。本番（Linux/docker）は utf-8 だが
         # Windows ローカルは cp932 になるため、本番と同じ utf-8 に固定する
         'PYTHONUTF8': '1',
     })
+    env.update(llm_env)
     # サーバー出力は PIPE にせずファイルへ流す。PIPE だと誰も読まないためバッファが満杯に
     # なりサーバーが書き込みでブロックし、一括実行の中盤でハングする（MIO_TS1=1 で顕在化）
     logdir = tempfile.mkdtemp(prefix='mio-ts0-log-')
@@ -180,7 +311,9 @@ def server():
                 'MIO_API_TOKEN': TEST_TOKEN,
                 # トランスポート前倒し: OAuth メタデータの issuer 等に使用
                 'MIO_BASE_URL': front_url,
+                'MIO_LOG_LEVEL': 'off',
             })
+            ts_env.update(llm_env)
             ts_log = open(os.path.join(logdir, 'node.log'), 'wb')
             ts_proc = subprocess.Popen(
                 ['node', dist], env=ts_env,
@@ -188,7 +321,7 @@ def server():
                 cwd=os.path.join(REPO_ROOT, 'ts'))
             ts_proc.log_path = ts_log.name
             _wait_health(front_url, ts_proc)
-        yield Server(front_url, TEST_TOKEN, tmpdir, proc)
+        yield Server(front_url, TEST_TOKEN, tmpdir, proc, llm)
     finally:
         if ts_proc is not None:
             ts_proc.kill()
@@ -196,6 +329,7 @@ def server():
         proc.kill()
         proc.wait(timeout=10)
         py_log.close()
+        llm.close()
         if ts_log is not None:
             ts_log.close()
         # 一時データ・ログは使い捨て（従来は残骸が %TEMP% に溜まり続けていた）

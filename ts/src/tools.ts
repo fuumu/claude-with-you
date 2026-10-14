@@ -24,6 +24,7 @@ import { CONVERSATION_HANDLERS } from './tools-conversation.js';
 import { COREMEM_HANDLERS } from './tools-coremem.js';
 import { FILE_HANDLERS } from './tools-file.js';
 import { INBOX_HANDLERS } from './tools-inbox.js';
+import { LLM_HANDLERS } from './tools-llm.js';
 import { MISC_HANDLERS } from './tools-misc.js';
 import { PROJECT_HANDLERS } from './tools-project.js';
 import { jstIsoFromMs, mcpUpsertEntry, mcpWriteEntry, nowJst, writeJson } from './write.js';
@@ -133,6 +134,7 @@ const HANDLERS: Record<string, Handler> = {
   ...FILE_HANDLERS,
   ...PROJECT_HANDLERS,
   ...MISC_HANDLERS,
+  ...LLM_HANDLERS,
 };
 
 // ── 公開 API ─────────────────────────────────────────────────────────

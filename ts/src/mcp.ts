@@ -18,15 +18,19 @@
  *     未対応版→400 + -32022 UnsupportedProtocolVersion、未知メソッド→404 + -32601。
  *   仕様: modelcontextprotocol.io/specification/draft（2026-07-28 RC）
  *
- * 友達セッション（friends registry のトークン）はツール構成が動的なため
- * 丸ごと Python へ透過転送する（このモジュールは false を返す）。
+ * 友達セッション（friends registry の active トークン）は Ring 5 で TS ネイティブ化した
+ * （friend.ts。ツール 6 本・initialize の instructions に記憶を注入・last_seen 記録）。
  */
-import fs from 'node:fs';
 import http from 'node:http';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
-import { DATA_ROOT } from './data.js';
+import {
+  activeFriendByToken,
+  Friend,
+  friendInstructions,
+  handleFriendToolCall,
+} from './friend.js';
+import { FRIEND_TOOL_DEFS } from './friend-defs.js';
 import { callToolNative, listTools } from './tools.js';
 
 const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
@@ -35,8 +39,6 @@ const ALLOWED_ORIGINS = (process.env.MIO_ALLOWED_ORIGINS ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-
-const FRIENDS_REGISTRY = path.join(DATA_ROOT, 'friends', 'registry.json');
 
 const INSTRUCTIONS =
   'このサーバーは mio-memory — 菊池淳（きくち・あつし）専用の外部記憶MCP サーバーです。' +
@@ -280,20 +282,6 @@ async function processModernMessage(
   modernError(res, 404, msgId, -32601, 'Method not found');
 }
 
-/** 友達トークンか（friends registry に active で存在するか） */
-function isFriendToken(token: string): boolean {
-  if (!token) return false;
-  try {
-    const reg = JSON.parse(fs.readFileSync(FRIENDS_REGISTRY, 'utf-8')) as Record<
-      string,
-      { status?: string }
-    >;
-    return token in reg;
-  } catch {
-    return false;
-  }
-}
-
 function checkOrigin(req: http.IncomingMessage): boolean {
   if (ALLOWED_ORIGINS.length === 0) return true;
   const origin = (req.headers['origin'] as string) ?? '';
@@ -454,6 +442,64 @@ async function processTransportMessage(
   return { response: { jsonrpc: '2.0', id: msgId, result: {} } };
 }
 
+/** 友達セッションの1メッセージ処理（main.py _process_mcp_message の friend 分岐と同一）。notification は null */
+async function processFriendMessage(
+  msg: unknown,
+  friend: Friend,
+): Promise<{ response: Record<string, unknown> | null; sessionId?: string }> {
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+    return {
+      response: { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } },
+    };
+  }
+  const m = msg as JsonRpcMessage;
+  const method = typeof m.method === 'string' ? m.method : '';
+  const msgId = m.id ?? null;
+
+  if (msgId === null && method.startsWith('notifications/')) return { response: null };
+
+  if (method === 'initialize') {
+    const params = (m.params ?? {}) as { protocolVersion?: string };
+    const proto = params.protocolVersion ?? 'unknown';
+    const version = await upstreamVersion();
+    return {
+      sessionId: randomUUID(),
+      response: {
+        jsonrpc: '2.0',
+        id: msgId,
+        result: {
+          protocolVersion: proto === '2025-11-25' || proto === '2025-03-26' ? proto : '2025-03-26',
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: 'mio-memory', version: `${version}.0` },
+          instructions: friendInstructions(friend),
+        },
+      },
+    };
+  }
+  if (method === 'tools/list') {
+    return { response: { jsonrpc: '2.0', id: msgId, result: { tools: FRIEND_TOOL_DEFS } } };
+  }
+  if (method === 'tools/call') {
+    const params = (m.params ?? {}) as Record<string, unknown>;
+    const name = typeof params.name === 'string' ? params.name : '';
+    const args = (params.arguments ?? {}) as Record<string, unknown>;
+    console.log(`[MCP] tools/call (friend=${friend.nickname}): ${name}`);
+    const result = handleFriendToolCall(name, args, friend);
+    return {
+      response: {
+        jsonrpc: '2.0',
+        id: msgId,
+        result: { content: [{ type: 'text', text: JSON.stringify(result) }] },
+      },
+    };
+  }
+  if (method === 'ping') return { response: { jsonrpc: '2.0', id: msgId, result: {} } };
+  if (msgId === null) return { response: null };
+  return {
+    response: { jsonrpc: '2.0', id: msgId, error: { code: -32601, message: 'Method not found' } },
+  };
+}
+
 function respond(
   res: http.ServerResponse,
   status: number,
@@ -499,10 +545,10 @@ export async function handleMcp(
     return true;
   }
 
-  // 認証: 通常トークンは TS が検証。友達トークンは Python へ透過
+  // 認証: 友達トークン（active）を先に判定（main.py と同じ順序）→ 通常トークン
   const token = extractBearer(req, url);
-  if (!verifyToken(token)) {
-    if (isFriendToken(token)) return false; // 友達セッション → プロキシへ
+  const friend = activeFriendByToken(token);
+  if (!friend && !verifyToken(token)) {
     res.writeHead(401, {
       'Content-Type': 'application/json',
       'WWW-Authenticate': 'Bearer',
@@ -567,6 +613,25 @@ export async function handleMcp(
       '',
       false,
     );
+    return true;
+  }
+
+  // 友達セッション: 常にレガシー形式（セッションIDヘッダ付き）で処理する
+  if (friend) {
+    if (Array.isArray(msg)) {
+      const results: Record<string, unknown>[] = [];
+      for (const m of msg) {
+        const { response } = await processFriendMessage(m, friend);
+        if (response !== null) results.push(response);
+      }
+      if (results.length === 0) respond(res, 202, null, sessionId, false);
+      else respond(res, 200, JSON.stringify(results), sessionId, wantsSse);
+      return true;
+    }
+    const { response, sessionId: newSession } = await processFriendMessage(msg, friend);
+    if (newSession) sessionId = newSession;
+    if (response === null) respond(res, 202, null, sessionId, false);
+    else respond(res, 200, JSON.stringify(response), sessionId, wantsSse);
     return true;
   }
 

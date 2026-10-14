@@ -915,7 +915,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 ```
 
 - ID 形式: `YYYYMMDD_HHMMSS_{タグスラッグ}`（ExtMemory と同様）
-- 保存時に長辺 1024px にリサイズ（アスペクト比維持・Pillow 使用）
+- 保存時に長辺 1024px にリサイズ（アスペクト比維持・Pillow 使用。TS 版 album_save は sharp で同等実装）
 - JPEG は品質 85 で保存。RGBA/P モードは RGB に変換
 
 ### MCP ツール（5本）
