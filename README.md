@@ -298,7 +298,7 @@ General-purpose file storage for non-image files (PDF, text, etc.) in `/data/upl
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `file_upload` | Upload a file from URL or NAS local path. Saves file + metadata JSON to `/data/uploads/` | `url`, `file_path`, `filename`, `comment`, `tags` |
+| `file_upload` | Upload a file from URL or NAS local path. Saves file (`{id}.{ext}`) + metadata (`{id}.meta.json`) to `/data/uploads/`; legacy `{id}.json` metadata is migrated automatically | `url`, `file_path`, `filename`, `comment`, `tags` |
 | `file_read` | Read file metadata + content for text files (truncated at 50K chars) | `id` |
 | `file_list` | List all uploaded files with optional tag filter | `tags` |
 | `file_delete` | Permanently delete an uploaded file and its metadata | `id` |

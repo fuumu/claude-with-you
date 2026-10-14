@@ -878,7 +878,8 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 引数: url（省略可 — ファイルURL）, file_path（省略可 — NASローカルパス。url と排他）,
        filename（省略可）, comment（省略可）, tags（省略可 — タグ配列）
 返値: {id, filename, mimetype, size}
-※ /data/uploads/ にファイル本体とメタデータを保存
+※ /data/uploads/ にファイル本体（{id}.{ext}）とメタデータ（{id}.meta.json）を保存
+※ 拡張子 json のファイルでも実体とメタデータが衝突しない。旧形式（メタが {id}.json）は自動で {id}.meta.json へ退避される
 ```
 
 ### file_read（v3.59、拡張子フォールバック v3.66）
@@ -1119,7 +1120,7 @@ memory/data/          ← gitignored、コンテナ内は /data/
 ├── conv_artifacts/   会話から抽出したファイル
 ├── annotations/      会話の追記注釈（{uuid}.json・append-only）
 ├── album/            アルバム画像（{id}.{ext} + {id}.json メタデータ）
-├── uploads/          アップロードファイル（{id}.{ext} + {id}.json メタデータ）
+├── uploads/          アップロードファイル（{id}.{ext} + {id}.meta.json メタデータ。旧形式の {id}.json メタは起動時/参照時に自動退避）
 ├── projects/         プロジェクト名前空間（{name}/ 配下に CoreMem 同等のファイルストア。v3.90）
 ├── inbox/            インボックスメッセージ
 ├── friends/          お友達システム（registry.json・{連番}/memory.md）
