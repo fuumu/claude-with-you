@@ -22,13 +22,14 @@ export interface IndexEntry {
   symbolic?: string;
   rating?: string;
   local_only?: boolean;
+  author?: string;
+  source_thread?: string;
   [key: string]: unknown;
 }
 
 export interface MemoryEntry extends IndexEntry {
   body?: string;
   updated_at?: string;
-  source_thread?: string;
 }
 
 export interface ConvMeta {
