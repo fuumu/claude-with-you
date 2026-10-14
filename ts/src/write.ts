@@ -44,7 +44,7 @@ function jstStamp(): string {
 }
 
 /** Python json.dump(..., ensure_ascii=False, indent=2) 互換の書き込み */
-function writeJson(file: string, data: unknown): void {
+export function writeJson(file: string, data: unknown): void {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -124,6 +124,85 @@ export function createEntry(data: Record<string, unknown>): MemoryEntry | null {
   };
   writeJson(path.join(DATA_DIR, `${entryId}.json`), entry);
   appendOplog('create', entryId, null, entry);
+  rebuildIndex();
+  return entry;
+}
+
+const RATINGS = ['safe', 'mature', 'adult'];
+
+/** Python dict.get(key, default) 互換（キーがあれば null でもその値を返す） */
+function argOr(args: Record<string, unknown>, key: string, dflt: unknown): unknown {
+  return key in args ? args[key] : dflt;
+}
+
+/**
+ * MCP memory_write（main.py _handle_tool_call_raw と同一）。
+ * REST createEntry との差: title 必須なし・rating / local_only を受ける。
+ */
+export function mcpWriteEntry(args: Record<string, unknown>): MemoryEntry {
+  const tags = Array.isArray(args.tags) && args.tags.length > 0 ? (args.tags as unknown[]) : [];
+  // Python の [:20] はコードポイント単位（絵文字等の astral 文字を1と数える）
+  const tagSlug =
+    tags.length > 0 ? Array.from(String(tags[0]).replace(/ /g, '_')).slice(0, 20).join('') : 'note';
+  const entryId = `${jstStamp()}_${tagSlug}`;
+  const entry: MemoryEntry = {
+    id: entryId,
+    created_at: nowJst(),
+    updated_at: nowJst(),
+    title: argOr(args, 'title', '') as string,
+    body: argOr(args, 'body', '') as string,
+    tags: tags as string[],
+    source_thread: '',
+    importance: argOr(args, 'importance', 'normal') as string,
+    author: 'mio',
+    deleted: false,
+  };
+  if (typeof args.rating === 'string' && RATINGS.includes(args.rating)) entry.rating = args.rating;
+  if (args.local_only) entry.local_only = true;
+  writeJson(path.join(DATA_DIR, `${entryId}.json`), entry);
+  appendOplog('create', entryId, null, entry as unknown as Record<string, unknown>);
+  rebuildIndex();
+  return entry;
+}
+
+/**
+ * MCP memory_upsert（main.py と同一）。固定IDで全置換。created_at / source_thread /
+ * rating / local_only は既存値を温存する（v3.73）。keywords 等その他の既存項目は残さない。
+ * ID にパス区切りを含む場合は null（Python 版は未検証だが、ここでは書き込みを拒否する）。
+ */
+export function mcpUpsertEntry(args: Record<string, unknown>): MemoryEntry | null {
+  const entryId = String(args.id ?? '');
+  const p = entryPath(entryId);
+  if (!p) return null;
+  let before: MemoryEntry | null = null;
+  if (fs.existsSync(p)) {
+    before = JSON.parse(fs.readFileSync(p, 'utf-8')) as MemoryEntry;
+  }
+  const entry: MemoryEntry = {
+    id: entryId,
+    created_at: before ? (before.created_at ?? nowJst()) : nowJst(),
+    updated_at: nowJst(),
+    title: argOr(args, 'title', '') as string,
+    body: argOr(args, 'body', '') as string,
+    tags: (Array.isArray(args.tags) ? args.tags : []) as string[],
+    source_thread: before ? (before.source_thread ?? '') : '',
+    importance: argOr(args, 'importance', 'normal') as string,
+    author: 'mio',
+    deleted: false,
+  };
+  if (typeof args.rating === 'string' && RATINGS.includes(args.rating)) {
+    entry.rating = args.rating;
+  } else if (before?.rating) {
+    entry.rating = before.rating;
+  }
+  if (args.local_only !== undefined && args.local_only !== null) {
+    if (args.local_only) entry.local_only = true;
+  } else if (before?.local_only) {
+    entry.local_only = true;
+  }
+  writeJson(p, entry);
+  appendOplog('upsert', entryId, before as unknown as Record<string, unknown> | null,
+    entry as unknown as Record<string, unknown>);
   rebuildIndex();
   return entry;
 }

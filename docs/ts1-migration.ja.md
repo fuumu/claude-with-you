@@ -33,7 +33,8 @@ main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScrip
                  │    レガシー = initialize/ping/notifications/SSE/セッション、
                  │    モダン = MCP 2026-07-28 ステートレスコア（server/discover・
                  │    subscriptions/listen・必須ヘッダ検証・resultType/ttlMs注入）。
-                 │    tools/* は JSON-RPC のまま Python へ転送。友達セッションは丸ごと透過）
+                 │    tools/list・memory 系 tools/call は TS ネイティブ（リング4・tools.ts）、
+                 │    未移行ツールは JSON-RPC のまま Python へ転送。友達セッションは丸ごと透過）
                  └ その他すべて                      … Python へ透過転送
                        ※ TS 検証済みトークンは API_TOKEN に書き換えて転送
                          （TS 発行 OAuth トークンが未移行エンドポイントでも通る）
@@ -72,7 +73,7 @@ TS 実装は utf-8 固定（本番互換）。
 | 新仕様RC | **MCP 2026-07-28 RC先行実装**（mcp.ts / oauth.ts 改修） | ✅ 完了（2026-07-14）— デュアル時代サーバー（レガシー initialize と モダン ステートレスコアの同一エンドポイント共存・仕様の era 判別ルールどおり）。server/discover・subscriptions/listen・必須ヘッダ検証（-32020/-32022/-32601）・resultType/ttlMs/cacheScope 注入・OAuth強化（iss/application_type/refresh_token/RFC 8414 suffix）。特性テスト15件追補（TS1モードのみ実行）→ TS1 100件全パス。7/28正式版とのRC差分確認が残タスク |
 | 2 | 書き込み系REST（create/patch/delete/reindex） | ✅ 完了（2026-07-14）— write.ts。ID採番（JST・タグslug）・oplog・index再構築とも Python 互換を実機検証（改行正規化後バイト一致）。テスト構成では REST 書き込み=TS・MCP 経由の書き込み=Python（転送先）が共存するが、両者同一アルゴリズムのため index/oplog は収束する |
 | 3 | inbox / coremem / conversations REST | ✅ 完了（2026-07-14）— inbox.ts / coremem.ts / conversations.ts。REST特性テスト20件追補（inbox 5・coremem 7・conversations 8）。symlink 版管理は TS も symlink→コピーのフォールバックで互換、版番号は実装間で連番継続を実機確認。会話 _index.json は TS 再構築と Python 再構築がバイト完全一致。share トークン・rating ゲートも相互運用検証済み。digest（要ローカルLLM）のみリング5まで Python 転送 |
-| 4 | MCP tools/list・tools/call の TS ネイティブ化 | ツール実装は内部で REST 相当関数を呼ぶ構造に（トランスポート層は前倒し済み） |
+| 4 | MCP tools/list・tools/call の TS ネイティブ化 | 🚧 着手（2026-10-15・`ts1-ring4` ブランチ）— tools.ts がディスパッチャー。**tools/list は TS ネイティブ**（38本・定義は `scripts/gen_ts_tool_defs.py` が main.py の `_MCP_TOOLS` から ast で生成する `ts/src/tool-defs.ts`。`test_ts_tool_defs_snapshot_matches_python` で Python 単体モード時に実照合）。**tools/call は段階移行**: グループ1 = memory 系6本（memory_read_index / memory_read / memory_write / memory_upsert / memory_search / memory_share）をネイティブ化、未移行ツールは従来どおり Python へ転送（`callToolNative` が null を返す）。バッチ内の tools/* も個別ディスパッチ。search.ts を main.py と同一に揃えた（`author` / `search_layer` / 1次検索対象に id / hidden 会話除外 / `random` の include_local・include_adult）。memory_upsert は ID にパス区切りを含む場合 `invalid id` で拒否（Python 版は未検証）。残り: CoreMem 4 / conversation 5 / inbox 5 / album 5 / file 4 / その他 |
 | 5 | インポート・バッチ・友達システム・conversation digest | バッチ・digest は要 LLM クライアント（Anthropic SDK / fetch）。友達セッションの /mcp 透過も此処で解消 |
 | 6 | Python 撤去・Dockerfile を Node ベースへ | 特性テスト＋本番並行稼働期間を経て判断 |
 

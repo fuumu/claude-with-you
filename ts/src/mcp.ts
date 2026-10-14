@@ -2,8 +2,10 @@
  * TS-1 トランスポート前倒し: MCP Streamable HTTP トランスポート層。
  *
  * トランスポートレベルの関心事（Origin検証・認証・セッション・SSE・
- * initialize/ping/notifications）を TS が所有し、ツールディスパッチ
- * （tools/list・tools/call）は JSON-RPC のまま Python へ転送する。
+ * initialize/ping/notifications）を TS が所有する。ツールディスパッチ
+ * （tools/list・tools/call）はリング4で tools.ts へ移行中:
+ * tools/list と移行済みツールの tools/call は TS ネイティブ、未移行ツールは
+ * JSON-RPC のまま Python へ転送する（段階移行）。
  *
  * デュアル時代（dual-era）サーバー実装:
  *   - レガシー（2025-11-25 以前）: initialize ハンドシェイク＋Mcp-Session-Id。
@@ -25,6 +27,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { DATA_ROOT } from './data.js';
+import { callToolNative, listTools } from './tools.js';
 
 const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
 const UPSTREAM_PORT = parseInt(process.env.MIO_UPSTREAM_PORT ?? '5002', 10);
@@ -244,7 +247,7 @@ async function processModernMessage(
 
   if (method === 'tools/list' || method === 'tools/call') {
     try {
-      const { status, body } = await forwardToUpstream(msg);
+      const { status, body } = await dispatchTool(msg);
       let out = body;
       try {
         const parsed = JSON.parse(body) as Record<string, unknown>;
@@ -324,6 +327,47 @@ function upstreamVersion(): Promise<string> {
       resolve('0');
     });
   });
+}
+
+function isToolMethod(msg: JsonRpcMessage): boolean {
+  const m = msg.method ?? '';
+  return m === 'tools/list' || m === 'tools/call';
+}
+
+/**
+ * tools/list・tools/call の1メッセージを処理し、JSON-RPC レスポンス（生JSON文字列）を返す。
+ * tools/list と移行済みツールは TS ネイティブ（tools.ts）、未移行ツールは Python へ転送する。
+ */
+async function dispatchTool(msg: JsonRpcMessage): Promise<{ status: number; body: string }> {
+  const id = msg.id ?? null;
+  if (msg.method === 'tools/list') {
+    return {
+      status: 200,
+      body: JSON.stringify({ jsonrpc: '2.0', id, result: { tools: listTools() } }),
+    };
+  }
+
+  const params = (msg.params ?? {}) as Record<string, unknown>;
+  const name = typeof params.name === 'string' ? params.name : '';
+  let result: Record<string, unknown> | null = null;
+  try {
+    result = callToolNative(name, params.arguments ?? {}, { serverVersion: await upstreamVersion() });
+  } catch (e) {
+    console.log(`[MCP] tools/call native error: ${name}: ${(e as Error).message}`);
+    return {
+      status: 200,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32603, message: `Internal error: ${(e as Error).message}` },
+      }),
+    };
+  }
+  if (result !== null) {
+    console.log(`[MCP] tools/call native: ${name}`);
+    return { status: 200, body: JSON.stringify({ jsonrpc: '2.0', id, result }) };
+  }
+  return forwardToUpstream(msg);
 }
 
 /** 単一 JSON-RPC メッセージを Python /mcp へ転送し、レスポンス（生JSON文字列）を返す */
@@ -537,9 +581,14 @@ export async function handleMcp(
   if (Array.isArray(msg)) {
     console.log(`[MCP] protocol=legacy method=(batch ${(msg as JsonRpcMessage[]).length} msgs)`);
     const messages = msg as JsonRpcMessage[];
-    if (messages.every((m) => isTransportMethod(m))) {
+    if (messages.every((m) => isTransportMethod(m) || isToolMethod(m))) {
       const results: Record<string, unknown>[] = [];
       for (const m of messages) {
+        if (isToolMethod(m)) {
+          const { body } = await dispatchTool(m);
+          results.push(JSON.parse(body) as Record<string, unknown>);
+          continue;
+        }
         const { response } = await processTransportMessage(m);
         if (response !== null) results.push(response);
       }
@@ -572,9 +621,12 @@ export async function handleMcp(
     return true;
   }
 
-  // tools/list・tools/call・未知メソッド → Python へ転送（実装の単一情報源を維持）
+  // tools/list・tools/call → dispatchTool（移行済みは TS、未移行は Python へ転送）。
+  // 未知メソッドは Python へ転送（Method not found の応答を単一情報源に保つ）
   try {
-    const { status, body } = await forwardToUpstream(single);
+    const { status, body } = isToolMethod(single)
+      ? await dispatchTool(single)
+      : await forwardToUpstream(single);
     respond(res, status, status === 202 ? null : body, sessionId, wantsSse);
   } catch {
     respond(res, 502, JSON.stringify({ error: 'upstream unavailable' }), '', false);

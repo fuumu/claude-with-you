@@ -1,0 +1,165 @@
+/**
+ * TS-1 リング4: MCP tools/list・tools/call のネイティブディスパッチャー。
+ *
+ * - tools/list: main.py の _MCP_TOOLS を生成したスナップショット（tool-defs.ts）を返す。
+ *   定義の同期は scripts/gen_ts_tool_defs.py と tests/test_mcp_core.py の照合テストで担保する。
+ * - tools/call: ツール名でハンドラーに振り分ける。ハンドラーは既存の TS モジュール
+ *   （data / search / write）の関数を呼ぶ。未移行ツールは null を返し、呼び出し側（mcp.ts）が
+ *   従来どおり Python へ転送する（段階移行）。
+ *
+ * レスポンス形状は main.py の _handle_tool_call / _process_mcp_message と同一:
+ *   result = { content: [{ type: 'text', text: JSON(結果 + server_time + server_version) }] }
+ *   list → {data: [...]}、str → {text: ...} にラップしてから server_time/server_version を付与。
+ */
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DATA_ROOT, loadEntry, loadIndexList } from './data.js';
+import { hierarchicalSearch, randomIndexSample, ratingExcluded } from './search.js';
+import { TOOL_DEFS, ToolDef } from './tool-defs.js';
+import { jstIsoFromMs, mcpUpsertEntry, mcpWriteEntry, nowJst, writeJson } from './write.js';
+
+const SHARE_TOKENS_FILE = path.join(DATA_ROOT, 'share_tokens.json');
+const BASE_URL = process.env.MIO_BASE_URL ?? 'http://localhost:5002';
+
+type Args = Record<string, unknown>;
+
+export interface ToolContext {
+  /** Python 側 VERSION（/health の version。server_version に載せる） */
+  serverVersion: string;
+}
+
+/** Python の bool() 互換の真偽判定（空配列・空オブジェクト・空文字・0・None は偽） */
+function truthy(v: unknown): boolean {
+  if (v === null || v === undefined || v === false || v === 0 || v === '') return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v as object).length > 0;
+  return true;
+}
+
+/** Python の int() 相当。変換不能なら NaN */
+function toInt(v: unknown): number {
+  if (typeof v === 'number') return Math.trunc(v);
+  if (typeof v === 'string' && /^\s*[+-]?\d+\s*$/.test(v)) return parseInt(v, 10);
+  return NaN;
+}
+
+function injectServerTime(result: unknown, ctx: ToolContext): unknown {
+  const st = nowJst();
+  if (Array.isArray(result)) {
+    return { data: result, server_time: st, server_version: ctx.serverVersion };
+  }
+  if (typeof result === 'string') {
+    return { text: result, server_time: st, server_version: ctx.serverVersion };
+  }
+  if (result && typeof result === 'object') {
+    return { ...(result as object), server_time: st, server_version: ctx.serverVersion };
+  }
+  return result;
+}
+
+// ── ハンドラー（memory 系・グループ1）─────────────────────────────────
+
+function memoryReadIndex(args: Args): unknown {
+  const index = loadIndexList();
+  const incLocal = truthy(args.include_local);
+  const incAdult = truthy(args.include_adult);
+  if (args.random !== undefined && args.random !== null) {
+    return randomIndexSample(
+      index,
+      args.random as string | number,
+      args.filter === 'summarized',
+      incLocal,
+      incAdult,
+    );
+  }
+  return index.filter((e) => !ratingExcluded(e, incLocal, incAdult));
+}
+
+function memoryRead(args: Args): unknown {
+  const entry = loadEntry(String(args.id ?? ''));
+  return entry ?? { error: 'not found' };
+}
+
+function memoryWrite(args: Args): unknown {
+  return mcpWriteEntry(args);
+}
+
+function memoryUpsert(args: Args): unknown {
+  if (!args.id) return { error: 'id is required' };
+  return mcpUpsertEntry(args) ?? { error: 'invalid id' };
+}
+
+function memorySearch(args: Args): unknown {
+  try {
+    const limit = args.limit !== undefined && args.limit !== null ? toInt(args.limit) : 10;
+    const offset = args.offset !== undefined && args.offset !== null ? toInt(args.offset) : 0;
+    if (Number.isNaN(limit) || Number.isNaN(offset)) {
+      throw new Error('invalid literal for int() with base 10');
+    }
+    return hierarchicalSearch(String(args.q || ''), {
+      limit,
+      offset,
+      fullBody: truthy(args.full_body),
+      includeLocal: truthy(args.include_local),
+      includeAdult: truthy(args.include_adult),
+      includeConversations: truthy(args.include_conversations),
+      author: String(args.author || ''),
+      searchLayer: String(args.search_layer || ''),
+    });
+  } catch (e) {
+    return { error: String((e as Error).message ?? e), results: [], total: 0, has_more: false };
+  }
+}
+
+function memoryShare(args: Args): unknown {
+  const entryId = String(args.id ?? '');
+  if (!loadEntry(entryId)) return { error: `entry not found: ${entryId}` };
+  const token = crypto.randomBytes(24).toString('base64url');
+  const expiresAt = jstIsoFromMs(Date.now() + 86400 * 1000);
+  let tokens: Record<string, unknown> = {};
+  try {
+    tokens = JSON.parse(fs.readFileSync(SHARE_TOKENS_FILE, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    tokens = {};
+  }
+  tokens[token] = { entry_id: entryId, expires_at: expiresAt };
+  writeJson(SHARE_TOKENS_FILE, tokens);
+  return {
+    token,
+    url: `${BASE_URL}/admin.html?token=${token}&id=${entryId}`,
+    expires_at: expiresAt,
+  };
+}
+
+const HANDLERS: Record<string, (args: Args) => unknown> = {
+  memory_read_index: memoryReadIndex,
+  memory_read: memoryRead,
+  memory_write: memoryWrite,
+  memory_upsert: memoryUpsert,
+  memory_search: memorySearch,
+  memory_share: memoryShare,
+};
+
+// ── 公開 API ─────────────────────────────────────────────────────────
+
+/** tools/list の tools（通常セッション用 38 本） */
+export function listTools(): ToolDef[] {
+  return TOOL_DEFS;
+}
+
+/** TS ネイティブで処理できるツールか */
+export function isNativeTool(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(HANDLERS, name);
+}
+
+/**
+ * tools/call のネイティブ処理。未移行ツールは null（呼び出し側が Python へ転送する）。
+ * 戻り値は JSON-RPC の result（{ content: [...] }）。
+ */
+export function callToolNative(name: string, args: unknown, ctx: ToolContext): Args | null {
+  if (!isNativeTool(name)) return null;
+  const a: Args = args && typeof args === 'object' && !Array.isArray(args) ? (args as Args) : {};
+  const result = injectServerTime(HANDLERS[name](a), ctx);
+  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+}
