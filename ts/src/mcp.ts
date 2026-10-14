@@ -351,7 +351,9 @@ async function dispatchTool(msg: JsonRpcMessage): Promise<{ status: number; body
   const name = typeof params.name === 'string' ? params.name : '';
   let result: Record<string, unknown> | null = null;
   try {
-    result = callToolNative(name, params.arguments ?? {}, { serverVersion: await upstreamVersion() });
+    result = await callToolNative(name, params.arguments ?? {}, {
+      serverVersion: await upstreamVersion(),
+    });
   } catch (e) {
     console.log(`[MCP] tools/call native error: ${name}: ${(e as Error).message}`);
     return {

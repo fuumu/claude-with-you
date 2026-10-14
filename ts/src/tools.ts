@@ -19,8 +19,13 @@ import { DATA_ROOT, loadEntry, loadIndexList } from './data.js';
 import { hierarchicalSearch, randomIndexSample, ratingExcluded } from './search.js';
 import { TOOL_DEFS, ToolDef } from './tool-defs.js';
 import { Args, FORWARD, Handler, ToolContext, truthy, toInt } from './tool-types.js';
+import { ALBUM_HANDLERS } from './tools-album.js';
+import { CONVERSATION_HANDLERS } from './tools-conversation.js';
 import { COREMEM_HANDLERS } from './tools-coremem.js';
+import { FILE_HANDLERS } from './tools-file.js';
 import { INBOX_HANDLERS } from './tools-inbox.js';
+import { MISC_HANDLERS } from './tools-misc.js';
+import { PROJECT_HANDLERS } from './tools-project.js';
 import { jstIsoFromMs, mcpUpsertEntry, mcpWriteEntry, nowJst, writeJson } from './write.js';
 
 export type { ToolContext } from './tool-types.js';
@@ -123,6 +128,11 @@ const HANDLERS: Record<string, Handler> = {
   memory_share: memoryShare,
   ...COREMEM_HANDLERS,
   ...INBOX_HANDLERS,
+  ...CONVERSATION_HANDLERS,
+  ...ALBUM_HANDLERS,
+  ...FILE_HANDLERS,
+  ...PROJECT_HANDLERS,
+  ...MISC_HANDLERS,
 };
 
 // ── 公開 API ─────────────────────────────────────────────────────────
@@ -141,11 +151,19 @@ export function isNativeTool(name: string): boolean {
  * tools/call のネイティブ処理。未移行ツールは null（呼び出し側が Python へ転送する）。
  * 戻り値は JSON-RPC の result（{ content: [...] }）。
  */
-export function callToolNative(name: string, args: unknown, ctx: ToolContext): Args | null {
+export async function callToolNative(
+  name: string,
+  args: unknown,
+  ctx: ToolContext,
+): Promise<Args | null> {
   if (!isNativeTool(name)) return null;
   const a: Args = args && typeof args === 'object' && !Array.isArray(args) ? (args as Args) : {};
-  const raw = HANDLERS[name](a, ctx);
+  const raw = await HANDLERS[name](a, ctx);
   if (raw === FORWARD) return null; // ハンドラーが Python 転送を指定（LLM 依存の分岐など）
+  // 画像等のマルチコンテンツ応答（album_read）: server_time は本文側に含めて返す
+  if (raw && typeof raw === 'object' && '_mcp_content' in (raw as object)) {
+    return { content: (raw as { _mcp_content: unknown })._mcp_content };
+  }
   const result = injectServerTime(raw, ctx);
   return { content: [{ type: 'text', text: JSON.stringify(result) }] };
 }

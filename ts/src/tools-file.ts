@@ -1,0 +1,190 @@
+/**
+ * TS-1 リング4 グループ6: file（Uploads）系 MCP ツール（main.py と同一契約）。
+ * file_read / file_list / file_delete と、URL 指定の file_upload をネイティブ化。
+ *
+ * file_upload(file_path=...)（NAS ローカルパス）は FORWARD（Python）: 保存時の MIME 推定が
+ * Python の mimetypes に依存し、TS で同一結果を保証できないため。URL 指定は
+ * Content-Type ヘッダから MIME を取るので同一挙動で移せる。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { DATA_ROOT } from './data.js';
+import { safeId } from './inbox.js';
+import { FORWARD, Handler } from './tool-types.js';
+import { appendOplog, nowJst, writeJson } from './write.js';
+
+const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
+const TEXT_EXTS = new Set([
+  'txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'js', 'ts', 'py', 'sh',
+  'html', 'css', 'xml', 'ini', 'toml', 'conf', 'jsonl',
+]);
+
+type Meta = Record<string, unknown>;
+
+/** Python の s[:n]（コードポイント単位） */
+function cpSlice(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return Array.from(s).slice(0, n).join('');
+}
+
+function filePathFor(id: string, ext: string): string {
+  return ext ? path.join(UPLOADS_DIR, `${id}.${ext}`) : path.join(UPLOADS_DIR, id);
+}
+
+function loadMeta(id: string): Meta | null {
+  if (!safeId(id)) return null;
+  const p = path.join(UPLOADS_DIR, `${id}.json`);
+  if (!fs.existsSync(p)) return null;
+  return JSON.parse(fs.readFileSync(p, 'utf-8')) as Meta;
+}
+
+function idArg(args: Record<string, unknown>): string {
+  const v = args.id;
+  return v === undefined || v === null ? '' : String(v);
+}
+
+/** file_upload(url=...)。url がなければ（file_path 指定・引数不足）Python の検証・MIME 推定に任せる */
+const fileUpload: Handler = async (args) => {
+  if (!args.url) return FORWARD;
+  const url = String(args.url);
+  let uploadId = nowJst().replace(/-/g, '').replace(/:/g, '').replace('T', '_').slice(0, 15);
+
+  let filename = args.filename ? String(args.filename) : '';
+  if (!filename) {
+    let pathname = '';
+    try {
+      pathname = new URL(url).pathname;
+    } catch {
+      pathname = '';
+    }
+    filename = pathname.slice(pathname.lastIndexOf('/') + 1) || `download_${uploadId}`;
+  }
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() : '';
+  // 拡張子 json は実体 {id}.json とメタデータ {id}.json が同一パスに衝突する（Python 版の既知の
+  // 不具合）。データ形式不変の方針でバグを複製しないよう、挙動の単一情報源として Python へ回す
+  if (ext === 'json') return FORWARD;
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+  let data: Buffer;
+  let mime = 'application/octet-stream';
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'mio-memory/upload' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!resp.ok) return { error: `download failed: HTTP ${resp.status}` };
+    mime = (resp.headers.get('content-type') ?? 'application/octet-stream').split(';')[0].trim();
+    data = Buffer.from(await resp.arrayBuffer());
+  } catch (e) {
+    return { error: `download failed: ${(e as Error).message}` };
+  }
+
+  const safeFilename = filename.replace(/\//g, '_').replace(/\\/g, '_');
+  const dot = safeFilename.lastIndexOf('.');
+  const stem = dot >= 0 ? safeFilename.slice(0, dot) : safeFilename;
+  uploadId = `${uploadId}_${cpSlice(stem, 30)}`;
+
+  fs.writeFileSync(filePathFor(uploadId, ext), data);
+  const tags = (Array.isArray(args.tags) ? args.tags : [])
+    .map((t) => String(t).trim())
+    .filter((t) => t);
+  const meta: Meta = {
+    id: uploadId,
+    filename: safeFilename,
+    mimetype: mime,
+    size: data.length,
+    ext,
+    comment: args.comment === undefined || args.comment === null ? '' : args.comment,
+    tags,
+    uploaded_at: nowJst(),
+  };
+  writeJson(path.join(UPLOADS_DIR, `${uploadId}.json`), meta);
+  appendOplog('file_upload', uploadId, null, { id: uploadId, filename: safeFilename, size: data.length });
+  return {
+    id: uploadId,
+    filename: safeFilename,
+    mimetype: mime,
+    size: data.length,
+    server_time: nowJst(),
+  };
+};
+
+const fileRead: Handler = (args) => {
+  const id = idArg(args);
+  if (!id) return { error: 'id is required' };
+  const meta = loadMeta(id);
+  if (!meta) return { error: `Upload not found: ${id}` };
+  const ext = String(meta.ext ?? '');
+  const fp = filePathFor(id, ext);
+  if (!fs.existsSync(fp)) return { error: `File data missing: ${id}` };
+  const mime = String(meta.mimetype ?? '');
+  const fileExt = ext.toLowerCase();
+  const isText =
+    mime.startsWith('text/') ||
+    ['application/json', 'application/xml', 'application/javascript'].includes(mime) ||
+    TEXT_EXTS.has(fileExt);
+  if (isText) {
+    try {
+      const content = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(fp));
+      const len = Array.from(content).length;
+      meta.content =
+        len > 50000
+          ? cpSlice(content, 50000) + `\n... (truncated, total ${len} chars)`
+          : content;
+    } catch {
+      /* UTF-8 として読めなければ content なし（Python と同じ） */
+    }
+  }
+  return meta;
+};
+
+const fileList: Handler = (args) => {
+  const wanted = Array.isArray(args.tags) && args.tags.length > 0 ? args.tags.map(String) : null;
+  const items: Meta[] = [];
+  if (fs.existsSync(UPLOADS_DIR) && fs.statSync(UPLOADS_DIR).isDirectory()) {
+    for (const fname of fs.readdirSync(UPLOADS_DIR).sort()) {
+      if (!fname.endsWith('.json')) continue;
+      let meta: Meta;
+      try {
+        meta = JSON.parse(fs.readFileSync(path.join(UPLOADS_DIR, fname), 'utf-8')) as Meta;
+      } catch {
+        continue;
+      }
+      if (wanted) {
+        const entryTags = ((meta.tags as unknown[] | undefined) ?? []).map((t) => String(t).toLowerCase());
+        if (!wanted.some((t) => entryTags.includes(t.toLowerCase()))) continue;
+      }
+      items.push({
+        id: 'id' in meta ? meta.id : fname.replace('.json', ''),
+        filename: 'filename' in meta ? meta.filename : '',
+        mimetype: 'mimetype' in meta ? meta.mimetype : '',
+        size: 'size' in meta ? meta.size : 0,
+        comment: 'comment' in meta ? meta.comment : '',
+        tags: 'tags' in meta ? meta.tags : [],
+        uploaded_at: 'uploaded_at' in meta ? meta.uploaded_at : '',
+      });
+    }
+  }
+  return { items, count: items.length, server_time: nowJst() };
+};
+
+const fileDelete: Handler = (args) => {
+  const id = idArg(args);
+  if (!id) return { error: 'id is required' };
+  const meta = loadMeta(id);
+  if (!meta) return { error: `Upload not found: ${id}` };
+  const fp = filePathFor(id, String(meta.ext ?? ''));
+  if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  const metaFile = path.join(UPLOADS_DIR, `${id}.json`);
+  if (fs.existsSync(metaFile)) fs.unlinkSync(metaFile); // ext=json の衝突データでは上で既に消えている
+  appendOplog('file_delete', id, { id }, null);
+  return { deleted: id, server_time: nowJst() };
+};
+
+export const FILE_HANDLERS: Record<string, Handler> = {
+  file_upload: fileUpload,
+  file_read: fileRead,
+  file_list: fileList,
+  file_delete: fileDelete,
+};

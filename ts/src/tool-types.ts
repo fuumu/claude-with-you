@@ -10,7 +10,8 @@ export interface ToolContext {
 /** ハンドラーが返すと、その呼び出しは TS では処理せず Python へ転送される（LLM 依存の分岐など） */
 export const FORWARD = Symbol('forward-to-python');
 
-export type Handler = (args: Args, ctx: ToolContext) => unknown;
+/** ハンドラーは同期・非同期どちらでもよい（URL ダウンロード等は Promise を返す） */
+export type Handler = (args: Args, ctx: ToolContext) => unknown | Promise<unknown>;
 
 /** Python の bool() 互換の真偽判定（空配列・空オブジェクト・空文字・0・None は偽） */
 export function truthy(v: unknown): boolean {

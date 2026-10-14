@@ -102,6 +102,11 @@ function loadCheckins(): Checkin[] {
   return alive;
 }
 
+/** 出席簿用: 期限切れ仮登録を除いたセッションチェックイン一覧 */
+export function loadSessionCheckins(): Checkin[] {
+  return loadCheckins();
+}
+
 function prune(entries: Checkin[]): Checkin[] {
   const cutoff = jstIsoFromMs(Date.now() - RETENTION_DAYS * 86400 * 1000);
   return entries.filter((e) => String(e.timestamp ?? '') > cutoff);
