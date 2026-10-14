@@ -171,12 +171,11 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 
 ### 完了時
 1. `inbox_post(to="chat", title="【完了報告】...", body="...")` でチャット宛に完了報告する
-   - タイトル形式: `【完了報告】handoff No.XX（内容）`
+   - タイトル形式: `【完了報告】（内容）`（発注タイトル `【発注】…` に対応させる）
    - 本文: 実装内容の要約・コミットID・デプロイ手順（必要な場合）
    - **`reply_to_id`**: 対応する発注メッセージの ID（`inbox_read` の返り値 `id`）を必ず指定する。スレッド表示のペアリングに使われる
    - ※ `inbox_post` が使えないセッション（v3.4 デプロイ前に開始）では `memory_write(tags=["チャット宛", "完了報告"])` で代替
-2. `handoff_claude_code.md` を更新（完了チェックをつける）
-3. コミット・push する
+2. コミット・push する
 
 ## ドキュメント連動ルール
 
@@ -200,9 +199,8 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 
 ## 伝言・完了報告のフォーマット
 
-伝言ファイル（handoff_claude_code.md）の依頼は番号（No.1, No.2...）で管理する。
-
-完了報告は以下の形式で記憶に書き込むこと：
+依頼（発注）は inbox（`to="code"`・タイトル `【発注】…`）で届く。発注と完了報告の対応は `reply_to_id` で管理する。
+1つの発注に複数の依頼項目がある場合は、完了報告の本文で以下の表形式を使うこと：
 
 | No. | 依頼内容 | 状況 | 備考 |
 |-----|---------|------|------|
