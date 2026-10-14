@@ -7,6 +7,7 @@ main.py 内部は import しない（TS-1 移行後もテストがそのまま�
 """
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -90,7 +91,11 @@ def _wait_health(base_url, proc, timeout=30):
     last_err = None
     while time.time() < deadline:
         if proc.poll() is not None:
-            out = proc.stdout.read().decode('utf-8', 'replace') if proc.stdout else ''
+            out = ''
+            log_path = getattr(proc, 'log_path', None)
+            if log_path and os.path.exists(log_path):
+                with open(log_path, 'rb') as f:
+                    out = f.read().decode('utf-8', 'replace')
             raise RuntimeError(f'server exited early (code={proc.returncode}):\n{out[-3000:]}')
         try:
             r = requests.get(base_url + '/health', timeout=2)
@@ -150,11 +155,17 @@ def server():
         # Windows ローカルは cp932 になるため、本番と同じ utf-8 に固定する
         'PYTHONUTF8': '1',
     })
+    # サーバー出力は PIPE にせずファイルへ流す。PIPE だと誰も読まないためバッファが満杯に
+    # なりサーバーが書き込みでブロックし、一括実行の中盤でハングする（MIO_TS1=1 で顕在化）
+    logdir = tempfile.mkdtemp(prefix='mio-ts0-log-')
+    py_log = open(os.path.join(logdir, 'python.log'), 'wb')
     proc = subprocess.Popen(
         [sys.executable, MAIN_PY], env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=py_log, stderr=subprocess.STDOUT,
         cwd=REPO_ROOT)
+    proc.log_path = py_log.name
     ts_proc = None
+    ts_log = None
     try:
         _wait_health(py_url, proc)
         if ts1:
@@ -170,10 +181,12 @@ def server():
                 # トランスポート前倒し: OAuth メタデータの issuer 等に使用
                 'MIO_BASE_URL': front_url,
             })
+            ts_log = open(os.path.join(logdir, 'node.log'), 'wb')
             ts_proc = subprocess.Popen(
                 ['node', dist], env=ts_env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=ts_log, stderr=subprocess.STDOUT,
                 cwd=os.path.join(REPO_ROOT, 'ts'))
+            ts_proc.log_path = ts_log.name
             _wait_health(front_url, ts_proc)
         yield Server(front_url, TEST_TOKEN, tmpdir, proc)
     finally:
@@ -182,6 +195,12 @@ def server():
             ts_proc.wait(timeout=10)
         proc.kill()
         proc.wait(timeout=10)
+        py_log.close()
+        if ts_log is not None:
+            ts_log.close()
+        # 一時データ・ログは使い捨て（従来は残骸が %TEMP% に溜まり続けていた）
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        shutil.rmtree(logdir, ignore_errors=True)
 
 
 @pytest.fixture()
