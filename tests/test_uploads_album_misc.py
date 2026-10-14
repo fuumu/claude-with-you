@@ -2,6 +2,7 @@
 """Uploads / Album / バッチ / その他RESTの契約"""
 import io
 import json
+import os
 
 
 def _make_png_bytes():
@@ -50,6 +51,69 @@ def test_uploads_roundtrip(server):
     rm = server.delete(f'/api/uploads/{uid}')
     assert rm.status_code == 200
     assert server.get(f'/api/uploads/{uid}').status_code == 404
+
+
+def test_uploads_json_file_roundtrip(server):
+    """ext=json のアップロードでも実体がメタデータに上書きされない（メタは {id}.meta.json）"""
+    content = json.dumps({'k': 'v', 'n': 'JSON実体'}, ensure_ascii=False).encode('utf-8')
+    r = server.post('/api/uploads/',
+                    files={'file': ('ts0_data.json', io.BytesIO(content), 'application/json')},
+                    data={'comment': 'json実体', 'tags': 'ts0json'})
+    assert r.status_code == 201
+    uid = r.json()['id']
+    up = os.path.join(server.data_root, 'uploads')
+    assert os.path.exists(os.path.join(up, f'{uid}.meta.json'))
+    assert open(os.path.join(up, f'{uid}.json'), 'rb').read() == content
+
+    dl = server.get(f'/api/uploads/{uid}')
+    assert dl.status_code == 200 and dl.content == content
+    d = server.tool('file_read', {'id': uid})
+    assert 'JSON実体' in d.get('content', '')
+    assert d.get('ext') == 'json'
+    lst = server.get('/api/uploads/').json()
+    assert [f['id'] for f in lst].count(uid) == 1   # 実体 {id}.json が一覧に二重計上されない
+
+    assert server.delete(f'/api/uploads/{uid}').status_code == 200
+    assert not os.path.exists(os.path.join(up, f'{uid}.json'))
+    assert not os.path.exists(os.path.join(up, f'{uid}.meta.json'))
+
+
+def test_uploads_legacy_meta_migration(server):
+    """旧形式（メタが {id}.json）のアップロードは参照時に {id}.meta.json へ退避される"""
+    up = os.path.join(server.data_root, 'uploads')
+    os.makedirs(up, exist_ok=True)
+    uid = '20260101_000000_legacy_doc'
+    body = 'レガシー本文'
+    with open(os.path.join(up, f'{uid}.txt'), 'w', encoding='utf-8') as f:
+        f.write(body)
+    meta = {'id': uid, 'filename': 'legacy_doc.txt', 'mimetype': 'text/plain', 'size': len(body.encode()),
+            'ext': 'txt', 'comment': '', 'tags': ['legacy'], 'uploaded_at': '2026-01-01T00:00:00'}
+    with open(os.path.join(up, f'{uid}.json'), 'w', encoding='utf-8') as f:
+        json.dump(meta, f, ensure_ascii=False)
+
+    d = server.tool('file_read', {'id': uid})
+    assert body in d.get('content', '')
+    assert os.path.exists(os.path.join(up, f'{uid}.meta.json'))
+    assert not os.path.exists(os.path.join(up, f'{uid}.json'))
+    assert server.delete(f'/api/uploads/{uid}').status_code == 200
+
+
+def test_mcp_id_args_reject_path_traversal(server):
+    """ID/UUID 引数のパス区切り・.. は入口で弾かれ、データ領域の外に書かない"""
+    root = os.path.dirname(os.path.normpath(server.data_root))
+    marker = 'ts0_escape_marker'
+    r = server.tool('memory_upsert', {'id': f'../{marker}', 'title': 'x', 'body': 'y'})
+    assert r.get('error') == 'invalid id'
+    assert not os.path.exists(os.path.join(server.data_root, f'{marker}.json'))
+    assert not os.path.exists(os.path.join(root, f'{marker}.json'))
+    for bad in ('../x', r'..\x', 'a/b', '..'):
+        assert 'error' in server.tool('memory_read', {'id': bad})
+        assert 'error' in server.tool('memory_upsert', {'id': bad, 'title': 't', 'body': 'b'})
+        assert 'error' in server.tool('inbox_read', {'id': bad})
+        assert 'error' in server.tool('inbox_delete', {'id': bad})
+        assert 'error' in server.tool('file_read', {'id': bad})
+        assert 'error' in server.tool('album_read', {'id': bad})
+        assert 'error' in server.tool('conversation_read', {'uuid': bad})
 
 
 def test_uploads_delete_not_found(server):

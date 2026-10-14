@@ -1089,6 +1089,49 @@ def _validate_artifact_name(name: str) -> bool:
     norm = os.path.normpath(name)
     return not (norm.startswith('..') or os.path.isabs(norm))
 
+def _safe_id(value) -> bool:
+    """ファイル名の一部として使う ID/UUID の検証（パストラバーサル対策）。
+    区切り文字（/ \\）・親ディレクトリ参照（..）・NUL・空文字・非文字列を弾く。
+    TS 側 safeId（ts/src/inbox.ts）と同一の判定"""
+    return (isinstance(value, str) and bool(value)
+            and '/' not in value and '\\' not in value
+            and '..' not in value and '\x00' not in value)
+
+# MCP ツール引数のうち、ファイルパスに埋め込まれる ID 系引数: ツール名 → (引数名, 不正時のエラー書式)
+# エラー文言は各ツールの「見つからない」と同一（TS 側ネイティブ実装と揃える）
+_MCP_ID_ARGS = {
+    'memory_read':         ('id',   'not found'),
+    'memory_upsert':       ('id',   'invalid id'),
+    'memory_share':        ('id',   'entry not found: {v}'),
+    'inbox_read':          ('id',   'message not found: {v}'),
+    'inbox_update':        ('id',   'message not found: {v}'),
+    'inbox_delete':        ('id',   'message not found: {v}'),
+    'album_read':          ('id',   'not found: {v}'),
+    'album_share':         ('id',   'not found: {v}'),
+    'album_delete':        ('id',   'album entry not found: {v}'),
+    'file_read':           ('id',   'Upload not found: {v}'),
+    'file_delete':         ('id',   'Upload not found: {v}'),
+    'conversation_read':   ('uuid', 'conversation not found: {v}'),
+    'conversation_share':  ('uuid', 'conversation not found: {v}'),
+    'conversation_digest': ('uuid', 'conversation not found: {v}'),
+    'log_annotate':        ('uuid', 'conversation not found: {v}'),
+    'sublimate':           ('uuid', 'conversation not found: {v}'),
+}
+
+def _mcp_unsafe_id_error(name, arguments):
+    """ID 系引数が不正（パス区切り・..・非文字列）ならエラー dict を返す。問題なければ None。
+    未指定（None / キーなし）は各ツール本来の検証に任せる"""
+    spec = _MCP_ID_ARGS.get(name)
+    if not spec or not isinstance(arguments, dict):
+        return None
+    arg, fmt = spec
+    v = arguments.get(arg)
+    if v is None or v == '':
+        return None
+    if _safe_id(v):
+        return None
+    return {'error': fmt.format(v=v)}
+
 def _link_or_copy_latest(rel_target: str, symlink_path: str):
     """最新バージョンへのトップレベルリンクを張る。symlink 非対応環境
     （特権なし Windows でのローカルテスト等）ではファイルコピーにフォールバックする。
@@ -2274,6 +2317,8 @@ def _inbox_path(msg_id, to=None):
 
 def _find_inbox_file(msg_id):
     """msg_id のファイルをフラット + friend サブディレクトリから検索する"""
+    if not _safe_id(msg_id):
+        return None
     p = os.path.join(INBOX_DIR, f'{msg_id}.json')
     if os.path.exists(p):
         return p
@@ -7126,6 +7171,55 @@ def api_album_shared(token):
 #  Uploads (汎用ファイルアップローダ — F5)
 # ══════════════════════════════════════════════════════════════════════
 
+def _upload_data_path(upload_id, ext):
+    return os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+
+def _upload_meta_new_path(upload_id):
+    """メタデータの保存先は {id}.meta.json（実体 {id}.{ext} と ext=json で衝突しない）"""
+    return os.path.join(UPLOADS_DIR, f'{upload_id}.meta.json')
+
+def _upload_looks_like_meta(path, upload_id):
+    try:
+        with open(path, encoding='utf-8') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(d, dict) and d.get('id') == upload_id and 'ext' in d
+
+def _upload_meta_path(upload_id):
+    """既存アップロードのメタデータパスを返す（なければ None）。
+    旧形式（メタが {id}.json）しかなければ {id}.meta.json へ退避（マイグレーション）してから返す。
+    {id}.meta.json が既にある場合、{id}.json は ext=json の実体なので触らない"""
+    if not _safe_id(upload_id):
+        return None
+    new_path = _upload_meta_new_path(upload_id)
+    if os.path.exists(new_path):
+        return new_path
+    legacy = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
+    if os.path.exists(legacy) and _upload_looks_like_meta(legacy, upload_id):
+        os.replace(legacy, new_path)
+        _log_info(f'uploads: migrated legacy meta {upload_id}.json -> {upload_id}.meta.json')
+        return new_path
+    return None
+
+def _uploads_migrate_all():
+    """起動時: 旧形式メタ（{id}.json）を {id}.meta.json へ一括退避する"""
+    if not os.path.isdir(UPLOADS_DIR):
+        return 0
+    n = 0
+    for fname in sorted(os.listdir(UPLOADS_DIR)):
+        if not fname.endswith('.json') or fname.endswith('.meta.json'):
+            continue
+        upload_id = fname[:-len('.json')]
+        if os.path.exists(_upload_meta_new_path(upload_id)):
+            continue   # 新形式が既にある → この .json は実体
+        if _upload_meta_path(upload_id):
+            n += 1
+    if n:
+        _log_info(f'uploads: migrated {n} legacy meta file(s)')
+    return n
+
+
 def _upload_save(url=None, file_path=None, filename=None, comment='', tags=None):
     """URLまたはNASローカルパスからファイルを保存する"""
     os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -7166,7 +7260,7 @@ def _upload_save(url=None, file_path=None, filename=None, comment='', tags=None)
     safe_filename = filename.replace('/', '_').replace('\\', '_')
     upload_id = f'{upload_id}_{safe_filename.rsplit(".", 1)[0][:30]}'
 
-    file_dest = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    file_dest = _upload_data_path(upload_id, ext)
     with open(file_dest, 'wb') as f:
         f.write(data)
 
@@ -7180,7 +7274,7 @@ def _upload_save(url=None, file_path=None, filename=None, comment='', tags=None)
         'tags': [t.strip() for t in (tags or []) if t.strip()],
         'uploaded_at': now_jst(),
     }
-    with open(os.path.join(UPLOADS_DIR, f'{upload_id}.json'), 'w', encoding='utf-8') as f:
+    with open(_upload_meta_new_path(upload_id), 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     _log_info(f'upload_save: {upload_id} ({safe_filename}, {len(data)} bytes)')
@@ -7190,13 +7284,13 @@ def _upload_save(url=None, file_path=None, filename=None, comment='', tags=None)
 
 def _upload_read(upload_id):
     """アップロードファイルのメタデータを返す。テキスト系はcontentも含む"""
-    meta_path = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
-    if not os.path.exists(meta_path):
+    meta_path = _upload_meta_path(upload_id)
+    if not meta_path:
         return {"error": f"Upload not found: {upload_id}"}
     with open(meta_path, encoding='utf-8') as f:
         meta = json.load(f)
     ext = meta.get('ext', '')
-    file_path = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    file_path = _upload_data_path(upload_id, ext)
     if not os.path.exists(file_path):
         return {"error": f"File data missing: {upload_id}"}
     mime = meta.get('mimetype', '')
@@ -7222,10 +7316,11 @@ def _upload_list(tags=None):
     """アップロードファイル一覧"""
     if not os.path.isdir(UPLOADS_DIR):
         return []
+    _uploads_migrate_all()   # 旧形式メタ（{id}.json）が残っていれば退避してから列挙
     results = []
     for fname in sorted(os.listdir(UPLOADS_DIR)):
-        if not fname.endswith('.json'):
-            continue
+        if not fname.endswith('.meta.json'):
+            continue   # {id}.json は実体（ext=json）の可能性があるため対象外
         try:
             with open(os.path.join(UPLOADS_DIR, fname), encoding='utf-8') as f:
                 meta = json.load(f)
@@ -7236,7 +7331,7 @@ def _upload_list(tags=None):
             if not any(t.lower() in entry_tags for t in tags):
                 continue
         results.append({
-            'id': meta.get('id', fname.replace('.json', '')),
+            'id': meta.get('id', fname[:-len('.meta.json')]),
             'filename': meta.get('filename', ''),
             'mimetype': meta.get('mimetype', ''),
             'size': meta.get('size', 0),
@@ -7249,13 +7344,13 @@ def _upload_list(tags=None):
 
 def _upload_delete(upload_id):
     """アップロードファイルを物理削除"""
-    meta_path = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
-    if not os.path.exists(meta_path):
+    meta_path = _upload_meta_path(upload_id)
+    if not meta_path:
         return {"error": f"Upload not found: {upload_id}"}
     with open(meta_path, encoding='utf-8') as f:
         meta = json.load(f)
     ext = meta.get('ext', '')
-    file_path = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    file_path = _upload_data_path(upload_id, ext)
     if os.path.exists(file_path):
         os.remove(file_path)
     os.remove(meta_path)
@@ -7278,8 +7373,8 @@ def api_uploads_list():
 def api_uploads_get(upload_id):
     if not _verify_token(_extract_bearer(request)):
         abort(401)
-    meta_path = os.path.join(UPLOADS_DIR, f'{upload_id}.json')
-    if not os.path.exists(meta_path):
+    meta_path = _upload_meta_path(upload_id)
+    if not meta_path:
         abort(404)
     with open(meta_path, encoding='utf-8') as f:
         meta = json.load(f)
@@ -7307,7 +7402,7 @@ def api_uploads_upload():
         ext = safe_filename.rsplit('.', 1)[-1].lower()
     upload_id = f'{upload_id}_{safe_filename.rsplit(".", 1)[0][:30]}'
 
-    file_dest = os.path.join(UPLOADS_DIR, f'{upload_id}.{ext}') if ext else os.path.join(UPLOADS_DIR, upload_id)
+    file_dest = _upload_data_path(upload_id, ext)
     f.save(file_dest)
     size = os.path.getsize(file_dest)
 
@@ -7326,7 +7421,7 @@ def api_uploads_upload():
         'tags': tags,
         'uploaded_at': now_jst(),
     }
-    with open(os.path.join(UPLOADS_DIR, f'{upload_id}.json'), 'w', encoding='utf-8') as f2:
+    with open(_upload_meta_new_path(upload_id), 'w', encoding='utf-8') as f2:
         json.dump(meta, f2, ensure_ascii=False, indent=2)
 
     _log_info(f'upload (REST): {upload_id} ({safe_filename}, {size} bytes)')
@@ -7788,6 +7883,10 @@ def _handle_tool_call(name, arguments):
     return _inject_server_time(result)
 
 def _handle_tool_call_raw(name, arguments):
+    # パストラバーサル対策: ID/UUID 引数はファイル名に埋め込まれるため入口で検証する
+    _bad = _mcp_unsafe_id_error(name, arguments)
+    if _bad is not None:
+        return _bad
     if name == "memory_read_index":
         index = _load_index_list()
         inc_local = bool(arguments.get("include_local", False))
@@ -8973,6 +9072,7 @@ if __name__ == '__main__':
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     os.makedirs(INBOX_DIR, exist_ok=True)
     os.makedirs(ALBUM_DIR, exist_ok=True)
+    _uploads_migrate_all()     # 旧形式のアップロードメタ（{id}.json）を {id}.meta.json へ退避
     _seed_coremem_if_empty()   # 新規環境のみ skeleton を投入（既存は不変）
     _log_info(f'mio-memory v{VERSION} starting (log_level={_LOG_LEVEL})')
     _log_info(f'base_url={BASE_URL}')
