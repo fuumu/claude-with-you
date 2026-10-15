@@ -126,9 +126,9 @@ Friend sessions (6 tools, exposed when `/mcp?token=<friend_token>` is used):
 .venv/Scripts/python -m pytest tests/ -q
 ```
 
-Run this after changing main.py. Contract documentation: `docs/api-contract.ja.md` (primary) / `docs/api-contract.md`. Test hooks: `MIO_DATA_ROOT` / `MIO_PORT` env vars (unset = production defaults).
+Run this after changing main.py. Contract documentation: `docs/api-contract.ja.md` (primary) / `docs/api-contract.md`. Test hooks: `MIO_DATA_ROOT` / `MIO_PORT` env vars (unset = production defaults). LLM calls in tests go to `MockLLM` in `tests/conftest.py` (`server.llm`; both servers get its `LLM_ENDPOINTS`) — tests never touch a real LM Studio.
 
-`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/` — see `docs/ts1-migration.ja.md`). As of 2026-07-14 the TS layer natively serves memory REST (reads and writes incl. reindex/oplog), inbox REST, coremem REST (symlink versioning), conversations REST (all except digest), OAuth 2.1/DCR (incl. MCP 2026-07-28 hardening: RFC 9207 `iss`, `application_type`, rotating refresh tokens, RFC 8414 path-suffix discovery), and the MCP transport as a dual-era server — legacy initialize/sessions plus the MCP 2026-07-28 stateless core (`server/discover`, `subscriptions/listen`, required-header validation, `resultType`/`ttlMs`/`cacheScope`/`serverInfo` injection into `result._meta`, `clientCapabilities` required check); tools/* forwarded to Python; friend sessions passed through. `tests/test_mcp_2026.py` runs only under `MIO_TS1=1` (skipped in Python-only mode — main.py stays 2025-11-25). Run both modes when touching `ts/`, main.py auth/OAuth/MCP-transport code, or any REST surface listed above.
+`MIO_TS1=1` runs the same suite through the TypeScript strangler proxy (`ts/` — see `docs/ts1-migration.ja.md`). As of 2026-07-14 the TS layer natively serves memory REST (reads and writes incl. reindex/oplog), inbox REST, coremem REST (symlink versioning), conversations REST (all except digest), OAuth 2.1/DCR (incl. MCP 2026-07-28 hardening: RFC 9207 `iss`, `application_type`, rotating refresh tokens, RFC 8414 path-suffix discovery), and the MCP transport as a dual-era server — legacy initialize/sessions plus the MCP 2026-07-28 stateless core (`server/discover`, `subscriptions/listen`, required-header validation, `resultType`/`ttlMs`/`cacheScope`/`serverInfo` injection into `result._meta`, `clientCapabilities` required check). Ring 4 + Ring 5 (`ts1-ring4` → `ts1-ring5` branches): `tools/list` and the `tools/call` of **all 38 tools** are served natively by `ts/src/tools.ts` (+ `tools-*.ts`, `attendance*.ts`) — no tool is forwarded to Python (`tests/test_ts_native_complete.py`). LLM-dependent code lives in `ts/src/llm.ts` (client; Anthropic Messages-compatible `POST {endpoint}/v1/messages`, same endpoint discovery/OK-model selection as main.py, env: `LLM_ENDPOINTS` / `LLM_OK_MODELS` / `LM_STUDIO_*` / `MIO_LM_MODEL`; no SDK) and `ts/src/llm-tasks.ts` (summary-layer batch, rating batch, digest, sublimation, inbox 【生】 job); `album_save` uses `sharp` (`ts/src/album-save.ts`, the only runtime dependency); friend sessions are native in `ts/src/friend.ts` (definitions generated into `friend-defs.ts`); native REST also covers `/api/batch/*`, `/api/rating-batch/*`, `/api/llm-status`, `/api/conversations/<uuid>/digest`. Still in Python: imports (ZIP / Claude Code / OpenWebUI / Unsloth) and their batch auto-start, the nightly scheduler, redaction generation, album REST, friend REST. The 38 tool definitions in `ts/src/tool-defs.ts` are generated from main.py's `_MCP_TOOLS` — **after adding/changing an MCP tool (or a friend tool / `_DEFAULT_FRIEND_CORE`) in main.py run `.venv/Scripts/python scripts/gen_ts_tool_defs.py`** (writes `tool-defs.ts` and `friend-defs.ts`) (`test_ts_tool_defs_snapshot_matches_python` fails otherwise). `tests/test_mcp_2026.py` runs only under `MIO_TS1=1` (skipped in Python-only mode — main.py stays 2025-11-25). Run both modes when touching `ts/`, main.py auth/OAuth/MCP-transport code, or any REST surface listed above.
 
 ## Dependencies
 
@@ -171,12 +171,11 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 
 ### 完了時
 1. `inbox_post(to="chat", title="【完了報告】...", body="...")` でチャット宛に完了報告する
-   - タイトル形式: `【完了報告】handoff No.XX（内容）`
+   - タイトル形式: `【完了報告】（内容）`（発注タイトル `【発注】…` に対応させる）
    - 本文: 実装内容の要約・コミットID・デプロイ手順（必要な場合）
    - **`reply_to_id`**: 対応する発注メッセージの ID（`inbox_read` の返り値 `id`）を必ず指定する。スレッド表示のペアリングに使われる
    - ※ `inbox_post` が使えないセッション（v3.4 デプロイ前に開始）では `memory_write(tags=["チャット宛", "完了報告"])` で代替
-2. `handoff_claude_code.md` を更新（完了チェックをつける）
-3. コミット・push する
+2. コミット・push する
 
 ## ドキュメント連動ルール
 
@@ -200,9 +199,8 @@ Flask wheels are vendored in `memory/wheels/`. The `anthropic` package is instal
 
 ## 伝言・完了報告のフォーマット
 
-伝言ファイル（handoff_claude_code.md）の依頼は番号（No.1, No.2...）で管理する。
-
-完了報告は以下の形式で記憶に書き込むこと：
+依頼（発注）は inbox（`to="code"`・タイトル `【発注】…`）で届く。発注と完了報告の対応は `reply_to_id` で管理する。
+1つの発注に複数の依頼項目がある場合は、完了報告の本文で以下の表形式を使うこと：
 
 | No. | 依頼内容 | 状況 | 備考 |
 |-----|---------|------|------|

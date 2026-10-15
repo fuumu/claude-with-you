@@ -65,6 +65,10 @@ export interface SearchOptions {
   includeLocal?: boolean;
   includeAdult?: boolean;
   includeConversations?: boolean;
+  /** ExtMemory の author フィールドで部分一致絞り込み（v3.81） */
+  author?: string;
+  /** 'index' / 'summary' / 'full'。省略時は階層探索（v3.81） */
+  searchLayer?: string;
 }
 
 export function hierarchicalSearch(q: string, opts: SearchOptions = {}): Record<string, unknown> {
@@ -72,47 +76,60 @@ export function hierarchicalSearch(q: string, opts: SearchOptions = {}): Record<
   const offset = opts.offset ?? 0;
   const includeLocal = opts.includeLocal ?? false;
   const includeAdult = opts.includeAdult ?? false;
+  const author = (opts.author ?? '').toLowerCase();
+  const layer = (opts.searchLayer ?? '').toLowerCase();
 
   const terms = queryTerms(q);
-  const index = loadIndexList().filter(
+  let index = loadIndexList().filter(
     (e) => !e.deleted && !ratingExcluded(e, includeLocal, includeAdult),
   );
+  if (author) {
+    index = index.filter((e) => String(e.author ?? '').toLowerCase().includes(author));
+  }
 
-  // 1次: インデックスのみ（title + tags + keywords、次点で3層symbolic）— bodyを読まない
+  // 1次: インデックスのみ（id + title + tags + keywords、次点で3層symbolic）— bodyを読まない
   const matched = new Map<string, string>(); // id -> match_layer（挿入順 = 優先順）
-  for (const e of index) {
-    const text = [
-      String(e.title ?? ''),
-      (e.tags ?? []).map(String).join(' '),
-      (e.keywords ?? []).map(String).join(' '),
-    ]
-      .join(' ')
-      .toLowerCase();
-    if (allTermsIn(terms, text)) {
-      matched.set(e.id, 'keyword');
-    } else if (allTermsIn(terms, String(e.symbolic ?? '').toLowerCase())) {
-      matched.set(e.id, 'symbolic');
+  if (layer === '' || layer === 'index') {
+    for (const e of index) {
+      const text = [
+        String(e.id ?? ''),
+        String(e.title ?? ''),
+        (e.tags ?? []).map(String).join(' '),
+        (e.keywords ?? []).map(String).join(' '),
+      ]
+        .join(' ')
+        .toLowerCase();
+      if (allTermsIn(terms, text)) {
+        matched.set(e.id, 'keyword');
+      } else if (allTermsIn(terms, String(e.symbolic ?? '').toLowerCase())) {
+        matched.set(e.id, 'symbolic');
+      }
     }
   }
 
-  // 2次: 2層要約 / 3次: 全文 — 1次のヒットが不足する場合のみ
-  const target = limit > 0 ? offset + limit : null;
-  if (target === null || matched.size < target) {
-    const summaryHits: string[] = [];
-    const fullHits: string[] = [];
-    for (const entry of loadAllEntries()) {
-      const eid = entry.id;
-      if (!eid || entry.deleted || matched.has(eid)) continue;
-      if (ratingExcluded(entry, includeLocal, includeAdult)) continue;
-      const body = String(entry.body ?? '');
-      if (allTermsIn(terms, extractSummary(body).toLowerCase())) {
-        summaryHits.push(eid);
-      } else if (allTermsIn(terms, body.toLowerCase())) {
-        fullHits.push(eid);
+  // 2次: 2層要約 / 3次: 全文 — 1次のヒットが不足する場合のみ（layer 指定時は常に実行）
+  if (layer !== 'index') {
+    const target = limit > 0 ? offset + limit : null;
+    const doSummary = layer === '' || layer === 'summary';
+    const doFull = layer === '' || layer === 'full';
+    if (layer !== '' || target === null || matched.size < target) {
+      const summaryHits: string[] = [];
+      const fullHits: string[] = [];
+      for (const entry of loadAllEntries()) {
+        const eid = entry.id;
+        if (!eid || entry.deleted || matched.has(eid)) continue;
+        if (ratingExcluded(entry, includeLocal, includeAdult)) continue;
+        if (author && !String(entry.author ?? '').toLowerCase().includes(author)) continue;
+        const body = String(entry.body ?? '');
+        if (doSummary && allTermsIn(terms, extractSummary(body).toLowerCase())) {
+          summaryHits.push(eid);
+        } else if (doFull && allTermsIn(terms, body.toLowerCase())) {
+          fullHits.push(eid);
+        }
       }
+      for (const eid of summaryHits) matched.set(eid, 'summary');
+      for (const eid of fullHits) matched.set(eid, 'full');
     }
-    for (const eid of summaryHits) matched.set(eid, 'summary');
-    for (const eid of fullHits) matched.set(eid, 'full');
   }
 
   const ids = [...matched.keys()];
@@ -150,6 +167,7 @@ export function hierarchicalSearch(q: string, opts: SearchOptions = {}): Record<
   // 統合検索（v3.61）: 会話ログのタイトルもAND判定で検索して併せて返す
   if (opts.includeConversations) {
     const convHits = loadConvIndex().filter((m) => {
+      if (m.hidden) return false;
       if (m.rating === 'adult' && !includeAdult) return false;
       return allTermsIn(terms, String(m.title ?? '').toLowerCase());
     });
@@ -165,14 +183,16 @@ export function hierarchicalSearch(q: string, opts: SearchOptions = {}): Record<
 /** REST /api/memory/index の random=N サンプリング（main.py _random_index_sample 互換） */
 export function randomIndexSample(
   index: IndexEntry[],
-  randomN: string,
+  randomN: string | number,
   filterSummarized: boolean,
+  includeLocal = false,
+  includeAdult = false,
 ): IndexEntry[] {
-  let pool = index.filter((e) => !e.deleted && !ratingExcluded(e, false, false));
+  let pool = index.filter((e) => !e.deleted && !ratingExcluded(e, includeLocal, includeAdult));
   if (filterSummarized) {
     pool = pool.filter((e) => !(e.tags ?? []).includes('raw'));
   }
-  let n = parseInt(randomN, 10);
+  let n = parseInt(String(randomN), 10);
   if (Number.isNaN(n)) n = 1;
   n = Math.max(1, Math.min(5, n));
   if (pool.length <= n) return pool;

@@ -1097,6 +1097,15 @@ def _safe_id(value) -> bool:
             and '/' not in value and '\\' not in value
             and '..' not in value and '\x00' not in value)
 
+def _id_slug(value, maxlen=20) -> str:
+    """タグ等から ID の一部（スラッグ）を作る。ファイル名に埋め込まれるため、空白・スラッシュ・
+    バックスラッシュは _ に、親ディレクトリ参照（..）と NUL は除去する。長さはコードポイント単位で
+    maxlen まで。TS 側 idSlug（ts/src/write.ts）と同一の変換"""
+    s = str(value).replace(' ', '_').replace('/', '_').replace('\\', '_').replace('\x00', '')
+    while '..' in s:
+        s = s.replace('..', '')
+    return s[:maxlen]
+
 # MCP ツール引数のうち、ファイルパスに埋め込まれる ID 系引数: ツール名 → (引数名, 不正時のエラー書式)
 # エラー文言は各ツールの「見つからない」と同一（TS 側ネイティブ実装と揃える）
 _MCP_ID_ARGS = {
@@ -2005,7 +2014,7 @@ def create_entry():
     if not data or not data.get('title'):
         abort(400)
     ts = datetime.now(JST).strftime('%Y%m%d_%H%M%S')
-    tag_slug = data.get('tags', [''])[0].replace(' ', '_')[:20] if data.get('tags') else 'note'
+    tag_slug = _id_slug(data['tags'][0]) if data.get('tags') else 'note'
     entry_id = f'{ts}_{tag_slug}'
     entry = {
         'id': entry_id, 'created_at': now_jst(), 'updated_at': now_jst(),
@@ -2306,8 +2315,17 @@ def get_shared_entry(token):
 
 # ── インボックス ──────────────────────────────────────────────────────
 
+def _inbox_to_valid(to) -> bool:
+    """宛先 to の検証。friend:{token} の token 部分はディレクトリ名になるため _safe_id で検証する。
+    それ以外の値はディレクトリに使われないのでそのまま許容。TS 側 inboxToValid と同一の判定"""
+    if isinstance(to, str) and to.startswith('friend:'):
+        return _safe_id(to[len('friend:'):])
+    return True
+
 def _inbox_dir(to=None):
     """to 値に対応するディレクトリを返す。friend:{token} は /data/inbox/friend/{token}/ に分離"""
+    if not _inbox_to_valid(to):
+        raise ValueError(f'invalid inbox target: {to!r}')
     if to and to.startswith('friend:'):
         return os.path.join(INBOX_DIR, 'friend', to[len('friend:'):])
     return INBOX_DIR
@@ -2513,6 +2531,8 @@ def api_inbox_list():
     to          = request.args.get('to')
     full        = request.args.get('full', 'false').lower() == 'true'
     unread_only = request.args.get('status') == 'new'
+    if not _inbox_to_valid(to):
+        return jsonify({"error": f"invalid to: {to}"}), 400
     msgs = _load_inbox_messages(to=to, unread_only=unread_only)
     if full:
         return jsonify(msgs)
@@ -2536,6 +2556,8 @@ def api_inbox_post():
     body  = data.get('body', '')
     if not to or not title:
         return jsonify({"error": "to and title are required"}), 400
+    if not _inbox_to_valid(to):
+        return jsonify({"error": f"invalid to: {to}"}), 400
     persistent = bool(data.get('persistent', False))
     expires_at, exp_err = _resolve_expires_at(data)
     if exp_err:
@@ -6921,7 +6943,7 @@ def _album_save(url=None, file_path=None, comment='', tags=None, rating=None,
         img.thumbnail((max_side, max_side), Image.LANCZOS)
 
     ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
-    tag_slug = ((tags[0] if tags else 'photo').replace(' ', '_'))[:20]
+    tag_slug = _id_slug(tags[0] if tags else 'photo')
     album_id = f"{ts}_{tag_slug}"
 
     buf = io.BytesIO()
@@ -7907,7 +7929,7 @@ def _handle_tool_call_raw(name, arguments):
     elif name == "memory_write":
         ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
         tags = arguments.get("tags") or []  # tags: null を正規化（v3.24）
-        tag_slug = tags[0].replace(" ", "_")[:20] if tags else "note"
+        tag_slug = _id_slug(tags[0]) if tags else "note"
         entry_id = f"{ts}_{tag_slug}"
         entry = {
             "id": entry_id, "created_at": now_jst(), "updated_at": now_jst(),
@@ -8420,6 +8442,8 @@ def _handle_tool_call_raw(name, arguments):
         mymodel = arguments.get("mymodel")
         if mymodel:
             _session_checkin_upgrade(mymodel)
+        if not _inbox_to_valid(to):
+            return {"error": f"invalid to: {to}"}
         msgs = _load_inbox_messages(to=to, unread_only=not include_read)
         # v3.57: from_model / to_model / days フィルタ
         filter_from = arguments.get("from_model")
@@ -8495,6 +8519,8 @@ def _handle_tool_call_raw(name, arguments):
         body  = arguments.get("body", "")
         if not to or not title:
             return {"error": "to and title are required"}
+        if not _inbox_to_valid(to):
+            return {"error": f"invalid to: {to}"}
         persistent  = bool(arguments.get("persistent", False))
         expires_at, exp_err = _resolve_expires_at(arguments)
         if exp_err:

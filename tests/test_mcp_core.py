@@ -33,6 +33,45 @@ def test_tools_list_34_tools(server):
         assert expected in names, expected
 
 
+def test_ts_tool_defs_snapshot_matches_python(server):
+    """ts/src/tool-defs.ts（TS ネイティブ tools/list の元データ）が main.py の _MCP_TOOLS と一致する。
+    ずれたら scripts/gen_ts_tool_defs.py を再実行する。Python 単体モードでは tools/list が
+    main.py 由来なので実照合になり、MIO_TS1=1 では TS 応答がスナップショットと一致することの確認になる"""
+    import json
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, '..', 'ts', 'src', 'tool-defs.ts'), encoding='utf-8') as f:
+        src = f.read()
+    snapshot = json.loads(src.split('TOOL_DEFS: ToolDef[] = ', 1)[1].rstrip().rstrip(';'))
+    live = server.mcp('tools/list')['result']['tools']
+    assert live == snapshot
+
+
+def test_tools_batch_mixes_list_call_and_ping(server):
+    """バッチ内の tools/list・tools/call（移行済み/未移行）・ping が個別に処理され、id で対応づく"""
+    import json
+    import requests
+    w = server.tool('memory_write', {'title': 'バッチ検証', 'body': 'b', 'tags': ['ts0']})
+    batch = [
+        {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+        {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+         'params': {'name': 'memory_read', 'arguments': {'id': w['id']}}},
+        {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
+         'params': {'name': 'inbox_check', 'arguments': {}}},
+        {'jsonrpc': '2.0', 'id': 4, 'method': 'ping'},
+    ]
+    r = requests.post(server.base_url + '/mcp', json=batch,
+                      headers={'Authorization': f'Bearer {server.token}',
+                               'Accept': 'application/json'}, timeout=15)
+    assert r.status_code == 200
+    by_id = {m['id']: m for m in r.json()}
+    assert len(by_id[1]['result']['tools']) == 38
+    read = json.loads(by_id[2]['result']['content'][0]['text'])
+    assert read['id'] == w['id'] and read['title'] == 'バッチ検証'
+    assert 'server_time' in json.loads(by_id[3]['result']['content'][0]['text'])
+    assert by_id[4]['result'] == {}
+
+
 def test_ping_and_unknown_method(server):
     assert server.mcp('ping')['result'] == {}
     res = server.mcp('nonexistent/method')
@@ -229,3 +268,16 @@ def test_oplog_list_basic(server):
 
     d4 = server.tool('oplog_list', {'date_from': '2099-01-01'})
     assert d4['total'] == 0
+
+
+def test_generated_ts_defs_are_up_to_date():
+    """ts/src/tool-defs.ts・friend-defs.ts（main.py の _MCP_TOOLS / _FRIEND_MCP_TOOLS /
+    _DEFAULT_FRIEND_CORE から生成）が最新であること。ずれたら scripts/gen_ts_tool_defs.py を再実行する"""
+    import os
+    import subprocess
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(here, '..', 'scripts', 'gen_ts_tool_defs.py')
+    r = subprocess.run([sys.executable, '-I', script, '--check'], capture_output=True, text=True,
+                       encoding='utf-8', timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr

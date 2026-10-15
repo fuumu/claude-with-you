@@ -235,9 +235,13 @@ def test_sublimate_unknown_uuid(server):
     assert 'not found' in d['error']
 
 
-def test_sublimate_llm_unreachable_returns_error(server):
-    """テスト環境では LMStudio に到達できないため、text 指定はエラーで返る
+def test_sublimate_llm_failure_returns_error(server):
+    """LLM が失敗（モックが 500）すると、text 指定はエラーで返る
     （例外がツールエラーに落ちる契約の確認）"""
-    d = server.tool('sublimate', {'text': '昇華テスト用の短い日記テキスト。'})
+    server.llm.set(mode='fail')
+    try:
+        d = server.tool('sublimate', {'text': '昇華テスト用の短い日記テキスト。'})
+    finally:
+        server.llm.reset()
     assert 'error' in d
     assert 'sublimation failed' in d['error']

@@ -8,12 +8,62 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type http from 'node:http';
 import path from 'node:path';
-import { DATA_ROOT } from './data.js';
-import { jstIsoFromMs, nowJst } from './write.js';
+import { parseIsoTs } from './attendance.js';
+import { DATA_DIR, DATA_ROOT } from './data.js';
+import { appendOplog, jstIsoFromMs, jstStamp, nowJst, rebuildIndex, writeJson } from './write.js';
 
 const INBOX_DIR = path.join(DATA_ROOT, 'inbox');
 
-interface InboxMessage {
+/** 自動昇華パイプライン（v3.75）のトリガー（Ring 5 で TS ネイティブ化） */
+const SUBLIMATE_TRIGGER = '【生】';
+
+/** main.py _inbox_needs_sublimate: 【生】を含む chat 宛の投稿か */
+export function inboxNeedsSublimate(to: unknown, title: unknown): boolean {
+  return to === 'chat' && String(title ?? '').includes(SUBLIMATE_TRIGGER);
+}
+
+/**
+ * 非同期昇華ジョブの起動フック。llm-tasks.ts（LLM 依存）が登録する。inbox.ts は LLM に依存しないため
+ * フック経由にして循環 import を避ける
+ */
+export type SublimateHook = (msgId: string, originalBody: string, memoryId: string) => void;
+let sublimateHook: SublimateHook | null = null;
+export function registerSublimateHook(hook: SublimateHook): void {
+  sublimateHook = hook;
+}
+
+/** main.py _create_raw_backup_entry: 原文を ExtMemory に rating=adult / local_only で退避 */
+function createRawBackupEntry(title: string, body: string, inboxId: string, createdAt: string): string {
+  const entryId = `${jstStamp()}_バカンス日記`;
+  const entry = {
+    id: entryId,
+    created_at: nowJst(),
+    updated_at: nowJst(),
+    title,
+    body: `<!-- inbox自動退避: ${inboxId} / ${createdAt} -->
+
+${body}`,
+    tags: ['バカンス日記', '自動退避'],
+    source_thread: '',
+    importance: 'normal',
+    author: 'mio',
+    deleted: false,
+    rating: 'adult',
+    local_only: true,
+  };
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  writeJson(path.join(DATA_DIR, `${entryId}.json`), entry);
+  appendOplog('create', entryId, null, entry as unknown as Record<string, unknown>);
+  rebuildIndex();
+  return entryId;
+}
+
+/** index.ts が先読みしたリクエストボディ（Python へ回す場合に再送するため） */
+export interface BufferedRequest {
+  bufferedBody?: Buffer;
+}
+
+export interface InboxMessage {
   id: string;
   to?: string;
   from?: string;
@@ -29,15 +79,30 @@ interface InboxMessage {
   [key: string]: unknown;
 }
 
+/**
+ * 宛先 to の検証（main.py _inbox_to_valid と同一）。friend:{token} の token 部分はディレクトリ名に
+ * なるため safeId で検証する。それ以外の値はディレクトリに使われないのでそのまま許容
+ */
+export function inboxToValid(to: unknown): boolean {
+  if (typeof to === 'string' && to.startsWith('friend:')) {
+    return safeId(to.slice('friend:'.length));
+  }
+  return true;
+}
+
 function inboxDir(to?: string | null): string {
+  if (!inboxToValid(to)) throw new Error(`invalid inbox target: ${String(to)}`);
   if (to && to.startsWith('friend:')) {
     return path.join(INBOX_DIR, 'friend', to.slice('friend:'.length));
   }
   return INBOX_DIR;
 }
 
-function safeId(id: string): boolean {
-  return !!id && !id.includes('/') && !id.includes('\\') && !id.includes('..');
+/** main.py _safe_id と同一の判定（区切り文字・..・NUL・空文字を弾く） */
+export function safeId(id: string): boolean {
+  return (
+    !!id && !id.includes('/') && !id.includes('\\') && !id.includes('..') && !id.includes('\x00')
+  );
 }
 
 function inboxPath(msgId: string, to?: string | null): string {
@@ -45,7 +110,7 @@ function inboxPath(msgId: string, to?: string | null): string {
 }
 
 /** フラット + friend サブディレクトリから msg_id のファイルを探す */
-function findInboxFile(msgId: string): string | null {
+export function findInboxFile(msgId: string): string | null {
   if (!safeId(msgId)) return null;
   const flat = path.join(INBOX_DIR, `${msgId}.json`);
   if (fs.existsSync(flat)) return flat;
@@ -59,16 +124,16 @@ function findInboxFile(msgId: string): string | null {
   return null;
 }
 
-function readMsg(p: string): InboxMessage {
+export function readMsg(p: string): InboxMessage {
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as InboxMessage;
 }
 
-function writeMsg(p: string, msg: InboxMessage): void {
+export function writeMsg(p: string, msg: InboxMessage): void {
   fs.writeFileSync(p, JSON.stringify(msg, null, 2), 'utf-8');
 }
 
 /** _norm_model_field: 文字列→配列、空/None→null（後方互換） */
-function normModelField(val: unknown): string[] | null {
+export function normModelField(val: unknown): string[] | null {
   if (val === null || val === undefined) return null;
   if (typeof val === 'string') return val ? [val] : null;
   if (Array.isArray(val)) return val.length > 0 ? (val as string[]) : null;
@@ -76,7 +141,7 @@ function normModelField(val: unknown): string[] | null {
 }
 
 /** _norm_inbox_models: from_model/to_model/reply_to_id キーを補完（配列は素通し） */
-function normInboxModels(msg: InboxMessage): InboxMessage {
+export function normInboxModels(msg: InboxMessage): InboxMessage {
   const fm = msg.from_model;
   if (typeof fm === 'string') msg.from_model = fm ? [fm] : null;
   else if (fm === undefined || fm === null) msg.from_model = null;
@@ -88,19 +153,22 @@ function normInboxModels(msg: InboxMessage): InboxMessage {
 }
 
 /** _resolve_expires_at: expires_at / ttl_days 入力を ISO 文字列に正規化（v3.70） */
-function resolveExpiresAt(data: Record<string, unknown>): { value: string | null; error: string | null } {
+export function resolveExpiresAt(
+  data: Record<string, unknown>,
+): { value: string | null; error: string | null } {
   const expiresAt = data.expires_at;
   const ttlDays = data.ttl_days;
   if (expiresAt && ttlDays !== undefined && ttlDays !== null) {
     return { value: null, error: 'expires_at and ttl_days are exclusive' };
   }
   if (ttlDays !== undefined && ttlDays !== null) {
-    const n = Number(ttlDays);
+    const n = typeof ttlDays === 'string' && ttlDays.trim() === '' ? NaN : Number(ttlDays);
     if (!Number.isFinite(n)) return { value: null, error: 'ttl_days must be a number' };
     return { value: jstIsoFromMs(Date.now() + n * 86400_000), error: null };
   }
   if (expiresAt) {
-    if (Number.isNaN(Date.parse(String(expiresAt)))) {
+    // Python 版 _parse_iso_ts と同じ解釈（タイムゾーンなしは JST・日付のみも可）
+    if (parseIsoTs(expiresAt) === null) {
       return { value: null, error: 'expires_at must be ISO 8601' };
     }
     return { value: String(expiresAt), error: null };
@@ -109,19 +177,19 @@ function resolveExpiresAt(data: Record<string, unknown>): { value: string | null
 }
 
 /** _inbox_timed_active: 期間常駐が期限内か（persistent は対象外） */
-function inboxTimedActive(msg: InboxMessage): boolean {
+export function inboxTimedActive(msg: InboxMessage): boolean {
   const exp = msg.expires_at;
   if (!exp || msg.persistent) return false;
-  const t = Date.parse(String(exp));
-  return Number.isFinite(t) && t > Date.now();
+  const t = parseIsoTs(exp);
+  return t !== null && t > Date.now();
 }
 
 /** _inbox_standing: 常駐扱いか（persistent または 期限内の期間常駐, v3.70） */
-function inboxStanding(msg: InboxMessage): boolean {
+export function inboxStanding(msg: InboxMessage): boolean {
   return Boolean(msg.persistent) || inboxTimedActive(msg);
 }
 
-function loadInboxMessages(to?: string | null, unreadOnly = false): InboxMessage[] {
+export function loadInboxMessages(to?: string | null, unreadOnly = false): InboxMessage[] {
   const dir = inboxDir(to);
   fs.mkdirSync(dir, { recursive: true });
   const msgs: InboxMessage[] = [];
@@ -150,28 +218,46 @@ function loadInboxMessages(to?: string | null, unreadOnly = false): InboxMessage
 }
 
 /** _post_inbox_message と同一の ID 採番・メッセージ形状 */
-function postInboxMessage(data: Record<string, unknown>, expiresAt: string | null = null): InboxMessage {
+export function postInboxMessage(
+  data: Record<string, unknown>,
+  expiresAt: string | null = null,
+  replyToId: string | null = null,
+): InboxMessage {
   const to = String(data.to);
   const dir = inboxDir(to);
   fs.mkdirSync(dir, { recursive: true });
   const now = nowJst();
   const stamp = now.replace(/:/g, '').replace(/-/g, '').replace('T', '_').slice(0, 15);
   const msgId = `inbox_${stamp}_${crypto.randomBytes(4).toString('hex')}`;
+
+  // 自動昇華パイプライン（v3.75）: 【生】を含む chat 宛は即時退避→プレースホルダ化→非同期昇華
+  let title = String(data.title ?? '');
+  let body = String(data.body ?? '');
+  const originalBody = body;
+  const sublimateTrigger = inboxNeedsSublimate(to, title);
+  let memoryId: string | null = null;
+  if (sublimateTrigger) {
+    memoryId = createRawBackupEntry(title, originalBody, msgId, now);
+    body = `【処理中】昇華処理を実行中です。原文は ExtMemory \`${memoryId}\` に退避済みです。`;
+    title = title.split(SUBLIMATE_TRIGGER).join('【処理中】');
+  }
+
   const msg: InboxMessage = {
     id: msgId,
     to,
     from: typeof data.from === 'string' ? data.from : 'code',
-    title: String(data.title ?? ''),
-    body: String(data.body ?? ''),
+    title,
+    body,
     from_model: normModelField(data.from_model),
     to_model: normModelField(data.to_model),
-    reply_to_id: null, // REST POST は reply_to_id を受けない（main.py と同じ）
+    reply_to_id: replyToId || null, // REST POST は reply_to_id を受けない（main.py と同じ）。MCP のみ指定
     created_at: now,
     read: false,
     persistent: Boolean(data.persistent ?? false),
     expires_at: expiresAt ?? null,
   };
   writeMsg(path.join(dir, `${msgId}.json`), msg);
+  if (sublimateTrigger && memoryId && sublimateHook) sublimateHook(msgId, originalBody, memoryId);
   return msg;
 }
 
@@ -181,6 +267,8 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
+  const buffered = (req as http.IncomingMessage & BufferedRequest).bufferedBody;
+  if (buffered) return Promise.resolve(buffered.toString('utf-8'));
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (c) => (body += c));
@@ -204,6 +292,10 @@ export async function handleInbox(
       const to = url.searchParams.get('to');
       const full = (url.searchParams.get('full') ?? 'false').toLowerCase() === 'true';
       const unreadOnly = url.searchParams.get('status') === 'new';
+      if (!inboxToValid(to)) {
+        sendJson(res, 400, { error: `invalid to: ${to}` });
+        return true;
+      }
       const msgs = loadInboxMessages(to, unreadOnly);
       if (full) {
         sendJson(res, 200, msgs);
@@ -221,6 +313,10 @@ export async function handleInbox(
       }
       if (!data.to || !data.title) {
         sendJson(res, 400, { error: 'to and title are required' });
+        return true;
+      }
+      if (!inboxToValid(data.to)) {
+        sendJson(res, 400, { error: `invalid to: ${String(data.to)}` });
         return true;
       }
       const exp = resolveExpiresAt(data);

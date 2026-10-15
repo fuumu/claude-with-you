@@ -85,6 +85,34 @@ export function loadEntry(id: string): MemoryEntry | null {
 }
 
 /** 会話ログの _index.json を読む（無ければ空） */
+/** main.py _conv_rating_view: 明示的な rating を付けて返す（未判定は null・MCP 応答用） */
+export function convRatingView(entry: ConvMeta): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...entry };
+  if (!out.rating) out.rating = out.rating_source ? 'safe' : null;
+  if (!('rating_source' in out)) out.rating_source = null;
+  return out;
+}
+
+/**
+ * 会話インデックス（_index.json）。main.py _load_conv_index と同一の uuid 重複排除:
+ * 同一 uuid は message_count が多い方を残し、元の並び順を保つ。
+ * 重複がなければ生のリストをそのまま返す（uuid なしの要素も残る）。
+ */
 export function loadConvIndex(): ConvMeta[] {
-  return readJson<ConvMeta[]>(path.join(CONVERSATIONS_DIR, '_index.json'), []);
+  const raw = readJson<ConvMeta[]>(path.join(CONVERSATIONS_DIR, '_index.json'), []);
+  const seen = new Map<string, ConvMeta>();
+  for (const e of raw) {
+    const uid = e.uuid;
+    if (!uid) continue;
+    const prev = seen.get(uid);
+    if (prev !== undefined) {
+      if ((e.message_count || 0) > (prev.message_count || 0)) seen.set(uid, e);
+    } else {
+      seen.set(uid, e);
+    }
+  }
+  if (seen.size < raw.length) {
+    return raw.filter((e) => !!e.uuid && seen.get(e.uuid) === e);
+  }
+  return raw;
 }

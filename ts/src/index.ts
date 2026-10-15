@@ -18,8 +18,9 @@ import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { handleConversations } from './conversations.js';
 import { handleCoremem } from './coremem.js';
 import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
-import { handleInbox } from './inbox.js';
+import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
+import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
 import { createEntry, deleteEntry, reindexAll, updateEntry } from './write.js';
@@ -258,7 +259,9 @@ function proxyToUpstream(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
     res.end(JSON.stringify({ error: 'upstream unavailable' }));
   });
-  req.pipe(proxyReq);
+  const buffered = (req as http.IncomingMessage & BufferedRequest).bufferedBody;
+  if (buffered) proxyReq.end(buffered);
+  else req.pipe(proxyReq);
 }
 
 const server = http.createServer((req, res) => {
@@ -296,7 +299,9 @@ const server = http.createServer((req, res) => {
         }
         if (await handleCoremem(req, res, parsed)) return;
       }
-      // リング3: conversations REST（認証はハンドラ内。digest は担当外 = プロキシ）
+      // リング5: LLM 依存 REST（digest / batch / rating-batch / llm-status）
+      if (await handleLlmRest(req, res, parsed)) return;
+      // リング3: conversations REST（認証はハンドラ内。digest は上の handleLlmRest が先に処理）
       if (parsed.pathname.startsWith('/api/conversations')) {
         if (await handleConversations(req, res, parsed)) return;
       }

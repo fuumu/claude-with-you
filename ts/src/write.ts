@@ -16,6 +16,21 @@ import { extractLayer3 } from './search.js';
 
 export const OPLOG_FILE = path.join(DATA_ROOT, 'oplog.json');
 
+/**
+ * タグ等から ID の一部（スラッグ）を作る（main.py _id_slug と同一）。ファイル名に埋め込まれるため、
+ * 空白・スラッシュ・バックスラッシュは _ に、親ディレクトリ参照（..）と NUL は除去する。
+ * 長さは Python の [:n] に合わせてコードポイント単位で maxlen まで。
+ * path.join は '..' を文字列上で正規化するため、無害化しないと tags: ['../../x'] で DATA_DIR の外へ書ける
+ */
+export function idSlug(value: unknown, maxlen = 20): string {
+  let s = String(value ?? '')
+    .replace(/ /g, '_')
+    .replace(/[/\\]/g, '_')
+    .replace(/\x00/g, '');
+  while (s.includes('..')) s = s.replace(/\.\./g, '');
+  return Array.from(s).slice(0, maxlen).join('');
+}
+
 /** UNIXミリ秒を Python datetime.isoformat()（JST）互換文字列にする */
 export function jstIsoFromMs(ms: number): string {
   const d = new Date(ms + 9 * 3600 * 1000);
@@ -34,7 +49,7 @@ export function nowJst(): string {
 }
 
 /** Python strftime('%Y%m%d_%H%M%S')（JST）互換 */
-function jstStamp(): string {
+export function jstStamp(): string {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
@@ -44,7 +59,7 @@ function jstStamp(): string {
 }
 
 /** Python json.dump(..., ensure_ascii=False, indent=2) 互換の書き込み */
-function writeJson(file: string, data: unknown): void {
+export function writeJson(file: string, data: unknown): void {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -107,7 +122,7 @@ export function appendOplog(
 export function createEntry(data: Record<string, unknown>): MemoryEntry | null {
   if (!data || !data.title) return null;
   const tags = Array.isArray(data.tags) ? (data.tags as string[]) : [];
-  const tagSlug = tags.length > 0 ? String(tags[0] ?? '').replace(/ /g, '_').slice(0, 20) : 'note';
+  const tagSlug = tags.length > 0 ? idSlug(tags[0]) : 'note';
   const entryId = `${jstStamp()}_${tagSlug}`;
   const now = nowJst();
   const entry: MemoryEntry = {
@@ -124,6 +139,83 @@ export function createEntry(data: Record<string, unknown>): MemoryEntry | null {
   };
   writeJson(path.join(DATA_DIR, `${entryId}.json`), entry);
   appendOplog('create', entryId, null, entry);
+  rebuildIndex();
+  return entry;
+}
+
+const RATINGS = ['safe', 'mature', 'adult'];
+
+/** Python dict.get(key, default) 互換（キーがあれば null でもその値を返す） */
+function argOr(args: Record<string, unknown>, key: string, dflt: unknown): unknown {
+  return key in args ? args[key] : dflt;
+}
+
+/**
+ * MCP memory_write（main.py _handle_tool_call_raw と同一）。
+ * REST createEntry との差: title 必須なし・rating / local_only を受ける。
+ */
+export function mcpWriteEntry(args: Record<string, unknown>): MemoryEntry {
+  const tags = Array.isArray(args.tags) && args.tags.length > 0 ? (args.tags as unknown[]) : [];
+  const tagSlug = tags.length > 0 ? idSlug(tags[0]) : 'note';
+  const entryId = `${jstStamp()}_${tagSlug}`;
+  const entry: MemoryEntry = {
+    id: entryId,
+    created_at: nowJst(),
+    updated_at: nowJst(),
+    title: argOr(args, 'title', '') as string,
+    body: argOr(args, 'body', '') as string,
+    tags: tags as string[],
+    source_thread: '',
+    importance: argOr(args, 'importance', 'normal') as string,
+    author: 'mio',
+    deleted: false,
+  };
+  if (typeof args.rating === 'string' && RATINGS.includes(args.rating)) entry.rating = args.rating;
+  if (args.local_only) entry.local_only = true;
+  writeJson(path.join(DATA_DIR, `${entryId}.json`), entry);
+  appendOplog('create', entryId, null, entry as unknown as Record<string, unknown>);
+  rebuildIndex();
+  return entry;
+}
+
+/**
+ * MCP memory_upsert（main.py と同一）。固定IDで全置換。created_at / source_thread /
+ * rating / local_only は既存値を温存する（v3.73）。keywords 等その他の既存項目は残さない。
+ * ID にパス区切りを含む場合は null（Python 版は未検証だが、ここでは書き込みを拒否する）。
+ */
+export function mcpUpsertEntry(args: Record<string, unknown>): MemoryEntry | null {
+  const entryId = String(args.id ?? '');
+  const p = entryPath(entryId);
+  if (!p) return null;
+  let before: MemoryEntry | null = null;
+  if (fs.existsSync(p)) {
+    before = JSON.parse(fs.readFileSync(p, 'utf-8')) as MemoryEntry;
+  }
+  const entry: MemoryEntry = {
+    id: entryId,
+    created_at: before ? (before.created_at ?? nowJst()) : nowJst(),
+    updated_at: nowJst(),
+    title: argOr(args, 'title', '') as string,
+    body: argOr(args, 'body', '') as string,
+    tags: (Array.isArray(args.tags) ? args.tags : []) as string[],
+    source_thread: before ? (before.source_thread ?? '') : '',
+    importance: argOr(args, 'importance', 'normal') as string,
+    author: 'mio',
+    deleted: false,
+  };
+  if (typeof args.rating === 'string' && RATINGS.includes(args.rating)) {
+    entry.rating = args.rating;
+  } else if (before?.rating) {
+    entry.rating = before.rating;
+  }
+  if (args.local_only !== undefined && args.local_only !== null) {
+    if (args.local_only) entry.local_only = true;
+  } else if (before?.local_only) {
+    entry.local_only = true;
+  }
+  writeJson(p, entry);
+  appendOplog('upsert', entryId, before as unknown as Record<string, unknown> | null,
+    entry as unknown as Record<string, unknown>);
   rebuildIndex();
   return entry;
 }

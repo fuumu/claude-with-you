@@ -14,10 +14,9 @@ import path from 'node:path';
 import { DATA_ROOT } from './data.js';
 import { appendOplog, jstIsoFromMs } from './write.js';
 
-const ARTIFACTS_DIR = path.join(DATA_ROOT, 'artifacts');
+export const ARTIFACTS_DIR = path.join(DATA_ROOT, 'artifacts');
 const CONV_ARTIFACTS_DIR = path.join(DATA_ROOT, 'conv_artifacts');
-const META_FILE = path.join(ARTIFACTS_DIR, '_meta.json');
-const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
+export const PROJECTS_DIR = path.join(DATA_ROOT, 'projects');
 
 interface ArtifactReadResult {
   name?: string;
@@ -27,19 +26,19 @@ interface ArtifactReadResult {
   [key: string]: unknown;
 }
 
-function nameSlug(name: string): string {
+export function nameSlug(name: string): string {
   return name.replace(/\./g, '_').replace(/ /g, '_');
 }
 
 /** main.py _validate_artifact_name: パストラバーサルを弾く（本番 Linux 相当の posix 判定） */
-function validateArtifactName(name: string): boolean {
+export function validateArtifactName(name: string): boolean {
   if (!name) return false;
   if (name.startsWith('/')) return false;
   const norm = path.posix.normalize(name);
   return !(norm.startsWith('..') || path.posix.isAbsolute(norm));
 }
 
-function validateProjectTarget(target: string): boolean {
+export function validateProjectTarget(target: string): boolean {
   if (!target) return false;
   const norm = path.posix.normalize(target);
   if (norm.startsWith('..') || path.posix.isAbsolute(norm) || target.includes('/') || target.includes('\\')) return false;
@@ -47,7 +46,7 @@ function validateProjectTarget(target: string): boolean {
   return true;
 }
 
-function resolveArtifactsDir(target?: string): string {
+export function resolveArtifactsDir(target?: string): string {
   if (!target) return ARTIFACTS_DIR;
   return path.join(PROJECTS_DIR, target);
 }
@@ -85,12 +84,38 @@ function listVersions(versionsDir: string, ext: string): string[] {
   }
 }
 
-/** main.py _artifacts_save（REST 経由は mode=overwrite 固定）と同一契約 */
-export function artifactsSave(
+export interface ArtifactSaveOptions {
+  /** 'overwrite'（既定）/ 'append' / 'str_replace' */
+  mode?: string;
+  oldStr?: string | null;
+  newStr?: string | null;
+  sourceConversationUuid?: string | null;
+}
+
+export interface ArtifactSaveResult {
+  name: string;
+  version: number;
+  version_str: string;
+  source_conversation_uuid?: string;
+}
+
+/** Python の datetime.now().strftime('%Y-%m-%dT%H:%M')（サーバーローカル時刻） */
+function localMinuteStamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * main.py _artifacts_save と同一契約（overwrite / append / str_replace・
+ * source_conversation_uuid のメタ保存）。エラー時は {error}。
+ */
+export function artifactsSaveEx(
   name: string,
   content: string,
   baseDir?: string,
-): { name: string; version: number; version_str: string } {
+  opts: ArtifactSaveOptions = {},
+): ArtifactSaveResult | { error: string } {
   const artifactsDir = baseDir ?? ARTIFACTS_DIR;
   const slug = nameSlug(name);
   const ext = path.extname(name);
@@ -104,9 +129,28 @@ export function artifactsSave(
       ? parseInt(path.basename(existing[existing.length - 1], ext), 10) + 1
       : 1;
   const versionFilename = `${String(nextNum).padStart(3, '0')}${ext}`;
+  const symlinkPath = path.join(artifactsDir, name);
+  const mode = opts.mode ?? 'overwrite';
+
+  if (mode === 'str_replace') {
+    if (!fs.existsSync(symlinkPath)) return { error: `file not found: ${name}` };
+    if (!opts.oldStr) return { error: 'old_str is required for str_replace mode' };
+    const existingContent = fs.readFileSync(symlinkPath, 'utf-8');
+    const count = existingContent.split(opts.oldStr).length - 1;
+    if (count === 0) return { error: 'old_str not found in file' };
+    if (count > 1) return { error: `old_str matches ${count} times (must be unique)` };
+    const i = existingContent.indexOf(opts.oldStr);
+    content =
+      existingContent.slice(0, i) + (opts.newStr ?? '') + existingContent.slice(i + opts.oldStr.length);
+  } else if (mode === 'append' && existing.length > 0) {
+    if (fs.existsSync(symlinkPath)) {
+      const existingContent = fs.readFileSync(symlinkPath, 'utf-8');
+      content = `${existingContent}\n---\n<!-- APPEND ${localMinuteStamp()} -->\n${content}`;
+    }
+  }
+
   fs.writeFileSync(path.join(versionsDir, versionFilename), content, 'utf-8');
 
-  const symlinkPath = path.join(artifactsDir, name);
   const relTarget = path.join('versions', slug, versionFilename);
   try {
     fs.rmSync(symlinkPath, { force: true });
@@ -115,7 +159,74 @@ export function artifactsSave(
   }
   linkOrCopyLatest(relTarget, symlinkPath);
 
-  return { name, version: nextNum, version_str: `${String(nextNum).padStart(3, '0')}` };
+  if (opts.sourceConversationUuid) {
+    const metaPath = path.join(artifactsDir, '_meta.json');
+    const meta = loadMeta(artifactsDir) as Record<string, Record<string, unknown>>;
+    meta[name] = { ...(meta[name] ?? {}), source_conversation_uuid: opts.sourceConversationUuid };
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+  }
+
+  const result: ArtifactSaveResult = {
+    name,
+    version: nextNum,
+    version_str: `${String(nextNum).padStart(3, '0')}`,
+  };
+  if (opts.sourceConversationUuid) result.source_conversation_uuid = opts.sourceConversationUuid;
+  return result;
+}
+
+/** main.py _artifacts_save（REST 経由は mode=overwrite 固定）と同一契約 */
+export function artifactsSave(
+  name: string,
+  content: string,
+  baseDir?: string,
+): { name: string; version: number; version_str: string } {
+  return artifactsSaveEx(name, content, baseDir) as ArtifactSaveResult;
+}
+
+/** main.py CoreMem_delete の rename（src → dst）。エラー時は {error} */
+export function artifactsRename(
+  src: string,
+  dst: string,
+  baseDir?: string,
+): { renamed: true; src: string; dst: string } | { error: string } {
+  const artifactsDir = baseDir ?? ARTIFACTS_DIR;
+  const srcSym = path.join(artifactsDir, src);
+  const dstSym = path.join(artifactsDir, dst);
+  const isLink = (p: string): boolean => {
+    try {
+      return fs.lstatSync(p).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  };
+  if (!isLink(srcSym) && !fs.existsSync(srcSym)) return { error: `not found: ${src}` };
+  if (fs.existsSync(dstSym)) return { error: `already exists: ${dst}` };
+
+  const srcExt = path.extname(src);
+  const dstExt = path.extname(dst);
+  const srcVdir = path.join(artifactsDir, 'versions', nameSlug(src));
+  const dstVdir = path.join(artifactsDir, 'versions', nameSlug(dst));
+  if (fs.existsSync(srcVdir) && fs.statSync(srcVdir).isDirectory()) {
+    fs.mkdirSync(path.dirname(dstVdir), { recursive: true });
+    fs.renameSync(srcVdir, dstVdir);
+    if (srcExt !== dstExt) {
+      for (const fname of fs.readdirSync(dstVdir).sort()) {
+        if (fname.endsWith(srcExt)) {
+          fs.renameSync(
+            path.join(dstVdir, fname),
+            path.join(dstVdir, fname.slice(0, fname.length - srcExt.length) + dstExt),
+          );
+        }
+      }
+    }
+  }
+  if (isLink(srcSym) || fs.existsSync(srcSym)) fs.rmSync(srcSym, { force: true });
+  if (fs.existsSync(dstVdir) && fs.statSync(dstVdir).isDirectory()) {
+    const existing = listVersions(dstVdir, dstExt);
+    if (existing.length > 0) linkOrCopyLatest(path.join(dstVdir, existing[existing.length - 1]), dstSym);
+  }
+  return { renamed: true, src, dst };
 }
 
 /** main.py _artifacts_read と同一契約（conv_artifacts フォールバック含む） */
