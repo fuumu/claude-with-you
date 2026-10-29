@@ -50,9 +50,33 @@ function readJson<T>(file: string, fallback: T): T {
   }
 }
 
+/**
+ * tags / keywords を string[] に正規化する。旧データには文字列（カンマ区切り）で
+ * 保存されたエントリがあり、そのままだと `(e.tags ?? []).map` が落ちる。
+ */
+export function toStringList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v === 'string') {
+    return v
+      .split(/[,，、]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeEntry<T extends IndexEntry>(e: T): T {
+  if (e && typeof e === 'object') {
+    if (e.tags !== undefined && !Array.isArray(e.tags)) e.tags = toStringList(e.tags);
+    if (e.keywords !== undefined && !Array.isArray(e.keywords)) e.keywords = toStringList(e.keywords);
+  }
+  return e;
+}
+
 /** index.json を生のリストで読む（無ければ空）。deleted も含む */
 export function loadIndexList(): IndexEntry[] {
-  return readJson<IndexEntry[]>(INDEX_FILE, []);
+  const list = readJson<IndexEntry[]>(INDEX_FILE, []);
+  return Array.isArray(list) ? list.map(normalizeEntry) : [];
 }
 
 /** 全エントリを created_at 降順で読む（main.py load_all_entries と同じ） */
@@ -66,7 +90,7 @@ export function loadAllEntries(): MemoryEntry[] {
   const entries: MemoryEntry[] = [];
   for (const f of files) {
     try {
-      entries.push(JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf-8')));
+      entries.push(normalizeEntry(JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf-8'))));
     } catch {
       /* 壊れたファイルはスキップ */
     }
@@ -81,7 +105,8 @@ export function loadEntry(id: string): MemoryEntry | null {
   if (!id || id.includes('/') || id.includes('\\') || id.includes('..')) return null;
   const p = path.join(DATA_DIR, `${id}.json`);
   if (!fs.existsSync(p)) return null;
-  return readJson<MemoryEntry | null>(p, null);
+  const e = readJson<MemoryEntry | null>(p, null);
+  return e ? normalizeEntry(e) : null;
 }
 
 /** 会話ログの _index.json を読む（無ければ空） */
