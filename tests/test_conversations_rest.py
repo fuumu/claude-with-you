@@ -327,6 +327,7 @@ def test_rest_redact_requires_adult(server, make_conv_zip):
     assert 'adult' in r.json().get('error', '')
 
 
+@pytest.mark.requires_python
 def test_rest_redact_not_found(server):
     """GET redacted for non-existent conv returns 404 (v3.69)"""
     r = server.get(f'/api/conversations/{new_uuid()}/redacted')

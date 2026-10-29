@@ -10,7 +10,9 @@ main.py 内部は import しない（TS-1 移行後もテストがそのまま�
   MIO_TS1=1       TS サーバーを前段に置き、未移植 REST だけ Python へ転送
   MIO_TS_ONLY=1   TS サーバー単体（Python を起動しない・MIO_UPSTREAM=off）。
                   MIO_TS1=1 も立つので TS 専用テストも走る。未移植 REST に依存する
-                  テストは @pytest.mark.requires_python で印を付け、このモードでは skip する
+                  テストは @pytest.mark.requires_python で印を付け、このモードでは skip する。
+                  404 を期待するテストも、相手が未移植ルートなら印を付ける（TS 単体の
+                  フォールバック 404 で、ルートが無いのに通ってしまうため）
 """
 import json
 import os

@@ -220,6 +220,7 @@ def test_oplog_delete(server):
     assert len(r3.json()) == before_count - 1
 
 
+@pytest.mark.requires_python
 def test_oplog_delete_out_of_range(server):
     """存在しないインデックスへの削除は 404"""
     r = server.delete('/api/oplog/99999')

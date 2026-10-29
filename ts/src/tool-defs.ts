@@ -3,6 +3,7 @@
  * TS-FULL ステップ1 で main.py の _MCP_TOOLS からの自動生成をやめ、このファイルを正本にした。
  * ツールを追加・変更するときはここを直接編集し、tools.ts の HANDLERS にハンドラーを登録する。
  * 照合: tests/test_mcp_core.py::test_tools_list_matches_tool_defs
+ * 配列は JSON 互換の書き方を保つ（テストが json.loads で読む: ダブルクォート・末尾カンマなし・コメントなし）。
  */
 export interface ToolDef {
   name: string;

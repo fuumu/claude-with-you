@@ -135,6 +135,18 @@ def test_health_version_matches_server_version(server):
         assert h['served_by'] == 'ts'
 
 
+def test_ts_version_matches_main_py():
+    """ts/src/version.ts と main.py の VERSION が同じ（両方が残っている間は揃えて上げる）"""
+    import re
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, '..', 'memory', 'app', 'main.py'), encoding='utf-8') as f:
+        py = re.search(r"^VERSION = '([^']+)'", f.read(), re.M)
+    with open(os.path.join(here, '..', 'ts', 'src', 'version.ts'), encoding='utf-8') as f:
+        ts = re.search(r"^export const VERSION = '([^']+)';", f.read(), re.M)
+    assert py and ts
+    assert ts.group(1) == py.group(1), 'ts/src/version.ts の VERSION を main.py に揃える'
+
+
 def test_notification_returns_202(server):
     import requests
     r = requests.post(server.base_url + '/mcp',

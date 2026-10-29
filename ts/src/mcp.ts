@@ -488,8 +488,8 @@ function respond(
 }
 
 /**
- * /mcp をトランスポート層として処理する。処理したら true。
- * 友達トークンのセッションは false を返し、呼び出し側の透過プロキシに委ねる。
+ * /mcp をトランスポート層として処理する。/mcp なら友達セッションも含めて必ずここで応答して true、
+ * それ以外のパスは false。
  */
 export async function handleMcp(
   req: http.IncomingMessage,
@@ -558,10 +558,14 @@ export async function handleMcp(
   const wantsSse = accept.includes('text/event-stream');
   let sessionId = (req.headers['mcp-session-id'] as string) ?? '';
 
-  let msg: unknown;
+  let msg: unknown = null;
   try {
     msg = JSON.parse(await readBody(req));
   } catch {
+    /* 読めなければ null のまま */
+  }
+  // JSON として読めないボディと null は Parse error（main.py も get_json が None を返して同じ扱い）
+  if (msg === null) {
     respond(
       res,
       400,
@@ -621,7 +625,7 @@ export async function handleMcp(
   }
 
   const single = msg as JsonRpcMessage;
-  console.log(`[MCP] protocol=legacy method=${single?.method ?? '(none)'}`);
+  console.log(`[MCP] protocol=legacy method=${single.method ?? '(none)'}`);
   const { response, sessionId: newSession } = await processLegacyMessage(single);
   if (newSession) sessionId = newSession;
   if (response === null) {

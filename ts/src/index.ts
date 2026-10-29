@@ -260,7 +260,7 @@ const server = http.createServer((req, res) => {
   }
 
   // リング2/3（書き込み系REST・inbox）→ OAuth → MCP の順にネイティブ処理を試み、
-  // どれも担当しなければ透過プロキシへ（友達セッションの /mcp を含む）
+  // どれも担当しなければ透過プロキシへ（MIO_UPSTREAM=off なら 404）
   void (async () => {
     try {
       if (await handleWriteNative(req, res, parsed)) return;

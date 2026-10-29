@@ -217,6 +217,16 @@ def test_mcp_post_invalid_json_is_parse_error(server):
     assert r.json()['error']['code'] == -32700
 
 
+def test_mcp_post_null_body_is_parse_error(server):
+    """ボディが JSON の null でも Parse error（main.py の get_json は None を返す）"""
+    r = server.anon().post(
+        server.base_url + '/mcp', data='null',
+        headers={'Authorization': f'Bearer {server.token}',
+                 'Content-Type': 'application/json'}, timeout=10)
+    assert r.status_code == 400
+    assert r.json()['error']['code'] == -32700
+
+
 def test_mcp_batch_request(server):
     """バッチ（配列）リクエストは配列で応答する"""
     r = server.anon().post(

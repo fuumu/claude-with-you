@@ -121,6 +121,7 @@ def test_mcp_id_args_reject_path_traversal(server):
         assert 'error' in server.tool('conversation_read', {'uuid': bad})
 
 
+@pytest.mark.requires_python
 def test_uploads_delete_not_found(server):
     r = server.delete('/api/uploads/nonexistent_id_xyz')
     assert r.status_code == 404
