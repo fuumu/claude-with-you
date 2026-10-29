@@ -3,6 +3,7 @@
 *2026-10-29 / v3.99 時点（commit 34e84d1）。調査のみ・コード変更なし。*
 
 > **進捗（2026-10-29）**: 下の「まとめ」の 1（Python 非依存化）と 2（テストハーネス）は `ts-full-step1` で完了。廃止決定: レガシー SSE（削除済み）・旧パス埋め込みトークン API・`/api/memories/symbolic`。移植決定: dedup-scan・cleanup-empty ×2（4 の管理 REST で扱う）。
+> **進捗（2026-10-30）**: 3（インポート一式）は `ts-full-step3` で完了 — インポート 6 ルート・`index/rebuild`・`cleanup-empty`（会話）・タイトル変更・`conv-artifacts`。会話 REST の TS 側の遅れ（AND 検索・individual・hidden・oplog）も解消。
 
 前提：TS-1 で MCP ツール 38/38 は TS ネイティブ（`tools.ts` に `FORWARD` を返すハンドラーは残っていない）。
 ただし TS 前段（`ts/src/index.ts`）は「担当外のリクエストは全部 Python へ透過転送」する作りなので、

@@ -168,6 +168,15 @@ python -m venv .venv
 - 既存の source_thread は**上書きしない**
 - 会話保存（`_save_conversations`）はメッセージ数を比較し多い方を残す（v3.77）。rating 系メタは既存ファイルから引き継ぐ
 
+**TS 実装（TS-FULL ステップ3・`ts/src/rest-import.ts`）での main.py との差（意図的）:**
+- `/api/import/compare`・`/api/import/unsloth`・`/api/import-status`・`/api/conversations/index/rebuild`・`/cleanup-empty`・`PATCH /<uuid>/title`・`/api/conv-artifacts*` も TS が応答する
+- 壊れた ZIP・JSON は 500 ではなく 400
+- `conversations.json` は1件ずつ流して処理する（数百 MB でも1本の文字列にしない）。先に全体を検証し、壊れていれば何も書かない
+- uuid にパス区切り・`..`・NUL を含む会話と、パスとして不正なアーティファクト名は保存しない（main.py はそのままパスに使っていた）
+- インポートで作るエントリの ID（時刻_番号_uuid 先頭8文字）が既存ファイルとぶつかったら `_2` `_3` … を付ける（main.py は同じ秒の別インポートで上書きしていた。`test_import_entry_ids_do_not_overwrite`）
+- source_thread を紐づけたときも `index.json` を作り直す（main.py は imported > 0 のときだけ）
+- `index/rebuild` は `{uuid}_digest*.json`・`{uuid}_redacted.json` のキャッシュを会話として数えない
+
 ## 7. その他 REST
 
 | グループ | パス | 契約の要点 |

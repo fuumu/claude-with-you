@@ -198,7 +198,6 @@ def test_memory_search_and_semantics(server):
     assert server.tool('memory_search', {'q': '林檎 存在しない語XYZQ'})['total'] == 0
 
 
-@pytest.mark.requires_python
 def test_memory_search_include_conversations(server, make_conv_zip):
     """統合検索（v3.61）: 会話タイトルも conversations[] で返る"""
     from conftest import make_conversation
@@ -241,7 +240,6 @@ def test_memory_search_search_layer(server):
     assert d_full['total'] >= 1
 
 
-@pytest.mark.requires_python
 def test_conversation_search_and_terms(server, make_conv_zip):
     """v3.81: conversation_search が複数キーワードAND一致"""
     from conftest import make_conversation

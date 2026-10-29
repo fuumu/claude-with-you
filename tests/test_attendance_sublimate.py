@@ -60,7 +60,6 @@ def test_attendance_local_channel_detection(server):
     assert by_title['ローカル便テスト']['individual'] == 'しずく'
 
 
-@pytest.mark.requires_python
 def test_attendance_conversation_layer(server, make_conv_zip):
     """会話ログのメタデータが channel=chat の行になる（rating 併記）"""
     conv = make_conversation(title='出席簿用会話ログ')

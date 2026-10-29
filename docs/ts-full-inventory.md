@@ -3,6 +3,7 @@
 *2026-10-29 / as of v3.99 (commit 34e84d1). Investigation only — no code changes. Japanese version (`ts-full-inventory.ja.md`) is authoritative.*
 
 > **Progress (2026-10-29)**: items 1 (remove runtime Python dependency) and 2 (test harness) of the summary are done in `ts-full-step1`. Dropped: legacy SSE (removed), legacy path-token API, `/api/memories/symbolic`. To port: dedup-scan, cleanup-empty ×2 (handled with admin REST in item 4).
+> **Progress (2026-10-30)**: item 3 (imports) is done in `ts-full-step3` — the six import routes, `index/rebuild`, conversation `cleanup-empty`, title change and `conv-artifacts`. The TS conversation REST also caught up with main.py (AND search, individual, hidden, oplog).
 
 Premise: after TS-1, all 38 MCP tools are TS-native (no handler in `tools.ts` returns `FORWARD`).
 However, the TS front (`ts/src/index.ts`) transparently forwards **everything it does not handle** to Python,

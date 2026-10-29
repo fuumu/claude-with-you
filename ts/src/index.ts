@@ -15,12 +15,13 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
-import { handleConversations } from './conversations.js';
+import { handleConvArtifacts, handleConversations } from './conversations.js';
 import { ARTIFACTS_DIR, handleCoremem } from './coremem.js';
 import { DATA_DIR, DATA_ROOT, loadAllEntries, loadEntry, loadIndexList } from './data.js';
 import { readBodyText as readRequestBody } from './http-body.js';
 import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
+import { handleImportRest } from './rest-import.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
@@ -277,6 +278,9 @@ const server = http.createServer((req, res) => {
       if (parsed.pathname.startsWith('/api/conversations')) {
         if (await handleConversations(req, res, parsed)) return;
       }
+      // TS-FULL ステップ3: インポート一式・会話内アーティファクト（認証はハンドラ内）
+      if (await handleImportRest(req, res, parsed)) return;
+      if (handleConvArtifacts(req, res, parsed)) return;
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
       if (!UPSTREAM_ENABLED) {

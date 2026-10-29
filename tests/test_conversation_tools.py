@@ -8,8 +8,6 @@ MIO_TS1=1 でも同じ期待値で通ること＝実装差がないことの確�
 import json
 import os
 
-import pytest
-
 from conftest import make_conversation, new_uuid
 
 
@@ -47,7 +45,6 @@ def _read_text(server, uuid, **args):
     return d['text'] if 'text' in d else d
 
 
-@pytest.mark.requires_python
 def test_index_and_search_filters_hidden_rating_individual(server, make_conv_zip):
     a = make_conversation(title='ct絞り込みA', updated_at='2026-03-01T00:00:00.000000Z')
     b = make_conversation(title='ct絞り込みB', updated_at='2026-03-05T00:00:00.000000Z')
@@ -93,7 +90,6 @@ def test_index_and_search_filters_hidden_rating_individual(server, make_conv_zip
     _patch_index(server, a['uuid'], rating=None, model=None)
 
 
-@pytest.mark.requires_python
 def test_search_body_and_semantics(server, make_conv_zip):
     conv = make_conversation(title='ct本文検索', texts=['琥珀色の鯨が泳ぐ', '蛸壺の底'])
     _import(server, make_conv_zip, [conv], name='ct2.zip')
@@ -105,7 +101,6 @@ def test_search_body_and_semantics(server, make_conv_zip):
                                                'body_search': True})['data'] == []
 
 
-@pytest.mark.requires_python
 def test_read_slicing_and_ranges(server, make_conv_zip):
     conv = make_conversation(title='ctスライス',
                              texts=[f'メッセージ{i}' for i in range(1, 7)])
@@ -143,7 +138,6 @@ def _patch_conv_model(server, uuid, model):
         json.dump(conv, f, ensure_ascii=False)
 
 
-@pytest.mark.requires_python
 def test_read_caps_thinking_and_annotations(server, make_conv_zip):
     long_text = 'あ' * 700
     conv = make_conversation(title='ct注記とthinking', texts=['一つ目', long_text, '三つ目'])
@@ -192,7 +186,6 @@ def test_log_annotate_validation(server, make_conv_zip):
         'log_annotate', {'uuid': '../x', 'note': 'n', 'author': 'a'})['error']
 
 
-@pytest.mark.requires_python
 def test_adult_gate_variants(server, make_conv_zip):
     conv = make_conversation(title='ctアダルトゲート', texts=['秘密のメッセージ一', '秘密のメッセージ二'])
     _import(server, make_conv_zip, [conv], name='ct5.zip')
@@ -241,7 +234,6 @@ def test_adult_gate_variants(server, make_conv_zip):
     assert r.status_code == 200
 
 
-@pytest.mark.requires_python
 def test_share_and_digest_status_only(server, make_conv_zip):
     conv = make_conversation(title='ct共有とダイジェスト状態')
     _import(server, make_conv_zip, [conv], name='ct6.zip')
