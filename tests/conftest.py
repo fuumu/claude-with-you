@@ -79,6 +79,8 @@ class MockLLM:
     DIGEST_ALL_MARK = '各パートのダイジェスト'
     KEYWORDS_MARK = '検索に使うキーワードを3〜5個生成'
     LAYERS_MARK = '## 2層: 要約'
+    REDACT_MARK = 'コンテンツマスク判定'
+    REDACT_WORD = '秘め事'  # 伏せ字判定では、この語を含む文をマスク対象として返す
 
     def __init__(self):
         self.mode = 'ok'
@@ -146,6 +148,11 @@ class MockLLM:
         self._thread.start()
 
     def reply_for(self, prompt, rating):
+        if self.REDACT_MARK in prompt:
+            import re
+            masks = [sid for sid, sent in re.findall(r'^\[(m\d+-s\d+)\] (.*)$', prompt, re.M)
+                     if self.REDACT_WORD in sent]
+            return json.dumps({'mask': masks})
         if self.RATING_MARK in prompt:
             return json.dumps({'rating': rating, 'reason': 'モック判定'}, ensure_ascii=False)
         if self.SUBLIMATE_MARK in prompt:

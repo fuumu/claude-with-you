@@ -80,6 +80,7 @@ TS 実装は utf-8 固定（本番互換）。
 | TS-FULL 4 | 管理 REST | ✅ 完了（2026-10-30・`ts-full-step4` ブランチ）— `rest-admin.ts`（旧検索・dedup-scan・cleanup-empty・oplog・共有トークン 3 ルート・projects・attendance・export・import/backup）と `zip.ts` の ZIP 書き出し。旧パス埋め込みトークン API と `/api/memories/symbolic` は両サーバーから削除。Python と TS に同じ REST を 109 件流す差分テストで、移植済みルートの遅れ（REST hsearch の author / search_layer・body_length のコードポイント数・CoreMem REST の manifest ガード）も直した。残る差は意図的なもの（api-contract 6 章）と、ステップ8 で揃う起動時シードだけ。`requires_python` は 27 → 13 件 |
 | TS-FULL 5 | アルバム・アップロードの REST | ✅ 完了（2026-10-30・`ts-full-step5` ブランチ）— `rest-media.ts`。album は MCP ツールの実装（`tools-album.ts`・`album-save.ts`）を使い回し、uploads は `tools-file.ts` の一覧・削除を関数に切り出して共用。差分テスト（146 件）で album・uploads とも一致（画像ライブラリ由来のエラー文言だけ違う）。`requires_python` は 13 → 6 件 |
 | TS-FULL 6 | 友達 REST・HTML 配信 | ✅ 完了（2026-10-30・`ts-full-step6` ブランチ）— `rest-friends.ts`（登録簿は `friend.ts` と共用）と `static.ts`（5 ページ。見つからなければ TS 前段構成では Python に任せる）。友達 REST と公開ページにはテストが無かったので `tests/test_friends_rest.py`（6 件）を新設。差分テスト（178 件）で友達 REST と 5 ページ（Content-Type とバイト列）とも一致 |
+| TS-FULL 7 | 夜間バッチ・伏せ字 | ✅ 完了（2026-10-30・`ts-full-step7` ブランチ）— `scheduler.ts`（`MIO_UPSTREAM=off` のときだけ動く。TS 前段＋Python では Python の夜間バッチと二重にならないように）と `redact.ts`（プロンプト・文分割・30 文チャンク・本文ハッシュでのキャッシュ無効化は main.py と同一）。生成の流れはどのモードでもテストされていなかったので、モック LLM に伏せ字判定の応答を足して一連のテストを追加。`requires_python` は 6 → 1 件（起動時シードのみ） |
 | 6 | Python 撤去・Dockerfile を Node ベースへ | 特性テスト＋本番並行稼働期間を経て判断 |
 
 ## 設計上の約束
