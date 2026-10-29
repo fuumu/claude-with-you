@@ -10,6 +10,7 @@ import type http from 'node:http';
 import path from 'node:path';
 import { parseIsoTs } from './attendance.js';
 import { DATA_DIR, DATA_ROOT } from './data.js';
+import { readBodyText } from './http-body.js';
 import { appendOplog, jstIsoFromMs, jstStamp, nowJst, rebuildIndex, writeJson } from './write.js';
 
 const INBOX_DIR = path.join(DATA_ROOT, 'inbox');
@@ -269,12 +270,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 function readBody(req: http.IncomingMessage): Promise<string> {
   const buffered = (req as http.IncomingMessage & BufferedRequest).bufferedBody;
   if (buffered) return Promise.resolve(buffered.toString('utf-8'));
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
+  return readBodyText(req);
 }
 
 /** /api/inbox* をネイティブ処理。担当ルートなら true（認証は呼び出し側で済み） */

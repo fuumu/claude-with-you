@@ -16,6 +16,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { extractBearer, verifyToken } from './auth.js';
 import { ConvMeta, CONVERSATIONS_DIR, DATA_ROOT, loadConvIndex } from './data.js';
+import { readBodyText as readRequestBody } from './http-body.js';
 import { jstIsoFromMs } from './write.js';
 
 const ANNOTATIONS_DIR = path.join(DATA_ROOT, 'annotations');
@@ -29,15 +30,6 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 
 function writeJson(file: string, data: unknown): void {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
-}
-
-function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 /** uuid セグメントの安全確認（Flask の <uuid> はスラッシュ不可。バックスラッシュ等も弾く） */

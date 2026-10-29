@@ -11,6 +11,7 @@ import type http from 'node:http';
 import path from 'node:path';
 import { extractBearer, verifyToken } from './auth.js';
 import { CONVERSATIONS_DIR } from './data.js';
+import { readBodyText as readBody } from './http-body.js';
 import { llmStatus } from './llm.js';
 import {
   batchStatus,
@@ -25,15 +26,6 @@ import {
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
-}
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 const flag = (v: string | null): boolean => ['true', '1'].includes((v ?? '').toLowerCase());

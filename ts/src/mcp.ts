@@ -30,6 +30,7 @@ import {
   handleFriendToolCall,
 } from './friend.js';
 import { FRIEND_TOOL_DEFS } from './friend-defs.js';
+import { readBodyText as readBody } from './http-body.js';
 import { callToolNative, listTools } from './tools.js';
 import { VERSION } from './version.js';
 
@@ -350,15 +351,6 @@ async function processLegacyMessage(
     }
   }
   return { response: otherMessageResponse(msg) };
-}
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 /** トランスポートレベルで処理できるメソッドか */
