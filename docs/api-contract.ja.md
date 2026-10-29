@@ -183,6 +183,12 @@ python -m venv .venv
 - `limit` などの整数パラメータが数字でなければ 400（main.py は 500）
 - ステップ4で直した TS 側の遅れ: REST `hsearch` の `author` / `search_layer`（v3.81）、`index.json` の `body_length` をコードポイント数に（絵文字を 2 と数えていた）、REST の CoreMem 保存の manifest ガード（409・v3.96）
 
+**TS 実装（TS-FULL ステップ5・`ts/src/rest-media.ts`）での main.py との差（意図的）:**
+- `POST /api/album/upload` で上げた画像の `original_filename` は実際のファイル名（main.py は一時ファイル名 `_upload_tmp_…` になっていた）
+- `POST /api/uploads` は同じ秒に同じ名前のファイルを上げても上書きしない（ID に `_2` `_3` … を付ける）
+- 画像として読めないファイルのエラー文言は画像ライブラリ（Pillow / sharp）ごとに違う（どちらも 400）
+- `/api/album`（末尾スラッシュなし）も一覧として応答する（main.py は `/api/album/` へリダイレクト）
+
 ## 7. その他 REST
 
 | グループ | パス | 契約の要点 |

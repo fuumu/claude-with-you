@@ -23,6 +23,7 @@ import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
 import { handleAdminRest } from './rest-admin.js';
 import { handleImportRest } from './rest-import.js';
+import { handleMediaRest } from './rest-media.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
@@ -286,6 +287,8 @@ const server = http.createServer((req, res) => {
       if (handleConvArtifacts(req, res, parsed)) return;
       // TS-FULL ステップ4: 管理 REST（oplog・共有・projects・attendance・export/backup・旧検索・掃除系）
       if (await handleAdminRest(req, res, parsed)) return;
+      // TS-FULL ステップ5: アルバム・アップロードの REST
+      if (await handleMediaRest(req, res, parsed)) return;
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
       if (!UPSTREAM_ENABLED) {

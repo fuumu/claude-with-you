@@ -13,7 +13,7 @@ import { guessMimeType } from './mimetypes.js';
 import { Handler, pyBasename } from './tool-types.js';
 import { appendOplog, nowJst, writeJson } from './write.js';
 
-const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
+export const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
 const TEXT_EXTS = new Set([
   'txt', 'md', 'json', 'csv', 'log', 'yaml', 'yml', 'js', 'ts', 'py', 'sh',
   'html', 'css', 'xml', 'ini', 'toml', 'conf', 'jsonl',
@@ -27,12 +27,12 @@ function cpSlice(s: string, n: number): string {
   return Array.from(s).slice(0, n).join('');
 }
 
-function filePathFor(id: string, ext: string): string {
+export function filePathFor(id: string, ext: string): string {
   return ext ? path.join(UPLOADS_DIR, `${id}.${ext}`) : path.join(UPLOADS_DIR, id);
 }
 
 /** メタデータは {id}.meta.json（実体 {id}.{ext} と ext=json でも衝突しない） */
-function metaPathFor(id: string): string {
+export function metaPathFor(id: string): string {
   return path.join(UPLOADS_DIR, `${id}.meta.json`);
 }
 
@@ -74,7 +74,7 @@ function migrateAllMeta(): void {
   }
 }
 
-function loadMeta(id: string): Meta | null {
+export function loadMeta(id: string): Meta | null {
   const p = existingMetaPath(id);
   if (!p) return null;
   return JSON.parse(fs.readFileSync(p, 'utf-8')) as Meta;
@@ -187,8 +187,8 @@ const fileRead: Handler = (args) => {
   return meta;
 };
 
-const fileList: Handler = (args) => {
-  const wanted = Array.isArray(args.tags) && args.tags.length > 0 ? args.tags.map(String) : null;
+/** main.py _upload_list（MCP file_list と REST GET /api/uploads で共用）。tags はどれか一致（大文字小文字無視） */
+export function listUploads(wanted: string[] | null): Meta[] {
   const items: Meta[] = [];
   migrateAllMeta();
   if (fs.existsSync(UPLOADS_DIR) && fs.statSync(UPLOADS_DIR).isDirectory()) {
@@ -215,12 +215,17 @@ const fileList: Handler = (args) => {
       });
     }
   }
+  return items;
+}
+
+const fileList: Handler = (args) => {
+  const wanted = Array.isArray(args.tags) && args.tags.length > 0 ? args.tags.map(String) : null;
+  const items = listUploads(wanted);
   return { items, count: items.length, server_time: nowJst() };
 };
 
-const fileDelete: Handler = (args) => {
-  const id = idArg(args);
-  if (!id) return { error: 'id is required' };
+/** main.py _upload_delete（実体とメタを物理削除）。無ければ {error} */
+export function deleteUpload(id: string): Meta {
   const meta = loadMeta(id);
   if (!meta) return { error: `Upload not found: ${id}` };
   const fp = filePathFor(id, String(meta.ext ?? ''));
@@ -228,7 +233,14 @@ const fileDelete: Handler = (args) => {
   const metaFile = metaPathFor(id);
   if (fs.existsSync(metaFile)) fs.unlinkSync(metaFile);
   appendOplog('file_delete', id, { id }, null);
-  return { deleted: id, server_time: nowJst() };
+  return { deleted: id };
+}
+
+const fileDelete: Handler = (args) => {
+  const id = idArg(args);
+  if (!id) return { error: 'id is required' };
+  const r = deleteUpload(id);
+  return 'error' in r ? r : { ...r, server_time: nowJst() };
 };
 
 export const FILE_HANDLERS: Record<string, Handler> = {
