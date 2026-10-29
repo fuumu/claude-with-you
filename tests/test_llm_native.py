@@ -115,7 +115,6 @@ def test_llm_status_reports_mock_endpoint(server):
 
 # ── conversation_digest ──────────────────────────────────────────────
 
-@pytest.mark.requires_python
 def test_digest_generation_cache_and_safe_mode(server, make_conv_zip):
     server.llm.reset()
     conv = make_conversation(title='lnダイジェスト', texts=['はじめまして', 'こんにちは', 'さようなら'])
@@ -141,7 +140,6 @@ def test_digest_generation_cache_and_safe_mode(server, make_conv_zip):
     assert st['has_digest'] is True and st['has_safe_digest'] is True
 
 
-@pytest.mark.requires_python
 def test_digest_multi_chunk_integrates(server, make_conv_zip):
     server.llm.reset()
     texts = [f'発言{i}' for i in range(25)]  # 20 ターン区切り → 2 チャンク
@@ -153,7 +151,6 @@ def test_digest_multi_chunk_integrates(server, make_conv_zip):
     assert 'パート1:\nモックチャンクダイジェスト' in server.llm.calls[-1]['prompt']
 
 
-@pytest.mark.requires_python
 def test_digest_chunk_failure_is_embedded(server, make_conv_zip):
     server.llm.reset()
     conv = make_conversation(title='lnダイジェスト失敗', texts=['a', 'b'])
@@ -167,7 +164,6 @@ def test_digest_chunk_failure_is_embedded(server, make_conv_zip):
     assert d['chunks'] == 1
 
 
-@pytest.mark.requires_python
 def test_digest_rest_and_errors(server, make_conv_zip):
     server.llm.reset()
     conv = make_conversation(title='lnダイジェストREST', texts=['x', 'y'])
@@ -208,7 +204,6 @@ def test_sublimate_input_too_large(server):
     assert 'error' in d and d['input_chars'] == 60001 and d['max_chars'] == 60000
 
 
-@pytest.mark.requires_python
 def test_sublimate_from_conversation_range(server, make_conv_zip):
     server.llm.reset()
     conv = make_conversation(title='ln昇華範囲', texts=['一つ目', '二つ目', '三つ目'])
@@ -272,7 +267,6 @@ def test_rating_batch_via_mcp(server, make_conv_zip):
         assert r['index_counts']['adult'] == 1 and r['index_counts']['safe'] == 1
 
 
-@pytest.mark.requires_python
 def test_rating_batch_rest_start_and_conflict(server, make_conv_zip):
     server.llm.reset()
     with isolated_data(server):

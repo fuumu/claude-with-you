@@ -231,7 +231,6 @@ def test_rest_reindex(server):
     assert r.status_code == 200
 
 
-@pytest.mark.requires_python
 def test_import_status(server):
     r = server.get('/api/import-status')
     assert r.status_code == 200

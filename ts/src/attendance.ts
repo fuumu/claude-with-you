@@ -26,6 +26,11 @@ const FAMILY_ROSTER: Record<string, string[]> = {
 
 const WORD_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz-.';
 
+/** 名簿の先頭のモデル名ヒント（main.py の `_FAMILY_ROSTER.get(name, ())[0]`、無ければ名前そのもの） */
+export function rosterFirstPattern(individual: string): string {
+  return FAMILY_ROSTER[individual]?.[0] ?? individual;
+}
+
 /** main.py _resolve_individual: モデル名・呼び名・タグ群から個体名を推定。未登録は null */
 export function resolveIndividual(...texts: unknown[]): string | null {
   const joined = texts

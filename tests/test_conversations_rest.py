@@ -32,7 +32,6 @@ def _import_zip(server, make_conv_zip, conversations, name='r3v.zip'):
     return r.json()
 
 
-@pytest.mark.requires_python
 def test_rest_conversations_search_filters(server, make_conv_zip):
     c1 = make_conversation(title='r3v検索対象アルファ',
                            created_at='2026-07-05T00:00:00.000000Z',
@@ -62,7 +61,6 @@ def test_rest_conversations_search_filters(server, make_conv_zip):
     assert len(r.json()) == 1
 
 
-@pytest.mark.requires_python
 def test_rest_conversations_body_search(server, make_conv_zip):
     conv = make_conversation(title='r3v本文検索会話',
                              texts=['合言葉は瑠璃色の朝焼け', 'なるほど'])
@@ -76,7 +74,6 @@ def test_rest_conversations_body_search(server, make_conv_zip):
     assert conv['uuid'] in [e['uuid'] for e in r.json()]
 
 
-@pytest.mark.requires_python
 def test_rest_conversations_index_paging(server, make_conv_zip):
     r = server.get('/api/conversations/index?search=r3v検索対象&limit=1&offset=0')
     assert r.status_code == 200
@@ -89,7 +86,6 @@ def test_rest_conversations_index_paging(server, make_conv_zip):
     assert d2['items'][0]['uuid'] != first
 
 
-@pytest.mark.requires_python
 def test_rest_conversations_index_rebuild(server, make_conv_zip):
     conv = make_conversation(title='r3v再構築会話')
     _import_zip(server, make_conv_zip, [conv], name='r3v3.zip')
@@ -105,7 +101,6 @@ def test_rest_conversations_index_rebuild(server, make_conv_zip):
         assert key in d['items'][0], key
 
 
-@pytest.mark.requires_python
 def test_rebuild_improves_default_titles(server, make_conv_zip):
     """v3.96: rebuild should improve default titles like 'Greeting' to first user message"""
     conv = make_conversation(title='Greeting', texts=['おはようございます', 'おはよう！'])
@@ -128,7 +123,6 @@ def test_rebuild_improves_default_titles(server, make_conv_zip):
     assert raw.get('name') != 'Greeting', f'JSON file name should be updated: {raw.get("name")}'
 
 
-@pytest.mark.requires_python
 def test_rebuild_improves_preexisting_greeting_file(server):
     """v3.96 以前に取り込まれた Greeting 会話（import 時改善を通っていない）を rebuild 単独で直す。
     TS プロキシ経由でも効くこと（旧 TS 版 rebuild はタイトル改善を持たず、本番で効かなかった）"""
@@ -144,7 +138,6 @@ def test_rebuild_improves_preexisting_greeting_file(server):
         assert json.load(f)['name'].startswith('古いログの最初の発言')
 
 
-@pytest.mark.requires_python
 def test_rebuild_improves_evening_greeting(server, make_conv_zip):
     """v3.99: 'Evening greeting' and similar patterns should also be improved"""
     conv = make_conversation(title='Evening greeting', texts=['こんばんは', 'やあ'])
@@ -157,7 +150,6 @@ def test_rebuild_improves_evening_greeting(server, make_conv_zip):
     assert item['title'] != 'Evening greeting'
 
 
-@pytest.mark.requires_python
 def test_rebuild_improves_title_text_only_messages(server, make_conv_zip):
     """v3.99: messages with only 'text' field (no 'content') should be handled"""
     conv = make_conversation(title='Greeting', texts=['テストだよ', '了解'])
@@ -170,7 +162,6 @@ def test_rebuild_improves_title_text_only_messages(server, make_conv_zip):
     assert d['total'] >= 1, 'Title should be improved from text-only messages'
 
 
-@pytest.mark.requires_python
 def test_rebuild_debug_no_auto(server, make_conv_zip):
     """v3.99: rebuild response includes debug info for titles that could not be improved"""
     conv = make_conversation(title='Greeting', texts=[])
@@ -184,7 +175,6 @@ def test_rebuild_debug_no_auto(server, make_conv_zip):
         assert len(rd['debug_no_auto']) > 0
 
 
-@pytest.mark.requires_python
 def test_rebuild_extracts_participants(server, make_conv_zip):
     """v3.96: rebuild should extract participants from conversation messages"""
     conv = make_conversation(title='participant test')
@@ -200,7 +190,6 @@ def test_rebuild_extracts_participants(server, make_conv_zip):
     assert 'claude-opus-4-6' in item['participants']
 
 
-@pytest.mark.requires_python
 def test_rest_conversation_get_full_json(server, make_conv_zip):
     conv = make_conversation(title='r3v取得会話', texts=['ひとつ', 'ふたつ'])
     _import_zip(server, make_conv_zip, [conv], name='r3v4.zip')
@@ -213,7 +202,6 @@ def test_rest_conversation_get_full_json(server, make_conv_zip):
     assert server.get(f'/api/conversations/{new_uuid()}').status_code == 404
 
 
-@pytest.mark.requires_python
 def test_rest_conversation_annotations(server, make_conv_zip):
     conv = make_conversation(title='r3v注記会話')
     _import_zip(server, make_conv_zip, [conv], name='r3v5.zip')
@@ -229,7 +217,6 @@ def test_rest_conversation_annotations(server, make_conv_zip):
     assert 'created_at' in a and 'target' in a
 
 
-@pytest.mark.requires_python
 def test_rest_conversation_share_and_view(server, make_conv_zip):
     conv = make_conversation(title='r3v共有会話', texts=['共有される本文'])
     _import_zip(server, make_conv_zip, [conv], name='r3v6.zip')
@@ -259,7 +246,6 @@ def test_rest_conversation_share_and_view(server, make_conv_zip):
     assert server.post(f'/api/conversations/share/{new_uuid()}').status_code == 404
 
 
-@pytest.mark.requires_python
 def test_rest_conversations_require_auth(server, make_conv_zip):
     anon = server.anon()
     assert anon.get(server.base_url + '/api/conversations/').status_code == 401
@@ -267,7 +253,6 @@ def test_rest_conversations_require_auth(server, make_conv_zip):
     assert anon.post(server.base_url + '/api/conversations/index/rebuild').status_code == 401
 
 
-@pytest.mark.requires_python
 def test_rest_conversation_rating_extended(server, make_conv_zip):
     """PATCH rating with rating_reason and rating_source (v3.68)"""
     conv = make_conversation(title='ratingテスト')
@@ -358,7 +343,6 @@ def test_rest_redact_status_with_adult(server, make_conv_zip):
     assert item['status'] == 'not_generated'
 
 
-@pytest.mark.requires_python
 def test_conversation_read_redact_arg(server, make_conv_zip):
     """conversation_read with redact=true on adult conv without redacted returns notice (v3.69)"""
     conv = make_conversation(title='redact読み取りテスト')

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveIndividual } from './attendance.js';
 import { ConvMeta, CONVERSATIONS_DIR, convRatingView, DATA_ROOT, loadConvIndex } from './data.js';
+import { pyOr } from './py-compat.js';
 import { allTermsIn, queryTerms } from './search.js';
 import { Handler, toInt, truthy } from './tool-types.js';
 import { jstIsoFromMs, nowJst, writeJson } from './write.js';
@@ -57,7 +58,8 @@ function ratingMatch(entry: ConvMeta, filter: string): boolean {
   return r === filter;
 }
 
-function individualMatch(entry: ConvMeta, filter: string): boolean {
+/** main.py _conv_individual_match（REST の conversations.ts からも使う） */
+export function individualMatch(entry: ConvMeta, filter: string): boolean {
   const resolved = resolveIndividual(filter);
   let participants = (Array.isArray(entry.participants) ? entry.participants : []) as unknown[];
   if (participants.length === 0) {
@@ -83,7 +85,7 @@ function redactStatus(uuid: string): string {
 }
 
 /** main.py _conv_body_match_terms: タイトル/uuid または本文に全 terms が含まれるか */
-function bodyMatchTerms(entry: ConvMeta, terms: string[]): boolean {
+export function bodyMatchTerms(entry: ConvMeta, terms: string[]): boolean {
   if (terms.length === 0) return false;
   const titleText = (str(entry.title) + ' ' + str(entry.uuid)).toLowerCase();
   if (allTermsIn(terms, titleText)) return true;
@@ -95,7 +97,8 @@ function bodyMatchTerms(entry: ConvMeta, terms: string[]): boolean {
     const conv = JSON.parse(fs.readFileSync(fpath, 'utf-8')) as Rec;
     const full: string[] = [];
     for (const m of (conv.chat_messages as Rec[] | undefined) ?? []) {
-      const content = (m.content as unknown) || m.text || '';
+      // Python の `content or text or ''`（空リストも偽）
+      const content = pyOr(m.content, m.text, '');
       if (Array.isArray(content)) {
         for (const c of content) {
           if (c && typeof c === 'object' && (c as Rec).type === 'text') {

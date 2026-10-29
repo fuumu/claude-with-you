@@ -9,8 +9,6 @@
 import json
 import os
 
-import pytest
-
 from conftest import make_conversation
 
 
@@ -26,7 +24,6 @@ def _conv_path(server, uuid):
     return os.path.join(server.data_root, 'conversations', f'{uuid}.json')
 
 
-@pytest.mark.requires_python
 def test_rebuild_preserves_rating_meta(server, make_conv_zip):
     conv = make_conversation(title='rv再構築rating保全')
     _import_zip(server, make_conv_zip, [conv], name='rv1.zip')
@@ -45,7 +42,6 @@ def test_rebuild_preserves_rating_meta(server, make_conv_zip):
     assert item['rating_source'] == 'auto'
 
 
-@pytest.mark.requires_python
 def test_patch_rating_clears_skip_reason(server, make_conv_zip):
     conv = make_conversation(title='rvスキップ理由クリア')
     _import_zip(server, make_conv_zip, [conv], name='rv2.zip')
@@ -73,7 +69,6 @@ def test_patch_rating_clears_skip_reason(server, make_conv_zip):
     assert 'rating_skip_reason' not in item
 
 
-@pytest.mark.requires_python
 def test_mcp_conversation_index_rating_normalized(server, make_conv_zip):
     unrated = make_conversation(title='rvMCP未判定会話')
     rated = make_conversation(title='rvMCP判定済み会話')
@@ -109,7 +104,6 @@ def test_mcp_conversation_index_rating_normalized(server, make_conv_zip):
     assert hit['rating'] is None
 
 
-@pytest.mark.requires_python
 def test_rating_batch_status_counts(server, make_conv_zip):
     conv = make_conversation(title='rvバッチstatus会話')
     _import_zip(server, make_conv_zip, [conv], name='rv4.zip')

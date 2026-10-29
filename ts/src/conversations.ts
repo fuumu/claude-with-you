@@ -1,23 +1,33 @@
 /**
- * TS-1 リング3: 会話ログ REST（/api/conversations*）。
- * main.py の api_conversations_search / index / get /
- * annotations / share / view / rating と同一契約。
+ * TS-1 リング3 / TS-FULL ステップ3: 会話ログ REST（/api/conversations*・/api/conv-artifacts*）。
+ * main.py の api_conversations_search / index / index_rebuild / cleanup_empty / get /
+ * annotations / share / view / rating / title / conv_artifacts と同一契約（v3.99）。
+ * digest は rest-llm.ts、redact は TS-FULL ステップ7。
  *
- * digest（POST /api/conversations/<uuid>/digest）はローカルLLM連携が必要な
- * ためリング5まで Python 転送のまま（このモジュールは担当しない）。
- *
- * index/rebuild も 2026-09-28 から Python 転送。TS 版は v3.70 相当で止まっており、
- * v3.85 以降の model/hidden 保全・v3.96 以降のタイトル改善/participants 抽出が
- * 抜けていた（プロキシ経由だと Python 側の修正が一切効かなかった）。
+ * ステップ3 で v3.70 以降に Python 側だけ進んでいた差を揃えた: 検索の AND 化（v3.81）・
+ * individual フィルタ（v3.96）・一覧の hidden 除外と include_hidden（v3.79）・rating 変更の oplog。
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { extractBearer, verifyToken } from './auth.js';
-import { ConvMeta, CONVERSATIONS_DIR, DATA_ROOT, loadConvIndex } from './data.js';
+import {
+  CONV_ARTIFACTS_DIR,
+  extractModelFromConv,
+  extractParticipants,
+  improveConvTitle,
+  isDefaultTitle,
+  loadConvArtifactsIndex,
+  msgText,
+} from './conv-import.js';
+import { ConvMeta, CONVERSATIONS_DIR, DATA_DIR, DATA_ROOT, loadAllEntries, loadConvIndex } from './data.js';
 import { readBodyText as readRequestBody } from './http-body.js';
-import { jstIsoFromMs } from './write.js';
+import { logError, logInfo } from './llm.js';
+import { cpSlice, isDict, pyGet, pyOr, pyStr, pyStrip, pyTruthy } from './py-compat.js';
+import { allTermsIn, queryTerms } from './search.js';
+import { bodyMatchTerms, individualMatch } from './tools-conversation.js';
+import { appendOplog, jstIsoFromMs, nowJst, rebuildIndex } from './write.js';
 
 const ANNOTATIONS_DIR = path.join(DATA_ROOT, 'annotations');
 const SHARE_TOKENS_FILE = path.join(DATA_ROOT, 'share_tokens.json');
@@ -67,58 +77,27 @@ function sortDescByUpdated(index: ConvMeta[]): ConvMeta[] {
   });
 }
 
-/** チャットメッセージ本文の抽出（main.py の content/text フォールバックと同じ truthy 判定） */
-function messageText(m: Record<string, unknown>): string {
-  const content =
-    (Array.isArray(m.content) ? (m.content.length > 0 ? m.content : null) : m.content) ||
-    m.text ||
-    '';
-  if (Array.isArray(content)) {
-    return content
-      .filter((c) => c && typeof c === 'object' && (c as { type?: string }).type === 'text')
-      .map((c) => String((c as { text?: string }).text ?? ''))
-      .join(' ');
-  }
-  return String(content);
-}
-
 function convRatingMatch(entry: ConvMeta, ratingFilter: string): boolean {
   const r = entry.rating || ((entry as Record<string, unknown>).rating_source ? 'safe' : '');
   if (ratingFilter === 'safe') return r === 'safe';
   return r === ratingFilter;
 }
 
-function convMatchesBody(entry: ConvMeta, q: string): boolean {
-  if ((String(entry.title ?? '') + ' ' + String(entry.uuid ?? '')).toLowerCase().includes(q)) {
-    return true;
-  }
-  const fpath = convPath(String(entry.uuid));
-  if (!fs.existsSync(fpath)) return false;
-  try {
-    const conv = JSON.parse(fs.readFileSync(fpath, 'utf-8'));
-    for (const m of conv.chat_messages ?? []) {
-      if (messageText(m).toLowerCase().includes(q)) return true;
-    }
-  } catch {
-    /* 壊れたファイルは不一致扱い */
-  }
-  return false;
-}
-
-/** GET /api/conversations/ — 検索（q / from / to / limit / body_search / rating） */
+/** GET /api/conversations/ — 検索（q は空白区切りの AND / from / to / limit / body_search / individual / rating） */
 function handleSearch(res: http.ServerResponse, url: URL): void {
-  const q = (url.searchParams.get('q') ?? '').toLowerCase();
+  const terms = queryTerms((url.searchParams.get('q') ?? '').toLowerCase());
   const from = url.searchParams.get('from') ?? '';
   const to = url.searchParams.get('to') ?? '';
   const limitParam = url.searchParams.get('limit');
   const limit = Math.min(limitParam === null ? 20 : parseInt(limitParam, 10), 1200);
   const bodySearch = (url.searchParams.get('body_search') ?? 'false').toLowerCase() === 'true';
   const ratingFilter = url.searchParams.get('rating') ?? '';
+  const individual = url.searchParams.get('individual') ?? '';
 
   let index = loadConvIndex();
-  if (q && !bodySearch) {
+  if (terms.length > 0 && !bodySearch) {
     index = index.filter((e) =>
-      (String(e.title ?? '') + ' ' + String(e.uuid ?? '')).toLowerCase().includes(q),
+      allTermsIn(terms, (String(e.title ?? '') + ' ' + String(e.uuid ?? '')).toLowerCase()),
     );
   }
   if (from) {
@@ -130,14 +109,17 @@ function handleSearch(res: http.ServerResponse, url: URL): void {
   if (ratingFilter) {
     index = index.filter((e) => convRatingMatch(e, ratingFilter));
   }
-  if (q && bodySearch) {
-    index = index.filter((e) => convMatchesBody(e, q));
+  if (terms.length > 0 && bodySearch) {
+    index = index.filter((e) => bodyMatchTerms(e, terms));
+  }
+  if (individual) {
+    index = index.filter((e) => individualMatch(e, individual));
   }
   sortDescByUpdated(index);
   sendJson(res, 200, index.slice(0, limit));
 }
 
-/** GET /api/conversations/index — タイトル一覧（search / limit / offset / rating） */
+/** GET /api/conversations/index — タイトル一覧（search / limit / offset / include_hidden / individual / rating） */
 function handleIndex(res: http.ServerResponse, url: URL): void {
   const search = (url.searchParams.get('search') ?? '').toLowerCase();
   const limitParam = url.searchParams.get('limit');
@@ -145,12 +127,20 @@ function handleIndex(res: http.ServerResponse, url: URL): void {
   const limit = Math.min(limitParam === null ? 50 : parseInt(limitParam, 10), 500);
   const offset = Math.max(offsetParam === null ? 0 : parseInt(offsetParam, 10), 0);
   const ratingFilter = url.searchParams.get('rating') ?? '';
+  const includeHidden = ['true', '1'].includes((url.searchParams.get('include_hidden') ?? '').toLowerCase());
+  const individual = url.searchParams.get('individual') ?? '';
 
   let index = loadConvIndex();
+  if (!includeHidden) {
+    index = index.filter((e) => !e.hidden);
+  }
   if (search) {
     index = index.filter((e) =>
       (String(e.title ?? '') + ' ' + String(e.uuid ?? '')).toLowerCase().includes(search),
     );
+  }
+  if (individual) {
+    index = index.filter((e) => individualMatch(e, individual));
   }
   if (ratingFilter) {
     index = index.filter((e) => convRatingMatch(e, ratingFilter));
@@ -266,8 +256,259 @@ async function handleRating(
     }
   }
   saveConvIndex(index);
+  logInfo(`conversation rating: ${uuid} -> ${rating} (source=${source})`);
+  appendOplog('conv_rating', uuid, null, { uuid, rating, source, reason });
   sendJson(res, 200, { uuid, rating: rating !== 'safe' ? rating : null,
     rating_reason: reason, rating_source: source });
+}
+
+/**
+ * POST /api/conversations/index/rebuild — 会話ファイルから _index.json を作り直す（main.py v3.99）。
+ * model の補完（v3.85）・既定タイトルの自動改善（v3.96）・participants（v3.96）は会話ファイルにも書き戻す。
+ * hidden は会話ファイルに無いので旧インデックスから引き継ぐ（v3.79）。
+ * main.py との差: {uuid}_digest*.json・{uuid}_redacted.json のキャッシュは会話として数えない
+ * （main.py はこれも会話として読み、model を書き込んだうえで重複エントリを作っていた）
+ */
+function handleIndexRebuild(res: http.ServerResponse): void {
+  let rebuilt = 0;
+  let modelBackfilled = 0;
+  let titlesImproved = 0;
+  let titlesDefault = 0;
+  let titlesNoAuto = 0;
+  const debugNoAuto: Record<string, unknown>[] = [];
+  const newIndex: ConvMeta[] = [];
+  const oldIndex = new Map(loadConvIndex().map((e) => [e.uuid, e]));
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(CONVERSATIONS_DIR);
+  } catch {
+    files = [];
+  }
+  for (const fname of files) {
+    if (!fname.endsWith('.json') || fname.startsWith('_')) continue;
+    if (/_(digest|digest_safe|redacted)\.json$/.test(fname)) continue;
+    const fpath = path.join(CONVERSATIONS_DIR, fname);
+    let conv: Record<string, unknown>;
+    try {
+      conv = JSON.parse(fs.readFileSync(fpath, 'utf-8'));
+      if (!isDict(conv)) continue;
+    } catch {
+      continue;
+    }
+    const uidRaw = pyOr(conv.uuid, pyGet(conv, 'id', ''));
+    const uid = pyTruthy(uidRaw) ? String(uidRaw) : fname.slice(0, -5);
+    if (!pyTruthy(conv.model)) {
+      const extracted = extractModelFromConv(conv);
+      if (extracted) {
+        conv.model = extracted;
+        try {
+          writeJson(fpath, conv);
+        } catch {
+          /* main.py と同じく書き戻し失敗は無視 */
+        }
+        modelBackfilled++;
+      }
+    }
+    let title = pyStr(pyOr(conv.name, conv.title, cpSlice(uid, 8)));
+    let dirty = false;
+    const improved = improveConvTitle(conv);
+    if (isDefaultTitle(title)) {
+      titlesDefault++;
+      if (!improved) {
+        titlesNoAuto++;
+        let firstUser: Record<string, unknown> | null = null;
+        for (const m of (Array.isArray(conv.chat_messages) ? conv.chat_messages : []).slice(0, 5)) {
+          if (!isDict(m)) continue;
+          const r = pyOr(m.sender, m.role, '');
+          if (r === 'human' || r === 'user') {
+            firstUser = { role: r, text_preview: cpSlice(msgText(m), 60), keys: Object.keys(m).slice(0, 8) };
+            break;
+          }
+        }
+        if (debugNoAuto.length < 10) {
+          debugNoAuto.push({
+            uuid: cpSlice(uid, 8),
+            name: pyGet(conv, 'name', null),
+            title_field: pyGet(conv, 'title', null),
+            msgs: Array.isArray(conv.chat_messages) ? conv.chat_messages.length : 0,
+            first_user: firstUser,
+          });
+        }
+        logInfo(`rebuild: default title but no auto: ${cpSlice(uid, 8)}`);
+      }
+    }
+    if (improved) {
+      title = improved;
+      titlesImproved++;
+      if (pyTruthy(conv.name)) conv.name = improved;
+      else conv.title = improved;
+      dirty = true;
+    }
+    const participants = extractParticipants(conv);
+    if (participants.length > 0 && JSON.stringify(conv.participants) !== JSON.stringify(participants)) {
+      conv.participants = participants;
+      dirty = true;
+    }
+    if (dirty) {
+      try {
+        writeJson(fpath, conv);
+      } catch (e) {
+        logError(`rebuild: failed to write back ${cpSlice(uid, 8)}: ${(e as Error).message}`);
+      }
+    }
+    const meta: ConvMeta = {
+      uuid: uid,
+      title,
+      created_at: pyGet(conv, 'created_at', '') as string,
+      updated_at: pyGet(conv, 'updated_at', pyGet(conv, 'created_at', '')) as string,
+      message_count: Array.isArray(conv.chat_messages) ? conv.chat_messages.length : 0,
+    };
+    if (participants.length > 0) meta.participants = participants;
+    for (const k of ['rating', 'rating_reason', 'rating_source', 'rating_skip_reason', 'model', 'source']) {
+      if (pyTruthy(conv[k])) meta[k] = conv[k];
+    }
+    if (oldIndex.get(uid)?.hidden) meta.hidden = true;
+    newIndex.push(meta);
+    rebuilt++;
+  }
+  sortDescByUpdated(newIndex);
+  saveConvIndex(newIndex);
+  const participantsFilled = newIndex.filter((e) => pyTruthy(e.participants)).length;
+  logInfo(`conversations_index_rebuild: rebuilt=${rebuilt} model_backfilled=${modelBackfilled} ` +
+    `titles_improved=${titlesImproved} titles_default=${titlesDefault} titles_no_auto=${titlesNoAuto} ` +
+    `participants_filled=${participantsFilled}`);
+  const result: Record<string, unknown> = {
+    rebuilt,
+    model_backfilled: modelBackfilled,
+    titles_improved: titlesImproved,
+    titles_default: titlesDefault,
+    titles_no_auto: titlesNoAuto,
+    participants_filled: participantsFilled,
+  };
+  if (debugNoAuto.length > 0) result.debug_no_auto = debugNoAuto;
+  sendJson(res, 200, result);
+}
+
+/**
+ * POST /api/conversations/cleanup-empty — 空ログを hidden にする（main.py v3.79）。
+ * rating_skip_reason が no_text / empty で、タイトルが hex 8 文字だけのもの。dry_run なら変えない
+ */
+async function handleCleanupEmpty(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  let dryRun = false;
+  if (/application\/json/i.test(String(req.headers['content-type'] ?? ''))) {
+    try {
+      const d = JSON.parse(await readRequestBody(req)) as unknown;
+      dryRun = pyTruthy(pyGet(d, 'dry_run', false));
+    } catch {
+      sendJson(res, 400, { error: 'invalid JSON' });
+      return;
+    }
+  }
+  const index = loadConvIndex();
+  const actions: Record<string, unknown>[] = [];
+  for (const e of index) {
+    if (e.hidden) continue;
+    const skipReason = pyGet(e, 'rating_skip_reason', '');
+    const title = pyGet(e, 'title', '');
+    if (skipReason !== 'no_text' && skipReason !== 'empty') continue;
+    if (typeof title !== 'string' || !/^[0-9a-f]{8}$/.test(title)) continue;
+    actions.push({ uuid: pyGet(e, 'uuid', ''), title, skip_reason: skipReason });
+    if (!dryRun) e.hidden = true;
+  }
+  if (!dryRun && actions.length > 0) {
+    saveConvIndex(index);
+    logInfo(`conversations cleanup-empty: hidden ${actions.length} entries`);
+  }
+  sendJson(res, 200, { dry_run: dryRun, hidden_count: actions.length, entries: actions.slice(0, 50),
+    total_matched: actions.length });
+}
+
+/**
+ * PATCH /api/conversations/<uuid>/title — タイトル変更（main.py v3.96）。
+ * 会話ファイル・_index.json・対応する「[会話] …」の ExtMemory エントリを同時に更新する
+ */
+async function handleTitle(req: http.IncomingMessage, res: http.ServerResponse, uuid: string): Promise<void> {
+  if (!safeUuid(uuid) || !fs.existsSync(convPath(uuid))) {
+    sendJson(res, 404, { error: 'not found' });
+    return;
+  }
+  let data: unknown = {};
+  try {
+    data = JSON.parse(await readRequestBody(req));
+  } catch {
+    data = {};
+  }
+  const raw = pyGet(data, 'title', '');
+  const newTitle = pyStrip(pyTruthy(raw) ? pyStr(raw) : '');
+  if (!newTitle) {
+    sendJson(res, 400, { error: 'title is required' });
+    return;
+  }
+  const fpath = convPath(uuid);
+  const conv = JSON.parse(fs.readFileSync(fpath, 'utf-8')) as Record<string, unknown>;
+  const oldTitle = pyStr(pyOr(conv.name, conv.title, ''));
+  conv.name = newTitle;
+  if ('title' in conv) conv.title = newTitle;
+  writeJson(fpath, conv);
+  const index = loadConvIndex();
+  for (const m of index) if (m.uuid === uuid) m.title = newTitle;
+  saveConvIndex(index);
+  for (const entry of loadAllEntries()) {
+    if (entry.source_thread === uuid && !entry.deleted && String(entry.title ?? '').startsWith('[会話] ')) {
+      entry.title = `[会話] ${newTitle}`;
+      entry.updated_at = nowJst();
+      writeJson(path.join(DATA_DIR, `${entry.id}.json`), entry);
+    }
+  }
+  rebuildIndex();
+  logInfo(`conversation title: ${uuid} "${oldTitle}" -> "${newTitle}"`);
+  sendJson(res, 200, { uuid, title: newTitle, old_title: oldTitle });
+}
+
+/**
+ * GET /api/conv-artifacts（q は AND 検索）・GET /api/conv-artifacts/<uuid>/<path> — インポート時に
+ * 会話の tool_use から取り出したファイル（main.py と同一契約）。
+ * main.py との差: ファイルのパスは conv_artifacts の外を指せない（main.py は .. を通していた）
+ */
+export function handleConvArtifacts(req: http.IncomingMessage, res: http.ServerResponse, url: URL): boolean {
+  const p = url.pathname;
+  if (req.method !== 'GET' || !(p === '/api/conv-artifacts' || p.startsWith('/api/conv-artifacts/'))) return false;
+  if (!verifyToken(extractBearer(req, url))) {
+    sendJson(res, 401, { error: 'unauthorized' });
+    return true;
+  }
+  if (p === '/api/conv-artifacts') {
+    const terms = queryTerms((url.searchParams.get('q') ?? '').toLowerCase());
+    let index = loadConvArtifactsIndex();
+    if (terms.length > 0) {
+      index = index.filter((e) =>
+        allTermsIn(terms, `${pyStr(pyGet(e, 'filename', ''))} ${pyStr(pyGet(e, 'conv_name', ''))}`.toLowerCase()));
+    }
+    sendJson(res, 200, index);
+    return true;
+  }
+  const m = /^\/api\/conv-artifacts\/([^/]+)\/(.+)$/.exec(p);
+  if (!m) {
+    sendJson(res, 404, { error: 'not found' });
+    return true;
+  }
+  let convUuid: string;
+  let filename: string;
+  try {
+    convUuid = decodeURIComponent(m[1]);
+    filename = m[2].split('/').map(decodeURIComponent).join('/');
+  } catch {
+    sendJson(res, 404, { error: 'not found' });
+    return true;
+  }
+  const base = path.resolve(CONV_ARTIFACTS_DIR);
+  const fpath = path.resolve(base, convUuid, filename);
+  if (!fpath.startsWith(base + path.sep) || !fs.existsSync(fpath) || !fs.statSync(fpath).isFile()) {
+    sendJson(res, 404, { error: 'not found' });
+    return true;
+  }
+  sendJson(res, 200, { conv_uuid: convUuid, filename, content: fs.readFileSync(fpath, 'utf-8') });
+  return true;
 }
 
 /**
@@ -298,12 +539,19 @@ export async function handleConversations(
     route = { handle: () => handleSearch(res, url) };
   } else if (p === '/api/conversations/index' && method === 'GET') {
     route = { handle: () => handleIndex(res, url) };
+  } else if (p === '/api/conversations/index/rebuild' && method === 'POST') {
+    route = { handle: () => handleIndexRebuild(res) };
+  } else if (p === '/api/conversations/cleanup-empty' && method === 'POST') {
+    route = { handle: () => handleCleanupEmpty(req, res) };
   } else {
     const share = /^\/api\/conversations\/share\/([^/]+)$/.exec(p);
     const annotations = /^\/api\/conversations\/([^/]+)\/annotations$/.exec(p);
     const rating = /^\/api\/conversations\/([^/]+)\/rating$/.exec(p);
+    const title = /^\/api\/conversations\/([^/]+)\/title$/.exec(p);
     const single = /^\/api\/conversations\/([^/]+)$/.exec(p);
-    if (share && method === 'POST') {
+    if (title && method === 'PATCH') {
+      route = { handle: () => handleTitle(req, res, decodeURIComponent(title[1])) };
+    } else if (share && method === 'POST') {
       route = { handle: () => handleShare(req, res, decodeURIComponent(share[1])) };
     } else if (annotations && method === 'GET') {
       route = {
