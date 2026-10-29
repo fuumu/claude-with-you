@@ -294,7 +294,6 @@ def test_rest_rating_batch_mcp_status_only(server):
     assert res['running'] is False
 
 
-@pytest.mark.requires_python
 def test_rest_redact_status_empty(server):
     """GET /api/conversations/redact-status returns empty when no adult convs (v3.69)"""
     r = server.get('/api/conversations/redact-status')
@@ -302,7 +301,6 @@ def test_rest_redact_status_empty(server):
     assert r.json() == []
 
 
-@pytest.mark.requires_python
 def test_rest_redact_requires_adult(server, make_conv_zip):
     """POST redact on non-adult conv returns error (v3.69)"""
     conv = make_conversation(title='redact非adult')
@@ -312,14 +310,12 @@ def test_rest_redact_requires_adult(server, make_conv_zip):
     assert 'adult' in r.json().get('error', '')
 
 
-@pytest.mark.requires_python
 def test_rest_redact_not_found(server):
     """GET redacted for non-existent conv returns 404 (v3.69)"""
     r = server.get(f'/api/conversations/{new_uuid()}/redacted')
     assert r.status_code == 404
 
 
-@pytest.mark.requires_python
 def test_rest_redact_approve_without_generate(server, make_conv_zip):
     """POST approve without generating first returns error (v3.69)"""
     conv = make_conversation(title='redact承認テスト')
@@ -328,7 +324,6 @@ def test_rest_redact_approve_without_generate(server, make_conv_zip):
     assert r.status_code == 400
 
 
-@pytest.mark.requires_python
 def test_rest_redact_status_with_adult(server, make_conv_zip):
     """redact-status shows adult conv after rating (v3.69)"""
     conv = make_conversation(title='redactステータステスト')
@@ -353,3 +348,42 @@ def test_conversation_read_redact_arg(server, make_conv_zip):
     assert res.get('gated') is True
     assert res.get('redacted') is False
     assert 'notice' in res
+
+
+def test_redact_generate_approve_and_reject(server, make_conv_zip):
+    """伏せ字の一連の流れ（v3.69）: 生成（モック LLM は「秘め事」を含む文をマスク）→ 承認 →
+    conversation_read(redact=true) が伏せ字を返す → 本文が変わると承認できない → 差し戻し"""
+    uid = new_uuid()
+    conv = make_conversation(uuid=uid, title='伏せ字フロー', texts=['今日は晴れ。秘め事の話をしよう。', 'うん、聞かせて。'])
+    _import_zip(server, make_conv_zip, [conv], name='redact5.zip')
+    server.patch(f'/api/conversations/{uid}/rating', json={'rating': 'adult', 'rating_reason': 'テスト用'})
+
+    r = server.post(f'/api/conversations/{uid}/redact', json={})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d['mask_ids'] == ['m1-s2'] and d['mask_count'] == 1 and d['total_sentences'] == 3
+    assert d['approved'] is False and d['cached'] is False
+    assert d['redacted_messages'][0]['text'] == '今日は晴れ。●●●'
+    assert server.post(f'/api/conversations/{uid}/redact', json={}).json()['cached'] is True
+
+    assert server.get(f'/api/conversations/{uid}/redacted').json()['approved'] is False
+    st = [s for s in server.get('/api/conversations/redact-status').json() if s['uuid'] == uid][0]
+    assert st['status'] == 'pending_approval' and st['mask_count'] == 1
+    assert server.tool('conversation_read', {'uuid': uid, 'redact': True}).get('redacted') is False
+
+    r = server.post(f'/api/conversations/{uid}/redact/approve')
+    assert r.status_code == 200 and r.json()['approved'] is True and r.json()['mask_count'] == 1
+    read = server.tool('conversation_read', {'uuid': uid, 'redact': True})
+    text = json.dumps(read, ensure_ascii=False)
+    assert read.get('redacted') is True and '●●●' in text and '秘め事' not in text
+
+    conv2 = make_conversation(uuid=uid, title='伏せ字フロー',
+                              texts=['今日は晴れ。秘め事の話をしよう。', 'うん、聞かせて。', '続き。'])
+    _import_zip(server, make_conv_zip, [conv2], name='redact6.zip')
+    r = server.post(f'/api/conversations/{uid}/redact/approve')
+    assert r.status_code == 400 and 'changed' in r.json()['error']
+    assert server.post(f'/api/conversations/{uid}/redact', json={}).json()['cached'] is False
+
+    assert server.post(f'/api/conversations/{uid}/redact/reject').json() == {'uuid': uid, 'rejected': True}
+    assert server.get(f'/api/conversations/{uid}/redacted').status_code == 404
+    assert server.post(f'/api/conversations/{uid}/redact/reject').status_code == 404

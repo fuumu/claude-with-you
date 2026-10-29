@@ -25,6 +25,8 @@ import { handleAdminRest } from './rest-admin.js';
 import { handleFriendsRest } from './rest-friends.js';
 import { handleImportRest } from './rest-import.js';
 import { handleMediaRest } from './rest-media.js';
+import { handleRedactRest } from './redact.js';
+import { startNightlyScheduler } from './scheduler.js';
 import { handleStatic } from './static.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
@@ -285,6 +287,8 @@ const server = http.createServer((req, res) => {
       }
       // リング5: LLM 依存 REST（digest / batch / rating-batch / llm-status）
       if (await handleLlmRest(req, res, parsed)) return;
+      // TS-FULL ステップ7: 伏せ字の生成・承認（conversations REST より先に判定）
+      if (await handleRedactRest(req, res, parsed)) return;
       // リング3: conversations REST（認証はハンドラ内。digest は上の handleLlmRest が先に処理）
       if (parsed.pathname.startsWith('/api/conversations')) {
         if (await handleConversations(req, res, parsed)) return;
@@ -327,3 +331,7 @@ server.listen(PORT, '127.0.0.1', () => {
       : `mio-memory-ts v${VERSION}: 127.0.0.1:${PORT} (standalone, no upstream)`,
   );
 });
+
+// 夜間バッチ。Python を後ろに置いた構成では Python 側の夜間バッチが同じ時刻に動くので、
+// 二重起動を避けて TS 単体（MIO_UPSTREAM=off）のときだけ回す
+if (!UPSTREAM_ENABLED) startNightlyScheduler();

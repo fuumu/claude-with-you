@@ -7,6 +7,7 @@
 > **Progress (2026-10-30)**: item 4 (admin REST) is done in `ts-full-step4` — old search, dedup-scan, cleanup-empty, oplog, share tokens, projects, attendance, export/backup. The legacy path-token API and symbolic were removed from both servers. A Python/TS REST differential test also caught lag in already-ported routes (hsearch, body_length, manifest guard), now fixed.
 > **Progress (2026-10-30)**: item 5 (album / uploads REST) is done in `ts-full-step5`.
 > **Progress (2026-10-30)**: item 6 (friend REST, serving the five HTML pages) is done in `ts-full-step6`.
+> **Progress (2026-10-30)**: item 7 (nightly scheduler, redaction generation) is done in `ts-full-step7`. Only item 8 (seed, compose, retiring Python) is left.
 
 Premise: after TS-1, all 38 MCP tools are TS-native (no handler in `tools.ts` returns `FORWARD`).
 However, the TS front (`ts/src/index.ts`) transparently forwards **everything it does not handle** to Python,
