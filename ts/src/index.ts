@@ -22,8 +22,10 @@ import { readBodyText as readRequestBody } from './http-body.js';
 import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
 import { handleAdminRest } from './rest-admin.js';
+import { handleFriendsRest } from './rest-friends.js';
 import { handleImportRest } from './rest-import.js';
 import { handleMediaRest } from './rest-media.js';
+import { handleStatic } from './static.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
@@ -251,6 +253,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // TS-FULL ステップ6: HTML ページ（admin.html ほか 5 ページ）
+  if (handleStatic(req, res, parsed)) {
+    return;
+  }
+
   // リング1: 読み取り系 REST を TS がネイティブ応答
   if (handleNative(req, res, parsed)) {
     return;
@@ -289,6 +296,8 @@ const server = http.createServer((req, res) => {
       if (await handleAdminRest(req, res, parsed)) return;
       // TS-FULL ステップ5: アルバム・アップロードの REST
       if (await handleMediaRest(req, res, parsed)) return;
+      // TS-FULL ステップ6: 友達 REST（登録・承認・メール。友達の MCP セッションは mcp.ts）
+      if (await handleFriendsRest(req, res, parsed)) return;
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
       if (!UPSTREAM_ENABLED) {

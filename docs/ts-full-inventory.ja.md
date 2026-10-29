@@ -6,6 +6,7 @@
 > **進捗（2026-10-30）**: 3（インポート一式）は `ts-full-step3` で完了 — インポート 6 ルート・`index/rebuild`・`cleanup-empty`（会話）・タイトル変更・`conv-artifacts`。会話 REST の TS 側の遅れ（AND 検索・individual・hidden・oplog）も解消。
 > **進捗（2026-10-30）**: 4（管理 REST）は `ts-full-step4` で完了 — 旧検索・dedup-scan・cleanup-empty・oplog・共有トークン・projects・attendance・export/backup。旧パス埋め込みトークン API と symbolic は両サーバーから削除。Python と TS の REST 差分テストで、既に移植済みだったルートの遅れ（hsearch・body_length・manifest ガード）も解消。
 > **進捗（2026-10-30）**: 5（album / uploads REST）は `ts-full-step5` で完了。
+> **進捗（2026-10-30）**: 6（友達 REST・HTML 5 ページの配信）は `ts-full-step6` で完了。
 
 前提：TS-1 で MCP ツール 38/38 は TS ネイティブ（`tools.ts` に `FORWARD` を返すハンドラーは残っていない）。
 ただし TS 前段（`ts/src/index.ts`）は「担当外のリクエストは全部 Python へ透過転送」する作りなので、

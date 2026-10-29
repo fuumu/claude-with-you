@@ -21,7 +21,7 @@ import {
 } from './inbox.js';
 import { nowJst, writeJson } from './write.js';
 
-const FRIENDS_DIR = path.join(DATA_ROOT, 'friends');
+export const FRIENDS_DIR = path.join(DATA_ROOT, 'friends');
 const FRIENDS_REGISTRY_FILE = path.join(FRIENDS_DIR, 'registry.json');
 const FRIEND_CORE_FILE = path.join(DATA_ROOT, 'friend_core.md');
 
@@ -35,10 +35,11 @@ export interface Friend {
   [key: string]: unknown;
 }
 
-type Registry = Record<string, Friend>;
+export type Registry = Record<string, Friend>;
 type Json = Record<string, unknown>;
 
-function loadRegistry(): Registry {
+/** /data/friends/registry.json（トークン → 友達）。REST の rest-friends.ts と共用 */
+export function loadRegistry(): Registry {
   try {
     return JSON.parse(fs.readFileSync(FRIENDS_REGISTRY_FILE, 'utf-8')) as Registry;
   } catch {
@@ -46,7 +47,7 @@ function loadRegistry(): Registry {
   }
 }
 
-function saveRegistry(reg: Registry): void {
+export function saveRegistry(reg: Registry): void {
   fs.mkdirSync(FRIENDS_DIR, { recursive: true });
   writeJson(FRIENDS_REGISTRY_FILE, reg);
 }
