@@ -927,8 +927,6 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = _extract_bearer(request)
-        if not token and request.view_args:
-            token = request.view_args.get('path_token', '')
         if not _verify_token(token):
             abort(401)
         return f(*args, **kwargs)
@@ -1762,22 +1760,6 @@ def get_index():
         return jsonify(_random_index_sample(index, rnd, request.args.get('filter') == 'summarized'))
     return jsonify([e for e in index if not e.get('deleted')])
 
-@app.route('/api/memories/symbolic')
-@require_auth
-def api_memories_symbolic():
-    """全エントリの3層シンボリック圧縮一覧（M3）。symbolic が空のものは除外。
-    読み取り専用。用途: 俯瞰して似たエントリを束ねる・カスケード入口"""
-    index = []
-    if os.path.exists(INDEX_FILE):
-        with open(INDEX_FILE) as f:
-            index = json.load(f)
-    items = [
-        {'id': e.get('id'), 'title': e.get('title') or '', 'symbolic': e.get('symbolic')}
-        for e in index
-        if not e.get('deleted') and (e.get('symbolic') or '').strip()
-    ]
-    return jsonify(items)
-
 @app.route('/api/memory/reindex', methods=['POST'])
 @require_auth
 def api_memory_reindex():
@@ -2150,23 +2132,6 @@ def api_memory_cleanup_empty():
         'entries': actions,
     })
 
-
-# URLパス埋め込みトークン（後方互換）
-@app.route('/api/<path_token>/memory/index')
-@require_auth
-def get_index_path(path_token): return get_index()
-
-@app.route('/api/<path_token>/memory/search')
-@require_auth
-def search_path(path_token): return search()
-
-@app.route('/api/<path_token>/memory/<entry_id>', methods=['GET'])
-@require_auth
-def get_entry_path(path_token, entry_id): return get_entry(entry_id)
-
-@app.route('/api/<path_token>/memory', methods=['POST'])
-@require_auth
-def create_entry_path(path_token): return create_entry()
 
 # ── UserCoreMemory REST API ───────────────────────────────────────────
 

@@ -219,7 +219,6 @@ def test_rest_hsearch_include_conversations(server):
     assert 'conversations' in d and 'conversations_total' in d
 
 
-@pytest.mark.requires_python
 def test_rest_export_zip(server):
     r = server.get('/api/export')
     assert r.status_code == 200
@@ -234,3 +233,20 @@ def test_rest_reindex(server):
 def test_import_status(server):
     r = server.get('/api/import-status')
     assert r.status_code == 200
+
+
+def test_rest_hsearch_author_and_search_layer(server):
+    """REST hsearch も author / search_layer を受ける（v3.81。TS は TS-FULL ステップ4 で対応）"""
+    server.tool('memory_upsert', {'id': 'ts0_hs_layer', 'title': 'レイヤー検索',
+                                  'body': '## 2層: 要約\n蜃気楼の要約\n\n## 3層: シンボリック圧縮\n🌫'})
+    d = server.get('/api/memory/hsearch?q=蜃気楼&author=nobody-xyz').json()
+    assert d['total'] == 0
+    d = server.get('/api/memory/hsearch?q=蜃気楼&search_layer=summary').json()
+    assert [r['match_layer'] for r in d['results'] if r['id'] == 'ts0_hs_layer'] == ['summary']
+
+
+def test_index_body_length_counts_code_points(server):
+    """index.json の body_length は Python の len() と同じくコードポイント数（絵文字を 2 と数えない）"""
+    server.tool('memory_upsert', {'id': 'ts0_body_len', 'title': '長さ', 'body': '🍎🍏ab'})
+    hit = [e for e in server.get('/api/memory/index').json() if e['id'] == 'ts0_body_len']
+    assert hit[0]['body_length'] == 4

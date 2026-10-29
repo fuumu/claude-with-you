@@ -1,11 +1,14 @@
 /**
- * ZIP の読み取り（依存なし・node:zlib のみ）。インポート（POST /import ほか）で
- * アップロードされた ZIP をメモリ上で読む。main.py は zipfile で一時ディレクトリへ展開していた。
+ * ZIP の読み書き（依存なし・node:zlib のみ）。インポート（POST /import ほか）で
+ * アップロードされた ZIP をメモリ上で読み、バックアップ（GET /api/export）を書く。
+ * main.py は zipfile で一時ディレクトリへ展開していた。
  *
+ * 読み取り:
  * - 中央ディレクトリから一覧を作る（ZIP64 の EOCD・拡張フィールドにも対応）
  * - 圧縮方式は stored（0）と deflate（8）。それ以外は ZipError
  * - 展開時に CRC32 を検証する（zipfile と同じく不一致は壊れた ZIP 扱い）
  * - 大きいエントリ（conversations.json）はストリームでも読める
+ * 書き込み: deflate。エントリ数・オフセットが ZIP の上限を超えたときだけ ZIP64 にする
  */
 import zlib from 'node:zlib';
 
@@ -163,4 +166,101 @@ export async function* zipEntryChunks(buf: Buffer, e: ZipEntry): AsyncGenerator<
     throw new ZipError(`unsupported compression method ${e.method}: ${e.name}`);
   }
   if (crc !== e.crc) throw new ZipError(`bad CRC: ${e.name}`);
+}
+
+// ── 書き込み ─────────────────────────────────────────────────────────
+
+export interface ZipInput {
+  name: string;
+  data: Buffer;
+  /** 省略時は現在時刻 */
+  mtime?: Date;
+}
+
+/** MS-DOS 形式の時刻・日付（ローカル時刻。zipfile と同じ） */
+function dosDateTime(d: Date): [number, number] {
+  const year = Math.max(1980, d.getFullYear());
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
+  const date = ((year - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  return [time, date];
+}
+
+/** ファイル群から ZIP（deflate）を組み立てる */
+export function buildZip(files: ZipInput[]): Buffer {
+  const parts: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(f.name, 'utf-8');
+    const comp = zlib.deflateRawSync(f.data);
+    if (f.data.length > MAX32 - 1 || comp.length > MAX32 - 1) throw new ZipError(`file too large: ${f.name}`);
+    const crc = crc32(f.data);
+    const [time, date] = dosDateTime(f.mtime ?? new Date());
+    const flags = /[^\x00-\x7f]/.test(f.name) ? 0x0800 : 0; // UTF-8 名
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(SIG_LOCAL, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(flags, 6);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(comp.length, 18);
+    local.writeUInt32LE(f.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    // オフセットが 4GB を超えたら中央ディレクトリ側だけ ZIP64 拡張に入れる
+    const zip64Offset = offset > MAX32 - 1;
+    const extra = Buffer.alloc(zip64Offset ? 12 : 0);
+    if (zip64Offset) {
+      extra.writeUInt16LE(0x0001, 0);
+      extra.writeUInt16LE(8, 2);
+      extra.writeBigUInt64LE(BigInt(offset), 4);
+    }
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(SIG_CENTRAL, 0);
+    cd.writeUInt16LE(zip64Offset ? 45 : 20, 4);
+    cd.writeUInt16LE(zip64Offset ? 45 : 20, 6);
+    cd.writeUInt16LE(flags, 8);
+    cd.writeUInt16LE(8, 10);
+    cd.writeUInt16LE(time, 12);
+    cd.writeUInt16LE(date, 14);
+    cd.writeUInt32LE(crc, 16);
+    cd.writeUInt32LE(comp.length, 20);
+    cd.writeUInt32LE(f.data.length, 24);
+    cd.writeUInt16LE(name.length, 28);
+    cd.writeUInt16LE(extra.length, 30);
+    cd.writeUInt32LE(0, 38);
+    cd.writeUInt32LE(zip64Offset ? MAX32 : offset, 42);
+    central.push(cd, name, extra);
+    parts.push(local, name, comp);
+    offset += local.length + name.length + comp.length;
+  }
+  const cdBuf = Buffer.concat(central);
+  const needZip64 = files.length >= MAX16 || offset > MAX32 - 1 || cdBuf.length > MAX32 - 1;
+  const tail: Buffer[] = [];
+  if (needZip64) {
+    const e64 = Buffer.alloc(56);
+    e64.writeUInt32LE(SIG_EOCD64, 0);
+    e64.writeBigUInt64LE(44n, 4);
+    e64.writeUInt16LE(45, 12);
+    e64.writeUInt16LE(45, 14);
+    e64.writeBigUInt64LE(BigInt(files.length), 24);
+    e64.writeBigUInt64LE(BigInt(files.length), 32);
+    e64.writeBigUInt64LE(BigInt(cdBuf.length), 40);
+    e64.writeBigUInt64LE(BigInt(offset), 48);
+    const loc = Buffer.alloc(20);
+    loc.writeUInt32LE(SIG_EOCD64_LOCATOR, 0);
+    loc.writeBigUInt64LE(BigInt(offset + cdBuf.length), 8);
+    loc.writeUInt32LE(1, 16);
+    tail.push(e64, loc);
+  }
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(SIG_EOCD, 0);
+  eocd.writeUInt16LE(needZip64 ? MAX16 : files.length, 8);
+  eocd.writeUInt16LE(needZip64 ? MAX16 : files.length, 10);
+  eocd.writeUInt32LE(needZip64 ? MAX32 : cdBuf.length, 12);
+  eocd.writeUInt32LE(needZip64 ? MAX32 : offset, 16);
+  tail.push(eocd);
+  return Buffer.concat([...parts, cdBuf, ...tail]);
 }

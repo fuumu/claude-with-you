@@ -21,6 +21,7 @@ import { DATA_DIR, DATA_ROOT, loadAllEntries, loadEntry, loadIndexList } from '.
 import { readBodyText as readRequestBody } from './http-body.js';
 import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
+import { handleAdminRest } from './rest-admin.js';
 import { handleImportRest } from './rest-import.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
@@ -109,6 +110,8 @@ function handleNative(req: http.IncomingMessage, res: http.ServerResponse, url: 
       includeLocal: url.searchParams.get('include_local') === 'true',
       includeAdult: url.searchParams.get('include_adult') === 'true',
       includeConversations: url.searchParams.get('include_conversations') === 'true',
+      author: url.searchParams.get('author') ?? '',
+      searchLayer: url.searchParams.get('search_layer') ?? '',
     }));
     return true;
   }
@@ -281,6 +284,8 @@ const server = http.createServer((req, res) => {
       // TS-FULL ステップ3: インポート一式・会話内アーティファクト（認証はハンドラ内）
       if (await handleImportRest(req, res, parsed)) return;
       if (handleConvArtifacts(req, res, parsed)) return;
+      // TS-FULL ステップ4: 管理 REST（oplog・共有・projects・attendance・export/backup・旧検索・掃除系）
+      if (await handleAdminRest(req, res, parsed)) return;
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
       if (!UPSTREAM_ENABLED) {

@@ -630,7 +630,9 @@ An annotation layer for audits and re-experiencing sessions. Design principle:
   message and groups whole-conversation annotations at the top. Numbering is 1-based over
   `chat_messages` (matching `conversation_read`'s No.X)
 
-### symbolic listing API (M3, v3.42)
+### symbolic listing API (M3, v3.42 → removed in TS-FULL step 4)
+
+**Removed (404).** Layer 3 lives in `index.json`'s `symbolic`, available from `GET /api/memory/index`. The original spec follows.
 
 `GET /api/memories/symbolic` returns `{id, title, symbolic}` for all entries from index.json
 (entries with empty symbolic — i.e. layer 3 not yet generated — are excluded; read-only).

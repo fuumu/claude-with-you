@@ -65,7 +65,8 @@ const projectCreate: Handler = (args) => {
   };
 };
 
-const projectList: Handler = () => {
+/** main.py _project_list（MCP project_list と REST GET /api/projects で共用） */
+export function listProjects(): { projects: { name: string; summary: string }[] } {
   if (!fs.existsSync(PROJECTS_DIR)) return { projects: [] };
   const projects: { name: string; summary: string }[] = [];
   for (const entry of fs.readdirSync(PROJECTS_DIR).sort()) {
@@ -91,7 +92,9 @@ const projectList: Handler = () => {
     projects.push({ name: entry, summary });
   }
   return { projects };
-};
+}
+
+const projectList: Handler = () => listProjects();
 
 export const PROJECT_HANDLERS: Record<string, Handler> = {
   project_create: projectCreate,
