@@ -1,4 +1,4 @@
-# memory/skeleton — 新規インストール用スケルトンデータ
+# ts/skeleton — 新規インストール用スケルトンデータ
 
 このディレクトリは、**まっさらな環境に mio-memory を立てたとき**の初期データテンプレートです。
 `memory/data/` は `.gitignore` 対象なので、新規 clone には記憶もルールも一切付いてきません。
@@ -19,7 +19,7 @@ MCP の initialize はクライアントに「セッション開始時に `CoreM
 ## 構成（言語別・v3.44〜）
 
 ```
-memory/skeleton/
+ts/skeleton/              （v4.0 で memory/skeleton/ から移動。Docker イメージでは /app/skeleton）
   README.md              ← このファイル
   coremem/
     ja/                  ← 日本語スケルトン（MIO_SEED_LANG=ja・デフォルト）
@@ -30,7 +30,7 @@ memory/skeleton/
       core_infra.md      ← インフラ情報（host/URL/version 等の記入欄）
       core_history.md    ← 軌跡＋バージョン対応表（最初は空）
       todo.md            ← 残件・TODO 管理（最初は空）
-      protocol_guide.md  ← MCPツール全31本の運用ガイド（install 非依存）
+      protocol_guide.md  ← MCPツール全38本の運用ガイド（install 非依存）
       welcome.md         ← 新規ユーザー向け案内（困ったら接続中のClaudeに聞く）
 ```
 
@@ -55,9 +55,9 @@ ja/ と en/ は**同じファイル名・同じ構造**で、中身の言語だ�
 
 ## シードのされ方（方式A・冪等）
 
-シード機構（次フェーズ実装）は次の契約で動きます：
+シード機構（`ts/src/seed.ts`。v3.43 で実装、v4.0 で TS へ移植）は次の契約で動きます：
 
-1. 起動時、CoreMem（`/data/artifacts/`）に `core.md` 相当が**無い場合のみ**、`coremem/<lang>/*.md`（`MIO_SEED_LANG` で選択）を投入する
+1. 起動時、CoreMem（`/data/artifacts/`）に `core_stable.md` が**無い場合のみ**、`coremem/<lang>/*.md`（`MIO_SEED_LANG` で選択）を投入する
 2. **既存ファイルは絶対に上書きしない**（冪等。再起動しても二重投入しない）
 3. 投入は CoreMem のバージョン管理形式（`versions/{name}/001.md` ＋ シンボリックリンク）で行う
 

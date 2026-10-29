@@ -6,7 +6,7 @@
  * （LM Studio / FreeToken 等）にも Anthropic Messages 互換の `POST {base}/v1/messages` を投げている。
  * ここでも同一プロトコルで叩く（挙動を変えない）。backend='anthropic' は api.anthropic.com。
  *
- * 接続先は Python 側と同じ環境変数: LLM_ENDPOINTS / LM_STUDIO_HOST / LM_STUDIO_PORT /
+ * 接続先は旧 Python 版と同じ環境変数: LLM_ENDPOINTS / LM_STUDIO_HOST / LM_STUDIO_PORT /
  * LLM_OK_MODELS / MIO_LM_MODEL。
  */
 import { nowJst } from './write.js';

@@ -8,6 +8,7 @@
 > **Progress (2026-10-30)**: item 5 (album / uploads REST) is done in `ts-full-step5`.
 > **Progress (2026-10-30)**: item 6 (friend REST, serving the five HTML pages) is done in `ts-full-step6`.
 > **Progress (2026-10-30)**: item 7 (nightly scheduler, redaction generation) is done in `ts-full-step7`. Only item 8 (seed, compose, retiring Python) is left.
+> **Done (2026-10-30)**: item 8 (seed, compose, retiring Python) is done in `ts-full-step8` — the `legacy-python` branch was cut first, then all Python was removed: v4.0 is TypeScript only. This document stays as the record of the finished migration (the body below is the v3.99-era investigation).
 
 Premise: after TS-1, all 38 MCP tools are TS-native (no handler in `tools.ts` returns `FORWARD`).
 However, the TS front (`ts/src/index.ts`) transparently forwards **everything it does not handle** to Python,

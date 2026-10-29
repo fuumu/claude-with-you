@@ -1,10 +1,9 @@
 /**
- * TS-FULL ステップ6: HTML ページの配信（main.py の send_from_directory と同じ 5 ページ）。
+ * HTML ページの配信（TS-FULL ステップ6。旧 main.py の send_from_directory と同じ 5 ページ）。
  *   /admin.html  /logs.html  /share.html  /register（.html）  /activate（.html）
- * 認証はページ側（API 呼び出し時）で行うので、ページ自体は誰でも取れる（main.py と同じ）。
+ * 認証はページ側（API 呼び出し時）で行うので、ページ自体は誰でも取れる（旧 main.py と同じ）。
  *
- * 置き場所は MIO_STATIC_DIR、なければ ts/public/（Docker イメージ）→ memory/app/（Python 退避前の
- * リポジトリ）の順に探す。どこにも無ければ false を返し、TS 前段構成では Python に任せる。
+ * 置き場所は MIO_STATIC_DIR、なければ ts/public/（Docker イメージでは /app/public）。
  */
 import fs from 'node:fs';
 import type http from 'node:http';
@@ -25,7 +24,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const CANDIDATES = [
   process.env.MIO_STATIC_DIR,
   path.join(here, '..', 'public'),
-  path.join(here, '..', '..', 'memory', 'app'),
 ].filter((d): d is string => !!d);
 
 function findPage(name: string): string | null {

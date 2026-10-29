@@ -1,8 +1,8 @@
 {
   "name": "mio-memory-ts",
-  "version": "0.1.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "TS-1 strangler ring 0: TypeScript reverse proxy in front of the Python mio-memory server",
+  "description": "mio-memory: external-memory MCP server (TypeScript, v4.0+)",
   "type": "module",
   "scripts": {
     "build": "tsc",

@@ -1,5 +1,7 @@
 # MIO サーバー TypeScript 完全移行 移行計画書
 
+> **v4.0 注記（2026-10-30）:** この計画は TS-1（リング0〜5）と TS-FULL（ステップ1〜8）で完了し、v4.0 でサーバーは TypeScript 単体になった。経緯は [ts1-migration.ja.md](ts1-migration.ja.md) と [ts-full-inventory.ja.md](ts-full-inventory.ja.md)。本書は移行前の調査・計画の記録。
+
 ## 1. 現状の規模
 
 ### 1.1 Python 側

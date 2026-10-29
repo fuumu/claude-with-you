@@ -48,7 +48,7 @@ docker compose up -d
 
 # 3. Verify
 curl https://your-domain/health
-# {"status":"ok","version":"3.99","mcp_tool_count":38}
+# {"status":"ok","time":"...","version":"4.0","mcp_tool_count":38,"mcp_tools":[...],"served_by":"ts"}
 
 # 4. Connect Claude Code
 claude mcp add --transport http mio-memory https://your-domain/mcp
@@ -77,7 +77,7 @@ For Claude.ai: Settings → Connectors → Add custom MCP → `https://your-doma
 > (`core_stable.md`, `core_rules.md`, etc. that compose `core.md`, plus `protocol_guide.md` and `welcome.md`).
 > Afterwards, fill in the `<...>` placeholders in `core_stable.md` (your assistant's persona) and
 > `core_infra.md` (URLs etc.). **If you get stuck, just ask the connected Claude "how do I use mio-memory?"**
-> See [docs/setup.md](docs/setup.md) and [memory/skeleton/README.md](memory/skeleton/README.md).
+> See [docs/setup.md](docs/setup.md) and [ts/skeleton/README.md](ts/skeleton/README.md).
 
 ---
 
@@ -157,7 +157,7 @@ Claude.ai / Claude Code
   Your Server (NAS / VPS)
   ┌──────────────────────────────────┐
   │  Docker: memory container        │
-  │  Flask app — memory/app/main.py  │
+  │  Node.js (TypeScript) — ts/src/  │
   │                                  │
   │  ┌─── MCP API Layer ───────────┐ │
   │  │  /mcp   MCP Streamable HTTP │ │
@@ -174,7 +174,7 @@ Claude.ai / Claude Code
   /data/  memory(ExtMemory)/ · artifacts(UserCoreMemory)/ · projects/ · conversations(LogStore)/ · inbox/ · friends/ · album/ · uploads/ · session_checkins.json
 ```
 
-Single-file implementation — all logic in `memory/app/main.py`.
+A small TypeScript server — everything runs in one Node.js process under `ts/`; the only runtime dependency is `sharp` (image resizing). v4.0 replaced the Python version, which is kept on the `legacy-python` branch.
 
 ---
 
@@ -286,7 +286,7 @@ inbox_read(id="inbox_...") → {title: "Deploy complete", body: "...", ...}
 
 | Tool | Description | Key args |
 |------|-------------|----------|
-| `album_save` | Save an image to the album. Downloads from URL (direct or HTML page — auto-extracts from og:image/img tags) or reads from NAS local path, resizes to max 1024px long side (Pillow), saves image + metadata JSON to `/data/album/`. Supports `rating` (safe/mature/adult) and `guard_message` (curtain message shown before adult images, v3.77) | `url`, `file_path`, `comment`, `tags`, `rating`, `guard_message` |
+| `album_save` | Save an image to the album. Downloads from URL (direct or HTML page — auto-extracts from og:image/img tags) or reads from NAS local path, resizes to max 1024px long side (sharp), saves image + metadata JSON to `/data/album/`. Supports `rating` (safe/mature/adult) and `guard_message` (curtain message shown before adult images, v3.77) | `url`, `file_path`, `comment`, `tags`, `rating`, `guard_message` |
 | `album_read` | Read an album image. Returns MCP image content (base64) + metadata JSON. Adult images hidden by default (`include_adult=true` to view); `guard_message` triggers two-step reveal (`acknowledged=true`); logs `viewer` to `view_log` (v3.77) | `id`, `include_adult`, `acknowledged`, `viewer` |
 | `album_list` | List album image metadata (no image data). Filter by tags. Adult images excluded by default (`include_adult=true` to include, v3.77) | `tags`, `include_adult` |
 | `album_share` | Generate a 24h auth-free share URL for an album image | `id` |
@@ -582,6 +582,9 @@ Configure nginx to proxy `your-domain.com/` → `localhost:5002`.
 | `MIO_API_TOKEN` | `changeme` | Shared secret — Bearer auth and OAuth login |
 | `MIO_BASE_URL` | `http://localhost:5002` | Public base URL used for OAuth and share links. Set to `https://your-domain.com` in production |
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
+| `MIO_PORT` | `5002` | Listen port |
+| `MIO_BIND` | `0.0.0.0` | Bind address (the test suite uses `127.0.0.1`) |
+| `MIO_DATA_ROOT` | `/data` | Data directory (the container mounts `memory/data` here) |
 | `MIO_ALLOWED_ORIGINS` | *(empty)* | Allowed CORS origins; empty = skip check |
 | `ANTHROPIC_API_KEY` | *(empty)* | Enables auto-summarization after import |
 | `LLM_ENDPOINTS` | `192.168.10.32:1234,192.168.10.32:1919` | Comma-separated LLM endpoint list (host:port). Each endpoint's `/v1/models` is probed to discover active models. Management-capable endpoints (LM Studio) get auto-load/unload; others (FreeToken) are discover-only (v3.92) |
@@ -626,22 +629,40 @@ claude-with-you/
 │   ├── mio_memory_overview.md   What mio-memory is, who it's for
 │   ├── memory_search_guide.md   Search strategy guide (4-layer usage)
 │   ├── api-contract.md     API contract (TS-0) — REST/MCP shapes + test suite usage
-│   └── ts1-migration.md    TypeScript migration plan (TS-1, strangler)
-├── tests/                  Characterization test suite (pytest, black-box over HTTP)
-├── ts/                     TS-1 strangler proxy (ring 0)
+│   ├── ts1-migration.md    How the TypeScript migration went (TS-1, strangler)
+│   └── ts-full-inventory.md  Porting record up to the Python removal (TS-FULL, v4.0)
+├── tests/                  Characterization test suite (pytest, black-box over HTTP; starts the TS server)
+├── ts/                     The server (TypeScript, Node.js 22)
+│   ├── Dockerfile
+│   ├── package.json        Only runtime dependency: sharp (image resizing)
+│   ├── src/                index.ts (startup, routing), mcp.ts, oauth.ts, tools*.ts, rest-*.ts, ...
+│   ├── public/             admin.html, logs.html, share.html, register.html, activate.html
+│   └── skeleton/           CoreMem skeleton for new environments (ja / en)
 ├── scripts/
-│   ├── generate_summary_layers.py
+│   ├── generate_summary_layers.py  Generate summary layers from outside the server (over REST)
+│   ├── manage_llm_endpoints.py     Interactively update the LLM endpoint settings in .env
 │   └── update-env.sh          .env_sample → .env merge script
 └── memory/
-    ├── Dockerfile
-    ├── app/
-    │   ├── main.py         All server logic (~2500 lines, single file)
-    │   ├── admin.html      Web admin UI
-    │   ├── logs.html       Conversation viewer
-    │   ├── register.html   Friend registration page
-    │   ├── activate.html   Activation page
-    │   └── requirements.txt
-    └── wheels/             Vendored Python wheels (offline build)
+    └── data/               Live data (gitignored; /data in the container)
+```
+
+### Local development and tests
+
+The server lives in `ts/` (TypeScript, Node.js 22) and also runs without Docker:
+
+```bash
+cd ts
+npm install
+npm run build
+MIO_DATA_ROOT=./tmp-data MIO_API_TOKEN=dev npm start   # http://localhost:5002 (bind address: MIO_BIND, default 0.0.0.0)
+```
+
+The characterization tests (pytest, black-box over HTTP) start the TS server on a temp data dir, so they never touch real data:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install pytest requests pillow   # on Windows: .venv/Scripts/python
+.venv/bin/python -m pytest tests/ -q
 ```
 
 ---
@@ -657,7 +678,8 @@ claude-with-you/
 - SysMemory dump versioning
 - mio-memory direct auth for Claude Code
 
-**Implemented (v3.9–v3.99)**
+**Implemented (v3.9–v4.0)**
+- TypeScript only (v4.0, TS-FULL step 8, 2026-10-30) — the Python version (`memory/app/main.py`, Flask, the vendored wheels, `memory/Dockerfile`) is gone; one Node.js process under `ts/` serves everything. Startup work (creating the base directories, moving legacy upload metadata, seeding CoreMem and the welcome inbox on a fresh environment, the nightly batch) is in TS too (`ts/src/seed.ts`, `index.ts`). The HTML pages moved to `ts/public/` and the CoreMem skeleton to `ts/skeleton/`. `docker-compose.yml` builds the TS image (`ts/Dockerfile`, node:22-slim) as the `memory` service; the data location (`memory/data` → `/data`) and port 5002 are unchanged. `docker-compose.parallel.yml` and `scripts/MCP_NEW.sh` / `MCP_OLD.sh` were removed. The pytest characterization suite stays: conftest now starts only the TS server, tests that only made sense for the Python version were removed, and `tests/test_startup.py` covers the startup work (276 passed). The Python version is kept on the `legacy-python` branch and the `v3.99-ts1` tag
 - Conversation log fixes, v3.97–v3.99 — fixes for the v3.96 title auto-improvement / participants extraction not being persisted to conversation JSON and missing some default titles. ① v3.97: `index/rebuild` now writes improved titles and participants back to the conversation JSON itself (previously index-only); `_save_conversations` improves/extracts before saving ② v3.98: `_msg_text` extracts text when `content` is a plain string (previously iterated per character and fell back to empty); write-back failures are now logged ③ v3.99: default-title detection extended from exact match to a regex (`Evening greeting` / `Morning greeting` / `Greeting to X`, etc.); `index/rebuild` response gains `titles_default` / `titles_no_auto` / `participants_filled` / `debug_no_auto` (details of up to 10 un-improvable entries, only when present), shown collapsed in the admin.html rebuild result
 - Conversation log improvements — 7-point batch (v3.96) — ① ZIP import auto-improves default titles (Greeting/New Chat/Untitled → first user message excerpt) ② `PATCH /api/conversations/<uuid>/title` for renaming conversations (updates JSON, index, and ExtMemory) ③ `participants` field extracted from conversation messages (model name array); backfilled on save/rebuild ④ `individual` filter on `conversation_index` / `conversation_search` (by individual name or model name) ⑤ `conversation_read` `message_from`/`message_to` params for No.-based slicing (mutually exclusive with `turn_offset`/`turn_limit`) ⑥ `attendance_view` session_checkin dedup (same model within 30min = 1 entry) + `kind` filter (memory/session_checkin/checkin/inbox/conversation) ⑦ Word-boundary matching in `_resolve_individual` prevents opus-5-5→opus-5 misidentification ⑧ `CoreMem_save` manifest guard: rejects writes to names with existing `{stem}_manifest.md` ⑨ `conversation_digest` `status_only=true` (cache existence check without generation)
 - `llm_status` MCP tool (v3.93) — LLM backend diagnostic tool accessible from Claude sessions (tool count 37→38). Returns per-endpoint active models, OK-list match results, model selection logic outcome, and recent LLM log entries (100-entry ring buffer). Same data as REST `GET /api/llm-status`

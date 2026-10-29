@@ -2,8 +2,7 @@
 """会話ログ系 MCP ツール（conversation_index / search / read / share / log_annotate /
 conversation_digest status_only）の境界挙動。
 
-TS-1 リング4 グループ4（TS ネイティブ化）の回帰用。Python 単体モードが基準で、
-MIO_TS1=1 でも同じ期待値で通ること＝実装差がないことの確認になる。
+TS-1 リング4 グループ4（TS ネイティブ化）の回帰用。期待値は Python 版 main.py の挙動から取った。
 """
 import json
 import os

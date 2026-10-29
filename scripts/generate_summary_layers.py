@@ -2,7 +2,7 @@
 """
 generate_summary_layers.py — rawエントリから2層（要約）・3層（シンボリック圧縮）・4層（キーワード）を生成する
 
-サーバー内バッチ（main.py の _run_summary_batch）と同一仕様：
+サーバー内バッチ（ts/src/llm-tasks.ts の要約バッチ。旧 main.py _run_summary_batch）と同一仕様：
   - source_thread がある場合は会話全文（先頭30メッセージ・計3000字まで）をLLMに渡す
   - 2層・3層は body に追記、4層キーワードは keywords フィールドに保存
   - 2層・3層が生成済みで keywords だけ欠けているエントリには軽量プロンプトでキーワードのみ生成
@@ -163,7 +163,7 @@ def api_patch(path, data):
         return json.loads(r.read().decode())
 
 
-# ── レイヤーヘルパー（main.py と同一仕様）─────────────────────────────
+# ── レイヤーヘルパー（サーバーの要約バッチと同一仕様）─────────────────
 def extract_summary(body: str) -> str:
     """body から2層要約セクションのテキストを取り出す"""
     if not body:

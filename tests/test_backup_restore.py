@@ -5,7 +5,6 @@ export（GET /api/export・v3.46）が生成する ZIP を復元する。
 - mode=skip（デフォルト）: 既存 ID / 既存 CoreMem 名は触らず conflicts に列挙
 - mode=overwrite: 既存を上書き（CoreMem は版管理経由の新バージョン積み）
 - dry_run=true: 書き込みなしで件数プレビュー
-TS1 モードでは未移行エンドポイントなので Python へプロキシされる（それで正しい）。
 """
 import io
 import json

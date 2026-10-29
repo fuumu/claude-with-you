@@ -3,7 +3,11 @@
 **[日本語版 / Japanese](design.ja.md)** ← 日本語版が正。このファイルは日本語版から同期。
 
 > Created: 2026-06-01  
-> Target: `<YOUR_NAS_PATH>/memory/app/main.py`
+> Target: `<YOUR_NAS_PATH>/ts/src/` (TypeScript since v4.0; `memory/app/main.py` up to v3.x)
+>
+> **v4.0 note:** the server is now TypeScript only. The Python snippets and `_xxx`-style function names in this
+> document are kept as a record of the design at the time (the Python version). For the TS counterparts see
+> "Code layout" in CLAUDE.md, and [ts-full-inventory.md](ts-full-inventory.md) for how the port went. The Python version is on the `legacy-python` branch.
 
 > **Note**: This document is Jun Kikuchi's personal design/operations record. "澪 (Mio)" and "淳さん (Jun-san)" in the usage examples are the actual AI's name and user's name, not generic placeholders. If you're adapting this design for your own setup, substitute your own environment's names accordingly.
 
@@ -203,7 +207,7 @@ For an `initialize` request to `/mcp`, the server returns:
 
 ### Implementation location
 
-`memory/app/main.py` — the `initialize` branch of the MCP handler
+`ts/src/mcp.ts` (`memory/app/main.py` in v3.x) — the `initialize` branch of the MCP handler
 
 ```python
 "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して...",
@@ -328,11 +332,11 @@ The backend is auto-selected:
 - `ANTHROPIC_API_KEY` set → `anthropic` (`claude-haiku-4-5-20251001`)
 - not set → `lmstudio` (multi-endpoint auto-discovery via `LLM_ENDPOINTS`, no billing)
 
-**Implementation:** end of `import_zip()` → the `_start_summary_batch()` helper (`memory/app/main.py`)
+**Implementation:** on import completion → `startSummaryBatch()` in `ts/src/llm-tasks.ts` (v3.x: end of `import_zip()` → `_start_summary_batch()`)
 
 ### Nightly automatic run (v3.16+)
 
-A daemon thread checks the pending counts (raw + keywords-missing) daily at
+A timer (`ts/src/scheduler.ts`; a daemon thread in v3.x) checks the pending counts (raw + keywords-missing) daily at
 `MIO_NIGHTLY_BATCH_HOUR` (JST, default 3) and, if anything remains, starts the
 batch with `MIO_NIGHTLY_BATCH_BACKEND` (default lmstudio).
 Disable with `MIO_NIGHTLY_BATCH_HOUR=off`.
@@ -342,6 +346,7 @@ Disable with `MIO_NIGHTLY_BATCH_HOUR=off`.
 ### Batch state (`_batch_status`)
 
 A global dict tracks the thread's progress. Flask runs single-process, so no extra thread-safety is required (GIL-protected).
+In the v4.0 TS version, `batchStatus` in `ts/src/llm-tasks.ts` (same keys) is shared inside the single-process event loop.
 
 ```python
 _batch_status = {
@@ -362,7 +367,7 @@ _batch_status = {
 
 #### GET /api/batch/status
 
-Auth required. Returns `_batch_status` as JSON.
+Auth required. Returns `batchStatus` (`_batch_status` in v3.x) as JSON.
 
 ```json
 {
@@ -476,22 +481,24 @@ Entry update (direct file write or PATCH /api/memory/<id>):
 | `LLM_ENDPOINTS` | LLM endpoint list (v3.92) | `192.168.10.32:1234,192.168.10.32:1919` |
 | `LLM_OK_MODELS` | Acceptable model list (v3.92) | `google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4` |
 
-The `MIO_SERVER_URL` default assumes in-container execution. When running outside the container, add `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` to `.env`.
+The `MIO_SERVER_URL` default is `http://localhost:5002` (running on the same host as the server).
+Since v4.0 the container has no Python, so run the script over REST from a host with Python 3 (the WS, etc.)
+(normally the in-server batch `batch_run_summary_layers` / the nightly batch is enough).
 
-**Run inside the container (recommended):**
+**Run on the same host as the server:**
 
 ```bash
 # Count targets (no writes)
-docker exec -it memory python /app/scripts/generate_summary_layers.py --dry-run
+python3 scripts/generate_summary_layers.py --dry-run
 
 # Run with LMStudio
-docker exec -it memory python /app/scripts/generate_summary_layers.py --backend lmstudio
+python3 scripts/generate_summary_layers.py --backend lmstudio
 
 # Run with Anthropic
-docker exec -it memory python /app/scripts/generate_summary_layers.py --backend anthropic
+python3 scripts/generate_summary_layers.py --backend anthropic
 ```
 
-**Run outside the container (e.g. on the WS):**
+**Run from another machine (e.g. the WS):**
 
 ```bash
 MIO_SERVER_URL=https://<YOUR_SERVER_URL> python scripts/generate_summary_layers.py --dry-run
@@ -926,7 +933,7 @@ A system for Mio to store, retrieve, and share images as memories — the image 
 ```
 
 - ID format: `YYYYMMDD_HHMMSS_{tag_slug}` (same as ExtMemory)
-- Images are resized to max 1024px on the long side (aspect ratio preserved, Pillow; the TS album_save does the same with sharp)
+- Images are resized to max 1024px on the long side (aspect ratio preserved, sharp; the v3.x Python version used Pillow)
 - JPEG saved at quality 85; RGBA/P modes are converted to RGB
 
 ### MCP tools (5)
@@ -1246,7 +1253,7 @@ behavior. Valuable on its own as a regression suite.
 
 ### Design
 
-- **Black-box over HTTP** — tests never import main.py internals; they hit REST and
+- **Black-box over HTTP** — tests never import server internals; they hit REST and
   MCP JSON-RPC and assert response shapes. Swapping the server implementation (even a
   TS port) only requires changing the launch command in conftest, and the whole suite
   becomes the "same server" acceptance criterion
@@ -1394,7 +1401,7 @@ polishing loop). The roles are now separated:
 
 ### Single source of style rules
 
-`_SUBLIMATION_STYLE_RULES` (main.py) is the only style standard, derived from
+`SUBLIMATION_STYLE_RULES` (`ts/src/llm-tasks.ts`; `_SUBLIMATION_STYLE_RULES` in main.py in v3.x) is the only style standard, derived from
 rating_policy.md and the "how to write a diary" section of core_local_vacation.md. Both
 the `sublimate` prompt and the `conversation_digest` safe_mode prompt reference it (one
 sheet of standards, same policy as rating_policy.md). Existing digest caches regenerate
@@ -1460,7 +1467,7 @@ Detected inside `_post_inbox_message`.
    - Replace inbox body with placeholder; replace `【生】` → `【処理中】` in title
    - **Requirement 4**: raw text is fully removed from inbox at this point
 
-2. **Async (daemon thread)** (`_run_inbox_sublimate`):
+2. **Async (background task)** (TS: `runInboxSublimate`; the daemon thread `_run_inbox_sublimate` in v3.x):
    - Run `_sublimate_text(original_body)` (existing chunk/self-check loop)
    - Success (mature or below): replace body with sublimated version, title → `【未承認】`
    - Failure (needs_human / adult): replace body with notification only, title → `【要人手】`
@@ -1540,7 +1547,7 @@ titles (Greeting, etc.) by their content, and allow filtering by model name (`in
 
 ### Note
 
-The TS proxy under `ts/` forwards conversations index/rebuild to Python (rebuild's title improvement and participants extraction live only on the Python side).
+Since TS-FULL step 3, conversations index/rebuild (including title improvement and participants extraction) is handled by `ts/src/conversations.ts` (before that the TS proxy forwarded it to Python).
 
 ---
 

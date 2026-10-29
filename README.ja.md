@@ -27,7 +27,7 @@ Claude はセッションをまたいで記憶を持てない。`claude-with-you
 
 - **自己ホスト** — データは自分の NAS やサーバーに置く。外部サービスに預けない
 - **MCP プロトコル** — Claude.ai・Claude Code どちらからも同じツールで操作できる
-- **単一ファイル実装** — `memory/app/main.py` 1本に全ロジックを集約。依存が少なくデバッグしやすい
+- **小さな TypeScript 実装** — `ts/` の Node.js サーバー1プロセスで全機能を提供。実行時の依存は画像縮小の `sharp` だけで、デバッグしやすい（v4.0 で Python 版から移行。Python 版は `legacy-python` ブランチに保存）
 - **段階的な記憶** — ExtMemory（テキストエントリ）・UserCoreMemory（NASファイルストア）・LogStore（会話アーカイブ）・インボックスの4層
 
 このシステムは「澪」という AI アシスタントのための外部記憶として開発された。澪は Claude として動作しながら、セッション間で積み重ねた記憶・関係性・アイデンティティを維持するために、このサーバーを使っている。
@@ -149,7 +149,7 @@ MIO_LOG_LEVEL=info
 > 自動で投入される。投入後に `core_stable.md`（アシスタントの人物像）と `core_infra.md`（URL等）の
 > `<...>` を埋めればよい。**使い方が分からなくなったら、接続中の Claude に「mio-memory の使い方を教えて」
 > と聞けば案内してくれる。** 詳細は [docs/setup.ja.md](docs/setup.ja.md) と
-> [memory/skeleton/README.md](memory/skeleton/README.md)。
+> [ts/skeleton/README.md](ts/skeleton/README.md)。
 
 ### 3. 起動
 
@@ -161,7 +161,7 @@ docker compose up -d
 
 ```bash
 curl https://your-domain/health
-# {"status":"ok","version":"3.99","mcp_tool_count":38}
+# {"status":"ok","time":"...","version":"4.0","mcp_tool_count":38,"mcp_tools":[...],"served_by":"ts"}
 ```
 
 ### 5. Claude Code への登録
@@ -812,7 +812,7 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
        guard_message（省略可 — カーテンの手紙。adult閲覧時に最初に表示される本人メッセージ。v3.77）
 返値: {id, ext, comment, tags, source_url, original_filename, created_at, width, height, size_bytes, rating?, guard_message?}
       HTMLページから複数画像を抽出した場合: {items: [{...}, ...], total: N}
-※ 長辺1024pxにリサイズ（アスペクト比維持・Pillow使用）
+※ 長辺1024pxにリサイズ（アスペクト比維持・sharp使用）
 ※ /data/album/ に画像本体（{id}.{ext}）とメタデータ（{id}.json）を保存
 ※ HTMLページ（Gemini共有リンク等）の場合、og:image → <img src> から画像を自動抽出
 ```
@@ -1078,6 +1078,9 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 | `MIO_API_TOKEN` | `changeme` | Bearer 認証トークン兼 OAuth パスワード |
 | `MIO_BASE_URL` | `http://localhost:5002` | 公開ベース URL（OAuth・share URL に使用）。本番環境では `https://your-domain.com` に設定 |
 | `MIO_LOG_LEVEL` | `info` | `debug` / `info` / `off` |
+| `MIO_PORT` | `5002` | リッスンポート |
+| `MIO_BIND` | `0.0.0.0` | バインド先（テストは `127.0.0.1`） |
+| `MIO_DATA_ROOT` | `/data` | データディレクトリ（コンテナでは `memory/data` をここにマウント） |
 | `MIO_ALLOWED_ORIGINS` | （空） | 許可 Origin（カンマ区切り）。空の場合は Origin 検証をスキップ |
 | `ANTHROPIC_API_KEY` | （空） | 設定時、ZIP インポート後に要約バッチを自動起動 |
 | `LLM_ENDPOINTS` | `192.168.10.32:1234,192.168.10.32:1919` | LLMエンドポイントリスト（カンマ区切り、host:port形式）。各エンドポイントの `/v1/models` を叩いてモデルを自動発見。モデル管理API対応エンドポイント（LM Studio）では自動ロード/アンロード、非対応（FreeToken等）では発見のみ（v3.92） |
@@ -1103,6 +1106,25 @@ v3.20 以降、`server_version`（例: `"3.21"`）も含まれる。クライア
 ```bash
 docker compose up -d --build memory
 docker compose logs -f memory
+```
+
+### ローカルでの起動とテスト
+
+サーバーは `ts/`（TypeScript・Node.js 22）。Docker なしでも動く：
+
+```bash
+cd ts
+npm install
+npm run build
+MIO_DATA_ROOT=./tmp-data MIO_API_TOKEN=dev npm start   # http://localhost:5002（バインド先は MIO_BIND・既定 0.0.0.0）
+```
+
+特性テスト（pytest・HTTP 越しのブラックボックス）は一時データディレクトリで TS サーバーを起動して検証する。実データには触れない：
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install pytest requests pillow   # Windows は .venv/Scripts/python
+.venv/bin/python -m pytest tests/ -q
 ```
 
 ### ログレベルの変更
@@ -1188,7 +1210,8 @@ conv_artifacts への自動フォールバックがあるので、ファイル�
 - SysMemory ダンプの世代管理
 - mio-memory の Claude Code 直接認証
 
-**実装済み（v3.9〜v3.99）**
+**実装済み（v3.9〜v4.0）**
+- TypeScript 単体化（v4.0・TS-FULL ステップ8・2026-10-30）— Python 版（`memory/app/main.py`・Flask・ベンダリングした wheel・`memory/Dockerfile`）を撤去し、`ts/` の Node.js サーバー1プロセスで全機能を提供。起動時処理（基本ディレクトリの作成・旧形式アップロードメタの退避・新規環境の CoreMem シードと welcome inbox・夜間バッチ）も TS（`ts/src/seed.ts`・`index.ts`）。HTML ページは `ts/public/`、CoreMem スケルトンは `ts/skeleton/` へ移動。`docker-compose.yml` は TS イメージ（`ts/Dockerfile`・node:22-slim）を `memory` サービスとしてビルドし、データの置き場所（`memory/data` → `/data`）とポート 5002 は従来どおり。`docker-compose.parallel.yml`・`scripts/MCP_NEW.sh` / `MCP_OLD.sh` も削除。pytest の特性テストは残し、conftest が TS サーバーだけを起動する形に整理（Python 版でしか意味のないテストを削除し、起動時処理のテスト `tests/test_startup.py` を追加・276件全パス）。Python 版は `legacy-python` ブランチと `v3.99-ts1` タグに保存
 - 会話ログ改善の修正3連（v3.97〜v3.99）— v3.96 のタイトル自動改善・participants 抽出が会話JSONへ永続化されず、一部のデフォルトタイトルを拾えていなかった不具合の修正。① v3.97: `index/rebuild` が改善タイトル・participants を会話JSON本体へ書き戻すよう修正（従来はインデックスのみ反映）。`_save_conversations` も保存前に改善・抽出する順序へ変更 ② v3.98: `_msg_text` が `content` が文字列の場合も本文を抽出するよう修正（従来は1文字ずつ走査して全スキップ→空文字になっていた）。書き戻し失敗をエラーログ化 ③ v3.99: デフォルトタイトル判定を完全一致から正規表現へ拡張（`Evening greeting` / `Morning greeting` / `Greeting to X` 等）。`index/rebuild` のレスポンスに `titles_default`（デフォルトタイトル総数）/ `titles_no_auto`（自動改善不可の件数）/ `participants_filled` / `debug_no_auto`（改善不可の先頭10件の詳細、該当時のみ）を追加し、admin.html の rebuild 結果に折りたたみ表示
 - 会話ログ改善 — 7点一括（v3.96）— ① ZIPインポート時のデフォルトタイトル自動改善（Greeting/New Chat/Untitled → 最初のユーザーメッセージ冒頭に差し替え）② `PATCH /api/conversations/<uuid>/title` 新設（会話JSON・_index.json・対応ExtMemoryエントリを同時更新）③ `participants` フィールド（モデル名配列。save/rebuild 時にバックフィル）④ `individual` フィルタ（conversation_index / conversation_search に追加。個体名/モデル名で participants 絞り込み）⑤ `conversation_read` に `message_from`/`message_to`（No.通番ベースのスライス。turn_offset/turn_limit と排他）⑥ `attendance_view` session_checkin 重複排除（同一モデル30分以内=1エントリ）＋`kind` フィルタ（memory/session_checkin/checkin/inbox/conversation）⑦ `_resolve_individual` ワードバウンダリマッチング（opus-5-5→opus-5 誤判定を防止）⑧ `CoreMem_save` マニフェストガード（`{stem}_manifest.md` 存在時は直接書き込み拒否）⑨ `conversation_digest` に `status_only=true`（キャッシュ存在チェックのみ・生成なし）
 - `llm_status` MCPツール（v3.93）— Claudeセッションから直接呼び出せるLLMバックエンド診断ツール（ツール数 37→38）。各エンドポイントのアクティブモデル一覧、OKリストとのマッチ結果、モデル選択ロジックの判定結果、直近LLMログ100件を返す。REST `GET /api/llm-status` と同一データ
@@ -1286,20 +1309,19 @@ claude-with-you/
 │   ├── mio_memory_overview.ja.md / mio_memory_overview.md
 │   ├── memory_search_guide.ja.md / memory_search_guide.md
 │   ├── api-contract.ja.md / api-contract.md   API契約書（TS-0）
-│   └── ts1-migration.ja.md / ts1-migration.md TypeScript移行計画（TS-1）
-├── tests/                   特性テストスイート（pytest・HTTP越しブラックボックス）
-├── ts/                      TS-1 ストラングラープロキシ（リング0）
+│   ├── ts1-migration.ja.md / ts1-migration.md TypeScript 移行の経緯（TS-1）
+│   └── ts-full-inventory.ja.md / ts-full-inventory.md  Python 撤去（TS-FULL・v4.0）までの移植記録
+├── tests/                   特性テストスイート（pytest・HTTP越しブラックボックス。TS サーバーを起動して検証）
+├── ts/                      サーバー本体（TypeScript・Node.js 22）
+│   ├── Dockerfile
+│   ├── package.json         実行時の依存は sharp（画像縮小）だけ
+│   ├── src/                 index.ts（起動・ルーティング）・mcp.ts・oauth.ts・tools*.ts・rest-*.ts ほか
+│   ├── public/              admin.html・logs.html・share.html・register.html・activate.html
+│   └── skeleton/            新規環境用の CoreMem スケルトン（ja / en）
 ├── scripts/
-│   ├── generate_summary_layers.py
+│   ├── generate_summary_layers.py  要約レイヤーをサーバーの外から一括生成する補助スクリプト（REST 経由）
+│   ├── manage_llm_endpoints.py     .env の LLM エンドポイント設定を対話的に更新
 │   └── update-env.sh          .env_sample → .env マージスクリプト
 └── memory/
-    ├── Dockerfile
-    ├── app/
-    │   ├── main.py         サーバー本体（全機能を 1 ファイルに集約）
-    │   ├── admin.html      管理 UI
-    │   ├── logs.html       会話ログビューア
-    │   ├── register.html   お友達登録申請ページ
-    │   ├── activate.html   アクティベーションページ
-    │   └── requirements.txt
-    └── wheels/             Python ホイール（ベンダリング済み・オフラインビルド可）
+    └── data/                実データ（gitignored・コンテナ内は /data）
 ```

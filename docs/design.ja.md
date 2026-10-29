@@ -3,7 +3,11 @@
 **[English version](design.md)** ← 日本語版（このファイル）が正。英語版はここから同期。
 
 > 作成：2026-06-01  
-> 対象：`<YOUR_NAS_PATH>/memory/app/main.py`
+> 対象：`<YOUR_NAS_PATH>/ts/src/`（v4.0〜 TypeScript。v3.x までは `memory/app/main.py`）
+>
+> **v4.0 の注記：** サーバーは TypeScript 単体になった。本書の Python のコード片や `_xxx` 形式の関数名は
+> 設計当時（Python 版）の記録として残している。TS 側の対応箇所は CLAUDE.md の「Code layout」、
+> 移植の経緯は [ts-full-inventory.ja.md](ts-full-inventory.ja.md) を参照。Python 版は `legacy-python` ブランチにある。
 
 > **注記**：本ファイルは菊池淳個人の設計・運用記録です。使用例中の「澪」「淳さん」は実際のAIの呼称・ユーザー名であり、汎用化していません。仕組み自体を参考にする場合は、ご自身の環境名・呼称に読み替えてください。
 
@@ -203,7 +207,7 @@ MCP仕様（2025-11-25）の `initialize` レスポンスに `instructions` フ�
 
 ### 実装箇所
 
-`memory/app/main.py` — MCP ハンドラ内の `initialize` 分岐
+`ts/src/mcp.ts`（v3.x は `memory/app/main.py`）— MCP ハンドラ内の `initialize` 分岐
 
 ```python
 "instructions": "セッション開始時に必ず CoreMem_read(\"core.md\") を実行して...",
@@ -329,11 +333,11 @@ data/artifacts/
 - `ANTHROPIC_API_KEY` あり → `anthropic`（`claude-haiku-4-5-20251001`）
 - なし → `lmstudio`（`LLM_ENDPOINTS` のマルチエンドポイントから自動発見・接続、課金なし）
 
-**実装箇所：** `import_zip()` 末尾 → `_start_summary_batch()` ヘルパー（`memory/app/main.py`）
+**実装箇所：** インポート完了時 → `ts/src/llm-tasks.ts` の `startSummaryBatch()`（v3.x は `import_zip()` 末尾 → `_start_summary_batch()`）
 
 ### 夜間自動実行（v3.16〜）
 
-デーモンスレッドが毎日 `MIO_NIGHTLY_BATCH_HOUR` 時（JST、デフォルト3時）に
+タイマー（`ts/src/scheduler.ts`。v3.x はデーモンスレッド）が毎日 `MIO_NIGHTLY_BATCH_HOUR` 時（JST、デフォルト3時）に
 未処理件数（raw ＋ keywords未生成）をチェックし、残っていれば
 `MIO_NIGHTLY_BATCH_BACKEND`（デフォルト lmstudio）でバッチを起動する。
 `MIO_NIGHTLY_BATCH_HOUR=off` で無効化。
@@ -343,6 +347,7 @@ data/artifacts/
 ### バッチ状態管理（`_batch_status`）
 
 グローバル辞書でスレッドの進捗を管理する。Flaskはシングルプロセスのためスレッドセーフ性を要求しない（GIL保護）。
+v4.0 の TS 版では `ts/src/llm-tasks.ts` の `batchStatus`（同じキー）を単一プロセスのイベントループ内で共有する。
 
 ```python
 _batch_status = {
@@ -363,7 +368,7 @@ _batch_status = {
 
 #### GET /api/batch/status
 
-認証必要。`_batch_status` をそのままJSONで返す。
+認証必要。`batchStatus`（v3.x は `_batch_status`）をそのままJSONで返す。
 
 ```json
 {
@@ -477,22 +482,24 @@ anthropic / LMStudio API で生成:
 | `LLM_ENDPOINTS` | LLMエンドポイントリスト（v3.92） | `192.168.10.32:1234,192.168.10.32:1919` |
 | `LLM_OK_MODELS` | 使用可能モデルリスト（v3.92） | `google/gemma-4-26b-a4b,google/gemma-4-e4b,Qwen3.6-35B-A3B-NVFP4` |
 
-`MIO_SERVER_URL` はコンテナ内実行前提のデフォルト。コンテナ外実行時は `.env` に `MIO_SERVER_URL=https://<YOUR_SERVER_URL>` を追加。
+`MIO_SERVER_URL` のデフォルトは `http://localhost:5002`（サーバーと同じホストで実行する場合）。
+v4.0 以降のコンテナには Python が入っていないため、スクリプトは Python 3 のあるホスト（WS など）から REST 経由で実行する
+（通常はサーバー内バッチ `batch_run_summary_layers` / 夜間バッチで足りる）。
 
-**コンテナ内から実行（推奨）：**
+**サーバーと同じホストで実行する場合：**
 
 ```bash
 # 対象件数確認（書き込みなし）
-docker exec -it memory python /app/scripts/generate_summary_layers.py --dry-run
+python3 scripts/generate_summary_layers.py --dry-run
 
 # LMStudioで実行
-docker exec -it memory python /app/scripts/generate_summary_layers.py --backend lmstudio
+python3 scripts/generate_summary_layers.py --backend lmstudio
 
 # Anthropicで実行
-docker exec -it memory python /app/scripts/generate_summary_layers.py --backend anthropic
+python3 scripts/generate_summary_layers.py --backend anthropic
 ```
 
-**コンテナ外（WSなど）から実行する場合：**
+**別のマシン（WSなど）から実行する場合：**
 
 ```bash
 MIO_SERVER_URL=https://<YOUR_SERVER_URL> python scripts/generate_summary_layers.py --dry-run
@@ -917,7 +924,7 @@ Claude が会話中に生成したファイルを自動抽出・保存する。
 ```
 
 - ID 形式: `YYYYMMDD_HHMMSS_{タグスラッグ}`（ExtMemory と同様）
-- 保存時に長辺 1024px にリサイズ（アスペクト比維持・Pillow 使用。TS 版 album_save は sharp で同等実装）
+- 保存時に長辺 1024px にリサイズ（アスペクト比維持・sharp 使用。v3.x の Python 版は Pillow）
 - JPEG は品質 85 で保存。RGBA/P モードは RGB に変換
 
 ### MCP ツール（5本）
@@ -1236,7 +1243,7 @@ TS-1（TypeScript移行・ストラングラー方式）の前提となる「現
 
 ### 設計方針
 
-- **HTTP越しブラックボックス** — テストは main.py の内部を import しない。REST と MCP JSON-RPC
+- **HTTP越しブラックボックス** — テストはサーバーの内部を import しない。REST と MCP JSON-RPC
   を実際に叩いて応答形状を assert する。サーバー実装を差し替えても（TS版でも）
   conftest の起動コマンドを変えるだけでスイート全体がそのまま「同一サーバー」判定に使える
 - **既存環境に触れない** — conftest がテストごとに一時データディレクトリ＋空きポートで
@@ -1369,7 +1376,7 @@ v3.82 でモデルID単位の明示マッピングに移行（旧: 部分一致�
 
 ### 昇華ルールの一元管理
 
-`_SUBLIMATION_STYLE_RULES`（main.py）が唯一の文体基準。派生元は rating_policy.md と
+`SUBLIMATION_STYLE_RULES`（`ts/src/llm-tasks.ts`。v3.x は main.py の `_SUBLIMATION_STYLE_RULES`）が唯一の文体基準。派生元は rating_policy.md と
 core_local_vacation.md「日記の書き方」。`sublimate` のプロンプトと
 `conversation_digest` の safe_mode プロンプトが両方ここを参照する（基準は一枚に、
 rating_policy.md と同じ流儀）。digest の既存キャッシュは `force=true` で新文体に再生成。
@@ -1430,7 +1437,7 @@ mature 以下」「出力前自己検証」を追加。
    - タイトルの `【生】` を `【処理中】` に置換
    - **要件4**: この時点で生テキストは inbox から完全に消えている
 
-2. **非同期（daemon スレッド）**（`_run_inbox_sublimate`）:
+2. **非同期（バックグラウンド処理）**（TS: `runInboxSublimate`。v3.x は daemon スレッドの `_run_inbox_sublimate`）:
    - `_sublimate_text(original_body)` を実行（既存のチャンク分割・セルフチェックループ）
    - 成功（mature 以下）: 本文を昇華版に差替え、タイトルを `【未承認】` に変更、
      末尾に原文 memory_id・レーティング・チャンク数を記載
@@ -1511,7 +1518,7 @@ CoreMem のファイル空間をプロジェクト単位で分離する。ホー
 
 ### 補足
 
-`ts/` の TS プロキシは conversations index/rebuild を Python へ転送する（rebuild のタイトル改善・participants 抽出は Python 側に一本化）。
+TS-FULL ステップ3 以降、conversations index/rebuild（タイトル改善・participants 抽出を含む）は `ts/src/conversations.ts` が処理する（それまでは TS プロキシが Python へ転送していた）。
 
 ---
 

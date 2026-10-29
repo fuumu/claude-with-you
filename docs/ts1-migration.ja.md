@@ -2,6 +2,8 @@
 
 *作成: 2026-07-13 / リング0〜3・トランスポート前倒し（リング4/5の一部）・MCP 2026-07-28 RC先行実装済み*
 
+> **v4.0（2026-10-30）で完了:** TS-FULL ステップ8 で Python を撤去し、サーバーは TypeScript 単体になった。以下は移行の記録（Python 版は `legacy-python` ブランチ）。現在の構成は README / CLAUDE.md を参照。
+
 ## 方針
 
 main.py（Flask・単一ファイル）を一括書き換えせず、**TypeScript のリバースプロキシを
@@ -81,7 +83,7 @@ TS 実装は utf-8 固定（本番互換）。
 | TS-FULL 5 | アルバム・アップロードの REST | ✅ 完了（2026-10-30・`ts-full-step5` ブランチ）— `rest-media.ts`。album は MCP ツールの実装（`tools-album.ts`・`album-save.ts`）を使い回し、uploads は `tools-file.ts` の一覧・削除を関数に切り出して共用。差分テスト（146 件）で album・uploads とも一致（画像ライブラリ由来のエラー文言だけ違う）。`requires_python` は 13 → 6 件 |
 | TS-FULL 6 | 友達 REST・HTML 配信 | ✅ 完了（2026-10-30・`ts-full-step6` ブランチ）— `rest-friends.ts`（登録簿は `friend.ts` と共用）と `static.ts`（5 ページ。見つからなければ TS 前段構成では Python に任せる）。友達 REST と公開ページにはテストが無かったので `tests/test_friends_rest.py`（6 件）を新設。差分テスト（178 件）で友達 REST と 5 ページ（Content-Type とバイト列）とも一致 |
 | TS-FULL 7 | 夜間バッチ・伏せ字 | ✅ 完了（2026-10-30・`ts-full-step7` ブランチ）— `scheduler.ts`（`MIO_UPSTREAM=off` のときだけ動く。TS 前段＋Python では Python の夜間バッチと二重にならないように）と `redact.ts`（プロンプト・文分割・30 文チャンク・本文ハッシュでのキャッシュ無効化は main.py と同一）。生成の流れはどのモードでもテストされていなかったので、モック LLM に伏せ字判定の応答を足して一連のテストを追加。`requires_python` は 6 → 1 件（起動時シードのみ） |
-| 6 | Python 撤去・Dockerfile を Node ベースへ | 特性テスト＋本番並行稼働期間を経て判断 |
+| 6 → TS-FULL 8 | Python 撤去・Dockerfile を Node ベースへ（v4.0） | ✅ 完了（2026-10-30・`ts-full-step8` ブランチ）— 先に `legacy-python` ブランチを切ってから `memory/app/main.py`・Flask の wheel・`memory/Dockerfile`・`docker-compose.parallel.yml`・`scripts/MCP_NEW.sh` / `MCP_OLD.sh` を削除。プロキシ（`MIO_UPSTREAM_*`）を撤去し、どのルートにも当たらないパスは JSON の 404。起動時処理（`seed.ts` の CoreMem スケルトン・welcome inbox、旧形式アップロードメタの退避）を TS へ。HTML は `ts/public/`、スケルトンは `ts/skeleton/` へ移動。バインド既定は `0.0.0.0`（`MIO_BIND`）、夜間バッチは常時有効。compose の `memory` サービスは `ts/` をビルドする。テストは TS 単体だけで回す（conftest から Python 起動・`MIO_TS1`・`MIO_TS_ONLY`・`requires_python` を撤去、`tests/test_startup.py` 追加、276 件全パス） |
 
 ## 設計上の約束
 

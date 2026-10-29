@@ -57,8 +57,8 @@ git remote add origin git@github.com:<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git
 cat > .gitignore << 'EOF'
 .env
 memory/data/
-__pycache__/
-*.pyc
+ts/node_modules/
+ts/dist/
 EOF
 
 # Stage and commit
@@ -135,10 +135,57 @@ Health check:
 
 ```bash
 curl <YOUR_SERVER_URL>/health
-# OK if {"status": "ok", "version": "3.x", ...} is returned
+# OK if {"status": "ok", "version": "4.0", ..., "served_by": "ts"} is returned
 ```
 
 > **Note:** on the NAS, `docker-compose` requires `sudo`. Always spell out `origin main` for `git pull` (no upstream is configured).
+
+### Switching from v3.x (Python, TS-front setup) to v4.0 (once)
+
+v4.0 makes the server TypeScript only: the `memory` service in `docker-compose.yml` builds `ts/` (the Python container and the `ts-proxy` service are gone).
+The data location (`memory/data` → `/data`), the port (5002) and `.env` stay as they are. OAuth tokens (`oauth_store.json`) carry over, so connectors do not need to re-authenticate.
+
+A NAS that ran the TS-front setup ([ts-switchover.md](ts-switchover.md)) has a locally edited `docker-compose.yml`, so
+**stop the old setup first, with the old file**, then drop the local edit and update:
+
+```bash
+cd <YOUR_NAS_PATH>
+
+# 0. Back up (settings and data)
+cp docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
+cp .env .env.bak.$(date +%Y%m%d)
+sudo tar czf ../mio-data.$(date +%Y%m%d).tgz memory/data
+
+# 1. Stop the old setup (Python + ts-proxy) with the local compose file, so ts-proxy stops too
+sudo docker-compose down
+
+# 2. Drop the local edit and update (check that git status shows nothing else changed)
+git checkout -- docker-compose.yml
+git status
+git pull origin main
+
+# 3. Start the TS-only server
+sudo docker-compose up -d --build
+
+# 4. Check
+curl http://127.0.0.1:5002/health          # "version":"4.0" and "served_by":"ts"
+sudo docker-compose logs memory | head     # mio-memory v4.0: listening on 0.0.0.0:5002
+```
+
+Also check that admin.html opens and that MCP tools (e.g. `CoreMem_read`) work from Claude.ai / Claude Code.
+The MCP URL is `https://<YOUR_SERVER_URL>/mcp` (the old `/mcp/sse` was removed). The unused Python image can be removed with `sudo docker image prune`.
+
+**Rollback:** the Python version is kept on the `legacy-python` branch (TS-FULL step 7, the last state that ran with the TS front).
+
+```bash
+sudo docker-compose down
+git fetch origin legacy-python
+git checkout legacy-python
+cp docker-compose.yml.bak.YYYYMMDD docker-compose.yml   # the TS-front setup saved in step 0
+sudo docker-compose up -d --build
+```
+
+To return to normal operation, restore the compose file with `git checkout -- docker-compose.yml`, then `git checkout main`.
 
 ---
 
@@ -148,13 +195,13 @@ curl <YOUR_SERVER_URL>/health
 mio-memory **boots fine when empty**, but the CoreMem `core.md` that defines who the assistant is
 is meaningless without content (the MCP `initialize` tells clients to run `CoreMem_read("core.md")` at session start).
 
-**`memory/skeleton/`** (bundled in the repo, v3.43+) fills this gap.
+**`ts/skeleton/`** (bundled in the repo, v3.43+; moved from `memory/skeleton/` in v4.0) fills this gap.
 
 ### Auto-seed behavior (idempotent; existing environments untouched)
 
-On first boot, `_seed_coremem_if_empty()` runs under this contract:
+On first boot, `seedCoreMemIfEmpty()` in `ts/src/seed.ts` runs under this contract (same as the old Python version):
 
-1. Seed `skeleton/coremem/*.md` **only when CoreMem has no `core_stable.md`** (a fresh environment)
+1. Seed `ts/skeleton/coremem/<lang>/*.md` **only when CoreMem has no `core_stable.md`** (a fresh environment)
 2. Skip any file that already exists (**idempotent** — no double-seeding on restart)
 3. Do **nothing** when `core_stable.md` is present (protects a running environment's data)
 
@@ -186,7 +233,7 @@ For an English-speaking new environment, set `MIO_SEED_LANG=en` in `.env` before
 2. Adjust the operating rules in `core_rules.md` as needed
 3. `protocol_guide.md` (the 38-tool MCP guide) works as-is (install-agnostic)
 
-> See `memory/skeleton/README.md` for the full rationale and policy.
+> See `ts/skeleton/README.md` for the full rationale and policy.
 
 ---
 
@@ -257,12 +304,13 @@ curl http://<YOUR_WS_IP>:1234/v1/models
 
 ### Symptom
 
-`pip install` stalls with DNS resolution failures while building the `python:3.11-slim` image:
+`npm install` stalls with DNS resolution failures while building the `node:22-slim` image (up to v3.x the same thing happened to `pip install` in `python:3.11-slim`):
 
 ```
-pip install anthropic
+npm install --no-audit --no-fund
 ...
-socket.gaierror: [Errno -3] Temporary failure in name resolution
+npm error code EAI_AGAIN
+npm error request to https://registry.npmjs.org/sharp failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org
 ```
 
 ### Cause
@@ -277,8 +325,8 @@ Add `network: host` to the `build:` section of `docker-compose.yml` so the build
 services:
   memory:
     build:
-      context: ./memory
-      network: host    ← add this
+      context: ./ts
+      network: host    ← add this (the bundled docker-compose.yml already has it)
 ```
 
 ---
@@ -299,5 +347,4 @@ services:
     # remove dns: (unneeded — the host's DNS is used)
     volumes:
       - ./memory/data:/data
-      - ./scripts:/app/scripts:ro
 ```

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """MCP 2026-07-28 仕様（ステートレスコア＋OAuth強化）の特性テスト。
 
-新仕様サポートは TS 層（ts/src/mcp.ts・oauth.ts）にのみ実装される
-（main.py は 2025-11-25 準拠のまま — 判断記録 ExtMemory 20260714_005646_決定事項）。
-そのため本ファイルは MIO_TS1=1 のときだけ実行し、Python 単体モードでは skip する。
+新仕様サポートは ts/src/mcp.ts・oauth.ts に実装（旧 Python 版 main.py は 2025-11-25 準拠のままだった —
+判断記録 ExtMemory 20260714_005646_決定事項）。
 
 契約（2026-07-28 RC・modelcontextprotocol.io/specification/draft）:
   - initialize/セッションなしで各リクエストが独立に処理される（ステートレス）
@@ -17,14 +16,7 @@
 """
 import base64
 import hashlib
-import os
 import secrets
-
-import pytest
-
-pytestmark = pytest.mark.skipif(
-    os.environ.get('MIO_TS1') != '1',
-    reason='MCP 2026-07-28 support lives in the TS layer (run with MIO_TS1=1)')
 
 PROTO = '2026-07-28'
 META = 'io.modelcontextprotocol/protocolVersion'

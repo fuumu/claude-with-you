@@ -3,7 +3,7 @@
  *
  * トランスポートレベルの関心事（Origin検証・認証・セッション・SSE・
  * initialize/ping/notifications）とツールディスパッチ（tools/list・tools/call →
- * tools.ts）をすべて TS が所有する。TS-FULL ステップ1 以降、/mcp は Python へ
+ * tools.ts）をすべてこのモジュールが受け持つ。TS-FULL ステップ1 以降、/mcp は Python へ
  * 一切転送しない（未知メソッドも main.py _process_mcp_message と同じ応答を TS が返す）。
  *
  * デュアル時代（dual-era）サーバー実装:

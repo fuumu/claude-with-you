@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """album / file / project / oplog_list / attendance_view の MCP ツール境界挙動。
 
-TS-1 リング4 グループ5〜8（TS ネイティブ化）の回帰用。Python 単体モードが基準で、
-MIO_TS1=1 でも同じ期待値で通ること＝実装差がないことの確認になる。
+TS-1 リング4 グループ5〜8（TS ネイティブ化）の回帰用。期待値は Python 版 main.py の挙動から取った。
 """
 import io
 import json

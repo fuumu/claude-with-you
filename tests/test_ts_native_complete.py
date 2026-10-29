@@ -1,21 +1,16 @@
 # -*- coding: utf-8 -*-
 """TS-1 リング5 完了条件: 通常セッション 38 ツールがすべて TS ネイティブで、
 tools.ts に Python 転送（FORWARD / null 返却）が残っていないこと。
-TS-FULL ステップ1: /mcp と /health が Python に一切問い合わせないこと。
-
-MIO_TS1=1 のときだけ意味があるためそれ以外はスキップ（Python 単体モードは main.py が全部処理する）。
+TS-FULL ステップ1: /mcp と /health が Python に一切問い合わせないこと（v4.0 で Python 版は撤去済み。
+転送の仕組みが戻ってこないことの見張りとして残す）。
 """
 import json
 import os
 import re
 import subprocess
 
-import pytest
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TS_DIR = os.path.join(REPO_ROOT, 'ts')
-
-pytestmark = pytest.mark.skipif(os.environ.get('MIO_TS1') != '1', reason='TS1 専用')
 
 
 def test_all_tools_are_native(server):

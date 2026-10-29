@@ -3,6 +3,8 @@
 *Created: 2026-08-15 / Shizuku (Code side)*
 *Ordered by: Shio (2026-08-15)*
 
+> **v4.0 note (2026-10-30):** the server is now TypeScript only, so this TS-front setup (TS :5002 → Python :5003) is retired. For switching to v4.0 see "Switching from v3.x (Python, TS-front setup) to v4.0" in [setup.md](setup.md). This document stays as a record.
+
 ---
 
 ## ① Production TS Service Definition Check & Creation

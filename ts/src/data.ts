@@ -1,6 +1,5 @@
 /**
- * データ層: /data/ 配下の JSON を Python 実装（main.py）と同一形式で読む。
- * リング1は読み取り専用（書き込みは Python に残る）。
+ * データ層: /data/ 配下の JSON を読む（形式は旧 Python 実装 main.py と同一）。書き込みは write.ts。
  */
 import fs from 'node:fs';
 import path from 'node:path';
