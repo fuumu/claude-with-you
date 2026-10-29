@@ -84,7 +84,7 @@ command in `tests/conftest.py`.
 | POST | `/api/memory/reindex` | Rebuild index.json |
 | POST | `/api/memory/share/<id>` | Issue share token |
 | GET | `/api/share/<token>` | Entry without auth (24h expiry) |
-| GET | `/api/memories/symbolic` | Layer-3 symbolic compression list for all entries (`{id, title, symbolic}`, empties excluded, v3.42) |
+| ~~GET~~ | ~~`/api/memories/symbolic`~~ | Removed in TS-FULL step 4 (404 on both servers; the legacy path-embedded token API `/api/<token>/memory/...` was removed at the same time; `test_removed_legacy_routes_are_404`) |
 | POST | `/api/memory/cleanup-empty` | Bulk soft-delete empty memory entries (dry_run supported, v3.79) |
 | GET | `/api/export` | ZIP of CoreMem + ExtMemory |
 | POST | `/api/import/backup` | Restore from an export ZIP (multipart `file`, `mode=skip/overwrite`, `dry_run=true`). Response `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`. Bad ZIP / wrong structure / bad mode → 400 (v3.63; contract pinned in tests/test_backup_restore.py) |
@@ -183,6 +183,12 @@ response shapes pinned by tests.
 - When an import entry id (timestamp_index_first-8-of-uuid) collides with an existing file, `_2`, `_3`, … is appended (main.py overwrote the entry from another import in the same second; `test_import_entry_ids_do_not_overwrite`)
 - `index.json` is rebuilt after source_thread linking too (main.py only when imported > 0)
 - `index/rebuild` does not count the `{uuid}_digest*.json` / `{uuid}_redacted.json` caches as conversations
+
+**Intentional differences of the TS implementation (TS-FULL step 4, `ts/src/rest-admin.ts`) from main.py:**
+- A conversation or album share token passed to `GET /api/share/<token>` returns 404 (main.py: 500)
+- REST CoreMem save/delete (`POST/DELETE /api/coremem/<name>`) also writes `coremem_save` / `coremem_delete` oplog entries (main.py only for the MCP tools)
+- Non-numeric integer parameters such as `limit` return 400 (main.py: 500)
+- TS lag fixed in step 4: REST `hsearch` now takes `author` / `search_layer` (v3.81), `index.json`'s `body_length` counts code points (emoji used to count as 2), REST CoreMem save has the manifest guard (409, v3.96)
 - Conversation saving (`_save_conversations`) always runs independently of dedup
   (including rating carry-over); v3.77: diff update — skips write when existing file
   has ≥ message_count (response includes `skipped`/`updated` counts)

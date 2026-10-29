@@ -72,3 +72,12 @@ def test_rest_requires_auth(server):
     assert anon.get(server.base_url + '/api/coremem').status_code == 401
     assert anon.post(server.base_url + '/api/coremem/r3c_note.md',
                      json={'content': 'x'}).status_code == 401
+
+
+def test_rest_save_refuses_manifest_managed_file(server):
+    """{stem}_manifest.md がある名前への REST 保存は 409（v3.96 manifest ガード。TS は TS-FULL ステップ4 で対応）"""
+    r = server.post('/api/coremem/r3c_split_manifest.md', json={'content': 'order:\n- r3c_split_a.md\n'})
+    assert r.status_code == 201
+    r = server.post('/api/coremem/r3c_split.md', json={'content': 'x'})
+    assert r.status_code == 409
+    assert '分割管理' in r.json()['error']

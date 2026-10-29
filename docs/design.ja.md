@@ -629,7 +629,9 @@ conversation_share(uuid: str)
   logs.html の会話ビューアが各メッセージ下に折りたたみ「📝 注記 (N)」を表示し、
   会話全体注記は先頭にまとめる。番号付けは chat_messages の1始まり（`conversation_read` の No.X と一致）
 
-### symbolic 一覧 API（M3, v3.42）
+### symbolic 一覧 API（M3, v3.42 → TS-FULL ステップ4 で廃止）
+
+**廃止済み（404）。** 3層は `index.json` の `symbolic` に入っているので `GET /api/memory/index` から取れる。以下は当時の仕様。
 
 `GET /api/memories/symbolic` は index.json から全エントリの `{id, title, symbolic}` を返す
 （symbolic が空＝3層未生成のものは除外、読み取り専用）。俯瞰して似たエントリを束ねる・

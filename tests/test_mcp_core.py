@@ -308,7 +308,6 @@ def test_rating_protection(server):
     assert server.tool('memory_search', {'q': '鳳凰', 'include_adult': True})['total'] == 1
 
 
-@pytest.mark.requires_python
 def test_memory_share_creates_24h_url(server):
     """memory_share は admin.html?token=...&id=... 形式のURLと token / expires_at を返す。
     エントリ本体は GET /api/share/<token> で認証なしに取得できる"""

@@ -81,7 +81,7 @@ python -m venv .venv
 | POST | `/api/memory/reindex` | index.json 再構築 |
 | POST | `/api/memory/share/<id>` | 共有トークン発行 |
 | GET | `/api/share/<token>` | 認証不要でエントリ返却（24h期限） |
-| GET | `/api/memories/symbolic` | 全エントリの layer-3 シンボリック圧縮一覧（`{id, title, symbolic}`、空を除外, v3.42） |
+| ~~GET~~ | ~~`/api/memories/symbolic`~~ | TS-FULL ステップ4 で廃止（両サーバーとも 404。旧パス埋め込みトークン API `/api/<token>/memory/...` も同時に廃止。`test_removed_legacy_routes_are_404`） |
 | POST | `/api/memory/cleanup-empty` | 空エントリの一括論理削除（`dry_run` 対応, v3.79） |
 | GET | `/api/export` | CoreMem+ExtMemory の ZIP |
 | POST | `/api/import/backup` | export ZIP から復元（multipart `file`・`mode=skip/overwrite`・`dry_run=true`）。応答 `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`。ZIP不正・構造不一致・不正modeは400（v3.63・契約は tests/test_backup_restore.py） |
@@ -176,6 +176,12 @@ python -m venv .venv
 - インポートで作るエントリの ID（時刻_番号_uuid 先頭8文字）が既存ファイルとぶつかったら `_2` `_3` … を付ける（main.py は同じ秒の別インポートで上書きしていた。`test_import_entry_ids_do_not_overwrite`）
 - source_thread を紐づけたときも `index.json` を作り直す（main.py は imported > 0 のときだけ）
 - `index/rebuild` は `{uuid}_digest*.json`・`{uuid}_redacted.json` のキャッシュを会話として数えない
+
+**TS 実装（TS-FULL ステップ4・`ts/src/rest-admin.ts`）での main.py との差（意図的）:**
+- 会話・アルバムの共有トークンを `GET /api/share/<token>` に渡すと 404（main.py は 500）
+- REST の CoreMem 保存・削除（`POST/DELETE /api/coremem/<name>`）も oplog に `coremem_save` / `coremem_delete` を残す（main.py は MCP 経由のときだけ）
+- `limit` などの整数パラメータが数字でなければ 400（main.py は 500）
+- ステップ4で直した TS 側の遅れ: REST `hsearch` の `author` / `search_layer`（v3.81）、`index.json` の `body_length` をコードポイント数に（絵文字を 2 と数えていた）、REST の CoreMem 保存の manifest ガード（409・v3.96）
 
 ## 7. その他 REST
 

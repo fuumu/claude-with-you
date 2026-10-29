@@ -44,7 +44,6 @@ def _import(server, zip_buf, **form):
                        data=form)
 
 
-@pytest.mark.requires_python
 def test_restore_new_entries_and_coremem(server):
     """新規ID・新規CoreMem名の復元: restored にカウントされ、実際に読める＋indexに載る"""
     zbuf = _make_backup_zip(
@@ -71,7 +70,6 @@ def test_restore_new_entries_and_coremem(server):
     assert '復元されたコアメモリ' in core.json()['content']
 
 
-@pytest.mark.requires_python
 def test_real_export_roundtrip_skips_everything(server):
     """実 export の ZIP をそのまま再インポート → mode=skip では全件スキップ＋衝突列挙"""
     r = server.get('/api/export')
@@ -85,7 +83,6 @@ def test_real_export_roundtrip_skips_everything(server):
     assert any(c.startswith('coremem:') for c in d['conflicts'])
 
 
-@pytest.mark.requires_python
 def test_overwrite_restores_original_content(server):
     """改変後に mode=overwrite で復元 → 内容がバックアップ時点に戻る。CoreMem は新版が積まれる"""
     # バックアップ時点の状態を ZIP 化
@@ -124,7 +121,6 @@ def test_overwrite_restores_original_content(server):
     assert ver >= 3
 
 
-@pytest.mark.requires_python
 def test_dry_run_writes_nothing(server):
     zbuf = _make_backup_zip(
         entries=[_entry('20260701_120000_復元テスト', 'dry_run はファイルを作らない')],
@@ -136,7 +132,6 @@ def test_dry_run_writes_nothing(server):
     assert server.get('/api/coremem/b1_dryrun.md').status_code == 404
 
 
-@pytest.mark.requires_python
 def test_rejects_bad_input(server):
     # file なし
     r = server.post('/api/import/backup', data={'mode': 'skip'})

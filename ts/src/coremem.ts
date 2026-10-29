@@ -446,6 +446,22 @@ export async function handleCoremem(
       sendJson(res, 400, { error: 'Bad Request', code: 400 });
       return true;
     }
+    // v3.96 manifest ガード: {stem}_manifest.md があるファイルは分割管理なので直接保存させない（409）
+    const ext = path.extname(name);
+    const stem = ext ? name.slice(0, -ext.length) : name;
+    if (ext === '.md' && !stem.endsWith('_manifest')) {
+      const manifestPath = path.join(baseDir ?? ARTIFACTS_DIR, `${stem}_manifest.md`);
+      let hasManifest = fs.existsSync(manifestPath);
+      try {
+        hasManifest = hasManifest || fs.lstatSync(manifestPath).isSymbolicLink();
+      } catch {
+        /* 無い */
+      }
+      if (hasManifest) {
+        sendJson(res, 409, { error: `${name} は分割管理されています` });
+        return true;
+      }
+    }
     let data: Record<string, unknown> | null = null;
     try {
       data = JSON.parse(await readRequestBody(req));

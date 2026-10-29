@@ -394,11 +394,12 @@ function handleIndexRebuild(res: http.ServerResponse): void {
  * rating_skip_reason が no_text / empty で、タイトルが hex 8 文字だけのもの。dry_run なら変えない
  */
 async function handleCleanupEmpty(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  let dryRun = false;
+  // main.py は受け取った dry_run の値をそのまま返し、真偽は Python の判定で見る
+  let dryRun: unknown = false;
   if (/application\/json/i.test(String(req.headers['content-type'] ?? ''))) {
     try {
       const d = JSON.parse(await readRequestBody(req)) as unknown;
-      dryRun = pyTruthy(pyGet(d, 'dry_run', false));
+      dryRun = pyGet(d, 'dry_run', false);
     } catch {
       sendJson(res, 400, { error: 'invalid JSON' });
       return;
@@ -413,9 +414,9 @@ async function handleCleanupEmpty(req: http.IncomingMessage, res: http.ServerRes
     if (skipReason !== 'no_text' && skipReason !== 'empty') continue;
     if (typeof title !== 'string' || !/^[0-9a-f]{8}$/.test(title)) continue;
     actions.push({ uuid: pyGet(e, 'uuid', ''), title, skip_reason: skipReason });
-    if (!dryRun) e.hidden = true;
+    if (!pyTruthy(dryRun)) e.hidden = true;
   }
-  if (!dryRun && actions.length > 0) {
+  if (!pyTruthy(dryRun) && actions.length > 0) {
     saveConvIndex(index);
     logInfo(`conversations cleanup-empty: hidden ${actions.length} entries`);
   }

@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR, DATA_ROOT, INDEX_FILE, loadAllEntries, MemoryEntry } from './data.js';
+import { cpLen } from './py-compat.js';
 import { extractLayer3 } from './search.js';
 
 export const OPLOG_FILE = path.join(DATA_ROOT, 'oplog.json');
@@ -89,7 +90,8 @@ export function rebuildIndex(): void {
     if (e.local_only) item.local_only = true;
     if (e.author) item.author = e.author;
     if (e.source_thread) item.source_thread = e.source_thread;
-    item.body_length = (e.body ?? '').length;
+    // Python の len() と同じくコードポイント数（絵文字などを 2 と数えない）
+    item.body_length = cpLen(String(e.body ?? ''));
     index.push(item);
   }
   writeJson(INDEX_FILE, index);

@@ -218,7 +218,6 @@ def test_sublimate_from_conversation_range(server, make_conv_zip):
 
 # ── レーティング判定バッチ ────────────────────────────────────────────
 
-@pytest.mark.requires_python
 def test_rating_batch_via_mcp(server, make_conv_zip):
     server.llm.reset()
     with isolated_data(server):
@@ -283,7 +282,6 @@ def test_rating_batch_rest_start_and_conflict(server, make_conv_zip):
 
 # ── 要約レイヤー生成バッチ ────────────────────────────────────────────
 
-@pytest.mark.requires_python
 def test_summary_batch_layers_keywords_and_empty_raw(server):
     server.llm.reset()
     with isolated_data(server):
