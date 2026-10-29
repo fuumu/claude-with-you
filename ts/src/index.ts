@@ -18,6 +18,7 @@ import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { handleConversations } from './conversations.js';
 import { ARTIFACTS_DIR, handleCoremem } from './coremem.js';
 import { DATA_DIR, DATA_ROOT, loadAllEntries, loadEntry, loadIndexList } from './data.js';
+import { readBodyText as readRequestBody } from './http-body.js';
 import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
 import { handleLlmRest } from './rest-llm.js';
@@ -119,15 +120,6 @@ function handleNative(req: http.IncomingMessage, res: http.ServerResponse, url: 
     sendJson(res, 200, entry);
   }
   return true;
-}
-
-function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 const ENTRY_RESERVED = new Set(['index', 'tags', 'hsearch', 'search', 'reindex']);

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import type http from 'node:http';
 import { OAUTH_STORE } from './data.js';
 import { API_TOKEN } from './auth.js';
+import { readBodyText as readBody } from './http-body.js';
 
 const BASE_URL = process.env.MIO_BASE_URL ?? 'http://localhost:5002';
 
@@ -99,15 +100,6 @@ function timingSafeEqual(a: string, b: string): boolean {
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
-}
-
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 /** JSON body → だめなら form-urlencoded（main.py: get_json(silent=True) or request.form） */

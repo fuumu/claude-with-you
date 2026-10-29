@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { DATA_ROOT } from './data.js';
+import { readBodyText as readRequestBody } from './http-body.js';
 import { appendOplog, jstIsoFromMs } from './write.js';
 
 export const ARTIFACTS_DIR = path.join(DATA_ROOT, 'artifacts');
@@ -378,15 +379,6 @@ export function artifactsDelete(name: string, baseDir?: string): boolean {
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
-}
-
-function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 /**
