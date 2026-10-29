@@ -1,12 +1,7 @@
 /**
  * TS-1 リング4 グループ8: その他の MCP ツール。
  * ネイティブ: oplog_list / attendance_view
- *
- * Python 転送のまま（意図的に未登録）:
- *   - llm_status         … Python プロセス内の LLM ログバッファ・モデル選択状態を返す診断ツール
- *   - batch_run_summary_layers / batch_run_rating … Python プロセス内のバッチスレッド状態と LLM に依存
- *   - sublimate          … LLM 依存（Ring 5）
- *   - conversation_digest（生成）/ album_save / file_upload(file_path) は各 tools-*.ts 参照
+ * （llm_status・batch_run_*・sublimate・conversation_digest は Ring 5 で tools-llm.ts に移した）
  */
 import fs from 'node:fs';
 import { attendanceView } from './attendance-view.js';

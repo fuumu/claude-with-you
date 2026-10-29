@@ -1,7 +1,7 @@
 /**
- * 自動生成ファイル — 手で編集しない。
- * 生成元: memory/app/main.py の _FRIEND_MCP_TOOLS / _DEFAULT_FRIEND_CORE（友達セッション用）
- * 再生成: .venv/Scripts/python scripts/gen_ts_tool_defs.py
+ * 友達セッションの MCP ツール定義と既定の friend_core（正本）。
+ * TS-FULL ステップ1 で main.py の _FRIEND_MCP_TOOLS / _DEFAULT_FRIEND_CORE からの自動生成をやめ、
+ * このファイルを正本にした。変更はここを直接編集する。
  */
 import type { ToolDef } from './tool-defs.js';
 

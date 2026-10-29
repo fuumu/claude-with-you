@@ -8989,39 +8989,6 @@ def mcp_streamable():
     return resp
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  旧SSEエンドポイント（後方互換）
-# ══════════════════════════════════════════════════════════════════════
-
-@app.route("/mcp/sse")
-def mcp_sse():
-    token = _extract_bearer(request)
-    if not _verify_token(token):
-        abort(401)
-    session_id = str(uuid.uuid4())
-    endpoint_url = f"{BASE_URL}/mcp/messages?session_id={session_id}&token={API_TOKEN}"
-    def generate():
-        yield f"event: endpoint\ndata: {endpoint_url}\n\n"
-        while True:
-            time.sleep(15)
-            yield ": keepalive\n\n"
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-@app.route("/mcp/messages", methods=["POST"])
-def mcp_messages():
-    token = _extract_bearer(request)
-    if not _verify_token(token):
-        abort(401)
-    msg = request.get_json()
-    if not msg:
-        abort(400)
-    result = _process_mcp_message(msg)
-    if result is None:
-        return Response(status=202)
-    return jsonify(result)
-
-
 def _seed_dir_for_lang(lang):
     """skeleton/coremem/<lang>/ を探す（docker/repo 両構成・無ければ None）"""
     for base in _SKEL_BASES:

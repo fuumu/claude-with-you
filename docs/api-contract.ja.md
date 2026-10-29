@@ -195,7 +195,7 @@ python -m venv .venv
 - 友達システム（登録→承認→アクティベーション→friend MCP セッション）
 - `conversation_digest` / 要約バッチの実生成（ローカルLLM 依存のため status 系のみ固定）
 - `album_save(url=...)` の外部ダウンロード・HTML画像抽出
-- レガシー `/mcp/sse` / `/mcp/messages`
+- ~~レガシー `/mcp/sse` / `/mcp/messages`~~ → TS-FULL ステップ1 で廃止（両サーバーとも 404。`test_legacy_sse_endpoints_removed`）
 
 これらは TS-1 実施前に必要に応じて追加する。
 

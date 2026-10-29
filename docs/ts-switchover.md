@@ -229,5 +229,5 @@ To be executed by chat-side agents:
 ### Known Risks
 
 1. **oauth_store.json concurrent writes**: TS and Python read-modify-write the same file. Race condition risk is extremely low unless OAuth token issuance is concentrated
-2. **Legacy SSE (`/mcp/sse`, `/mcp/messages`)**: TS transparently forwards to Python. Current Claude.ai uses only `/mcp`, no impact
+2. ~~**Legacy SSE (`/mcp/sse`, `/mcp/messages`)**: TS transparently forwards to Python~~ → removed in TS-FULL step 1 (404). Current Claude.ai uses only `/mcp`, no impact
 3. **Batch/digest endpoints**: Remain Python-direct on :5003. Operations from admin.html pass through TS → Python transparent proxy

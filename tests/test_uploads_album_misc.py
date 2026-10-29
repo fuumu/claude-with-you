@@ -4,6 +4,8 @@ import io
 import json
 import os
 
+import pytest
+
 
 def _make_png_bytes():
     """Pillow で最小のPNGを生成"""
@@ -16,6 +18,7 @@ def _make_png_bytes():
 
 # ── Uploads（v3.59）──────────────────────────────────────────────────
 
+@pytest.mark.requires_python
 def test_uploads_roundtrip(server):
     content = 'TS0アップロードテスト本文'.encode('utf-8')
     r = server.post('/api/uploads/',
@@ -53,6 +56,7 @@ def test_uploads_roundtrip(server):
     assert server.get(f'/api/uploads/{uid}').status_code == 404
 
 
+@pytest.mark.requires_python
 def test_uploads_json_file_roundtrip(server):
     """ext=json のアップロードでも実体がメタデータに上書きされない（メタは {id}.meta.json）"""
     content = json.dumps({'k': 'v', 'n': 'JSON実体'}, ensure_ascii=False).encode('utf-8')
@@ -78,6 +82,7 @@ def test_uploads_json_file_roundtrip(server):
     assert not os.path.exists(os.path.join(up, f'{uid}.meta.json'))
 
 
+@pytest.mark.requires_python
 def test_uploads_legacy_meta_migration(server):
     """旧形式（メタが {id}.json）のアップロードは参照時に {id}.meta.json へ退避される"""
     up = os.path.join(server.data_root, 'uploads')
@@ -123,6 +128,7 @@ def test_uploads_delete_not_found(server):
 
 # ── Album ────────────────────────────────────────────────────────────
 
+@pytest.mark.requires_python
 def test_album_upload_list_patch_delete(server):
     png = _make_png_bytes()
     r = server.post('/api/album/upload',
@@ -212,6 +218,7 @@ def test_rest_hsearch_include_conversations(server):
     assert 'conversations' in d and 'conversations_total' in d
 
 
+@pytest.mark.requires_python
 def test_rest_export_zip(server):
     r = server.get('/api/export')
     assert r.status_code == 200
@@ -223,6 +230,7 @@ def test_rest_reindex(server):
     assert r.status_code == 200
 
 
+@pytest.mark.requires_python
 def test_import_status(server):
     r = server.get('/api/import-status')
     assert r.status_code == 200

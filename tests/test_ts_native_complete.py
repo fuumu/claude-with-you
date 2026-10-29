@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """TS-1 リング5 完了条件: 通常セッション 38 ツールがすべて TS ネイティブで、
 tools.ts に Python 転送（FORWARD / null 返却）が残っていないこと。
+TS-FULL ステップ1: /mcp と /health が Python に一切問い合わせないこと。
 
 MIO_TS1=1 のときだけ意味があるためそれ以外はスキップ（Python 単体モードは main.py が全部処理する）。
 """
@@ -33,18 +34,22 @@ def test_all_tools_are_native(server):
     assert res['missing'] == []
 
 
+def _code_without_comments(fn):
+    with open(os.path.join(TS_DIR, 'src', fn), encoding='utf-8') as f:
+        text = f.read()
+    code = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+    return re.sub(r'//[^\n]*', '', code)
+
+
 def test_no_forward_left_in_tool_handlers():
-    """ハンドラーが FORWARD を返す経路が残っていない（定義と dispatcher の判定以外に出現しない）"""
+    """ハンドラーが Python 転送を指定する FORWARD の仕組みが残っていない（TS-FULL ステップ1 で撤去）"""
     src_dir = os.path.join(TS_DIR, 'src')
-    users = []
-    for fn in sorted(os.listdir(src_dir)):
-        if not fn.endswith('.ts'):
-            continue
-        with open(os.path.join(src_dir, fn), encoding='utf-8') as f:
-            text = f.read()
-        # コメントを除いたコード中の FORWARD 識別子
-        code = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
-        code = re.sub(r'//[^\n]*', '', code)
-        if re.search(r'\bFORWARD\b', code):
-            users.append(fn)
-    assert users == ['tool-types.ts', 'tools.ts'], users
+    users = [fn for fn in sorted(os.listdir(src_dir))
+             if fn.endswith('.ts') and re.search(r'\bFORWARD\b', _code_without_comments(fn))]
+    assert users == [], users
+
+
+def test_mcp_transport_has_no_upstream():
+    """mcp.ts は Python（upstream）を参照しない（未知メソッド・バージョンも TS が自前で返す）"""
+    code = _code_without_comments('mcp.ts')
+    assert not re.search(r'UPSTREAM|forwardToUpstream|upstreamVersion', code)

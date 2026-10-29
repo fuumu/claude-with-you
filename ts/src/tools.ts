@@ -1,11 +1,10 @@
 /**
  * TS-1 リング4: MCP tools/list・tools/call のネイティブディスパッチャー。
  *
- * - tools/list: main.py の _MCP_TOOLS を生成したスナップショット（tool-defs.ts）を返す。
- *   定義の同期は scripts/gen_ts_tool_defs.py と tests/test_mcp_core.py の照合テストで担保する。
+ * - tools/list: tool-defs.ts（ツール定義の正本）を返す。
  * - tools/call: ツール名でハンドラーに振り分ける。ハンドラーは既存の TS モジュール
  *   （data / search / write / coremem / inbox / conversations …）の関数を呼ぶ。
- *   未移行ツールは null を返し、呼び出し側（mcp.ts）が従来どおり Python へ転送する（段階移行）。
+ *   未知のツール名は main.py と同じく {"error": "unknown tool"} を返す（Python へは転送しない）。
  *   グループ別のハンドラーは tools-*.ts に置き、ここで登録する。
  *
  * レスポンス形状は main.py の _handle_tool_call / _process_mcp_message と同一:
@@ -18,7 +17,7 @@ import path from 'node:path';
 import { DATA_ROOT, loadEntry, loadIndexList } from './data.js';
 import { hierarchicalSearch, randomIndexSample, ratingExcluded } from './search.js';
 import { TOOL_DEFS, ToolDef } from './tool-defs.js';
-import { Args, FORWARD, Handler, ToolContext, truthy, toInt } from './tool-types.js';
+import { Args, Handler, ToolContext, truthy, toInt } from './tool-types.js';
 import { ALBUM_HANDLERS } from './tools-album.js';
 import { CONVERSATION_HANDLERS } from './tools-conversation.js';
 import { COREMEM_HANDLERS } from './tools-coremem.js';
@@ -150,18 +149,11 @@ export function isNativeTool(name: string): boolean {
 }
 
 /**
- * tools/call のネイティブ処理。未移行ツールは null（呼び出し側が Python へ転送する）。
- * 戻り値は JSON-RPC の result（{ content: [...] }）。
+ * tools/call のネイティブ処理。戻り値は JSON-RPC の result（{ content: [...] }）。
  */
-export async function callToolNative(
-  name: string,
-  args: unknown,
-  ctx: ToolContext,
-): Promise<Args | null> {
-  if (!isNativeTool(name)) return null;
+export async function callToolNative(name: string, args: unknown, ctx: ToolContext): Promise<Args> {
   const a: Args = args && typeof args === 'object' && !Array.isArray(args) ? (args as Args) : {};
-  const raw = await HANDLERS[name](a, ctx);
-  if (raw === FORWARD) return null; // ハンドラーが Python 転送を指定（LLM 依存の分岐など）
+  const raw = isNativeTool(name) ? await HANDLERS[name](a, ctx) : { error: 'unknown tool' };
   // 画像等のマルチコンテンツ応答（album_read）: server_time は本文側に含めて返す
   if (raw && typeof raw === 'object' && '_mcp_content' in (raw as object)) {
     return { content: (raw as { _mcp_content: unknown })._mcp_content };

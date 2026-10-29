@@ -2,10 +2,9 @@
  * TS-1 トランスポート前倒し: MCP Streamable HTTP トランスポート層。
  *
  * トランスポートレベルの関心事（Origin検証・認証・セッション・SSE・
- * initialize/ping/notifications）を TS が所有する。ツールディスパッチ
- * （tools/list・tools/call）はリング4で tools.ts へ移行中:
- * tools/list と移行済みツールの tools/call は TS ネイティブ、未移行ツールは
- * JSON-RPC のまま Python へ転送する（段階移行）。
+ * initialize/ping/notifications）とツールディスパッチ（tools/list・tools/call →
+ * tools.ts）をすべて TS が所有する。TS-FULL ステップ1 以降、/mcp は Python へ
+ * 一切転送しない（未知メソッドも main.py _process_mcp_message と同じ応答を TS が返す）。
  *
  * デュアル時代（dual-era）サーバー実装:
  *   - レガシー（2025-11-25 以前）: initialize ハンドシェイク＋Mcp-Session-Id。
@@ -23,7 +22,7 @@
  */
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
+import { extractBearer, verifyToken } from './auth.js';
 import {
   activeFriendByToken,
   Friend,
@@ -32,9 +31,8 @@ import {
 } from './friend.js';
 import { FRIEND_TOOL_DEFS } from './friend-defs.js';
 import { callToolNative, listTools } from './tools.js';
+import { VERSION } from './version.js';
 
-const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
-const UPSTREAM_PORT = parseInt(process.env.MIO_UPSTREAM_PORT ?? '5002', 10);
 const ALLOWED_ORIGINS = (process.env.MIO_ALLOWED_ORIGINS ?? '')
   .split(',')
   .map((s) => s.trim())
@@ -208,8 +206,7 @@ async function processModernMessage(
   }
 
   if (method === 'server/discover') {
-    const version = await upstreamVersion();
-    const serverInfo = { name: 'mio-memory', version: `${version}.0` };
+    const serverInfo = { name: 'mio-memory', version: `${VERSION}.0` };
     modernJson(res, 200, {
       jsonrpc: '2.0',
       id: msgId,
@@ -262,8 +259,7 @@ async function processModernMessage(
             if (!('cacheScope' in r)) r.cacheScope = 'private';
           }
           const rmeta = (r._meta ?? {}) as Record<string, unknown>;
-          const srvVer = await upstreamVersion();
-          rmeta[META_SERVER_INFO] = { name: 'mio-memory', version: `${srvVer}.0` };
+          rmeta[META_SERVER_INFO] = { name: 'mio-memory', version: `${VERSION}.0` };
           r._meta = rmeta;
           out = JSON.stringify(parsed);
         }
@@ -273,7 +269,7 @@ async function processModernMessage(
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(out);
     } catch {
-      modernJson(res, 502, { error: 'upstream unavailable' });
+      modernError(res, 500, msgId, -32603, 'Internal error');
     }
     return;
   }
@@ -289,34 +285,6 @@ function checkOrigin(req: http.IncomingMessage): boolean {
   return ALLOWED_ORIGINS.includes(origin);
 }
 
-/** アップストリーム（Python /mcp）のバージョンを /health からキャッシュ取得 */
-let versionCache: string | null = null;
-function upstreamVersion(): Promise<string> {
-  if (versionCache) return Promise.resolve(versionCache);
-  return new Promise((resolve) => {
-    const req = http.get(
-      { host: UPSTREAM_HOST, port: UPSTREAM_PORT, path: '/health', timeout: 5000 },
-      (res) => {
-        let body = '';
-        res.on('data', (c) => (body += c));
-        res.on('end', () => {
-          try {
-            versionCache = (JSON.parse(body) as { version?: string }).version ?? '0';
-          } catch {
-            versionCache = '0';
-          }
-          resolve(versionCache);
-        });
-      },
-    );
-    req.on('error', () => resolve('0'));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve('0');
-    });
-  });
-}
-
 function isToolMethod(msg: JsonRpcMessage): boolean {
   const m = msg.method ?? '';
   return m === 'tools/list' || m === 'tools/call';
@@ -324,7 +292,7 @@ function isToolMethod(msg: JsonRpcMessage): boolean {
 
 /**
  * tools/list・tools/call の1メッセージを処理し、JSON-RPC レスポンス（生JSON文字列）を返す。
- * tools/list と移行済みツールは TS ネイティブ（tools.ts）、未移行ツールは Python へ転送する。
+ * 未知のツール名は main.py と同じく result 内の {"error": "unknown tool"}（server_time 付き）。
  */
 async function dispatchTool(msg: JsonRpcMessage): Promise<{ status: number; body: string }> {
   const id = msg.id ?? null;
@@ -337,11 +305,10 @@ async function dispatchTool(msg: JsonRpcMessage): Promise<{ status: number; body
 
   const params = (msg.params ?? {}) as Record<string, unknown>;
   const name = typeof params.name === 'string' ? params.name : '';
-  let result: Record<string, unknown> | null = null;
   try {
-    result = await callToolNative(name, params.arguments ?? {}, {
-      serverVersion: await upstreamVersion(),
-    });
+    const result = await callToolNative(name, params.arguments ?? {}, { serverVersion: VERSION });
+    console.log(`[MCP] tools/call native: ${name}`);
+    return { status: 200, body: JSON.stringify({ jsonrpc: '2.0', id, result }) };
   } catch (e) {
     console.log(`[MCP] tools/call native error: ${name}: ${(e as Error).message}`);
     return {
@@ -353,41 +320,36 @@ async function dispatchTool(msg: JsonRpcMessage): Promise<{ status: number; body
       }),
     };
   }
-  if (result !== null) {
-    console.log(`[MCP] tools/call native: ${name}`);
-    return { status: 200, body: JSON.stringify({ jsonrpc: '2.0', id, result }) };
-  }
-  return forwardToUpstream(msg);
 }
 
-/** 単一 JSON-RPC メッセージを Python /mcp へ転送し、レスポンス（生JSON文字列）を返す */
-function forwardToUpstream(payload: unknown): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(payload);
-    const req = http.request(
-      {
-        host: UPSTREAM_HOST,
-        port: UPSTREAM_PORT,
-        path: '/mcp',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(data),
-          Accept: 'application/json',
-          Authorization: `Bearer ${API_TOKEN}`,
-        },
-        timeout: 120000,
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (c) => (body += c));
-        res.on('end', () => resolve({ status: res.statusCode ?? 502, body }));
-      },
-    );
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error('upstream mcp timeout')));
-    req.end(data);
-  });
+/**
+ * トランスポート・ツール以外のメッセージ（不正形式・未知メソッド）。main.py _process_mcp_message と同一:
+ * オブジェクトでない → -32600、id なし → null（=202）、それ以外 → -32601
+ */
+function otherMessageResponse(msg: unknown): Record<string, unknown> | null {
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+    return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } };
+  }
+  const m = msg as JsonRpcMessage;
+  const msgId = m.id ?? null;
+  if (msgId === null) return null;
+  console.log(`[MCP] unknown method: ${m.method ?? '(none)'}`);
+  return { jsonrpc: '2.0', id: msgId, error: { code: -32601, message: 'Method not found' } };
+}
+
+/** 通常セッションの1メッセージを処理する（バッチの各要素にも使う）。notification は null */
+async function processLegacyMessage(
+  msg: unknown,
+): Promise<{ response: Record<string, unknown> | null; sessionId?: string }> {
+  if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
+    const m = msg as JsonRpcMessage;
+    if (isTransportMethod(m)) return processTransportMessage(m);
+    if (isToolMethod(m)) {
+      const { body } = await dispatchTool(m);
+      return { response: JSON.parse(body) as Record<string, unknown> };
+    }
+  }
+  return { response: otherMessageResponse(msg) };
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -421,7 +383,6 @@ async function processTransportMessage(
   if (method === 'initialize') {
     const params = (msg.params ?? {}) as { protocolVersion?: string };
     const proto = params.protocolVersion ?? 'unknown';
-    const version = await upstreamVersion();
     const sessionId = randomUUID();
     return {
       sessionId,
@@ -431,7 +392,7 @@ async function processTransportMessage(
         result: {
           protocolVersion: proto === '2025-11-25' || proto === '2025-03-26' ? proto : '2025-03-26',
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: 'mio-memory', version: `${version}.0` },
+          serverInfo: { name: 'mio-memory', version: `${VERSION}.0` },
           instructions: INSTRUCTIONS,
         },
       },
@@ -461,7 +422,6 @@ async function processFriendMessage(
   if (method === 'initialize') {
     const params = (m.params ?? {}) as { protocolVersion?: string };
     const proto = params.protocolVersion ?? 'unknown';
-    const version = await upstreamVersion();
     return {
       sessionId: randomUUID(),
       response: {
@@ -470,7 +430,7 @@ async function processFriendMessage(
         result: {
           protocolVersion: proto === '2025-11-25' || proto === '2025-03-26' ? proto : '2025-03-26',
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: 'mio-memory', version: `${version}.0` },
+          serverInfo: { name: 'mio-memory', version: `${VERSION}.0` },
           instructions: friendInstructions(friend),
         },
       },
@@ -644,59 +604,30 @@ export async function handleMcp(
     return true;
   }
 
-  // バッチ: 全要素がトランスポートメソッドならネイティブ、そうでなければ丸ごと転送
+  // バッチ: 各要素を個別に処理し、応答のあるものだけ返す（全部 notification なら 202）
   if (Array.isArray(msg)) {
-    console.log(`[MCP] protocol=legacy method=(batch ${(msg as JsonRpcMessage[]).length} msgs)`);
-    const messages = msg as JsonRpcMessage[];
-    if (messages.every((m) => isTransportMethod(m) || isToolMethod(m))) {
-      const results: Record<string, unknown>[] = [];
-      for (const m of messages) {
-        if (isToolMethod(m)) {
-          const { body } = await dispatchTool(m);
-          results.push(JSON.parse(body) as Record<string, unknown>);
-          continue;
-        }
-        const { response } = await processTransportMessage(m);
-        if (response !== null) results.push(response);
-      }
-      if (results.length === 0) {
-        respond(res, 202, null, sessionId, false);
-      } else {
-        respond(res, 200, JSON.stringify(results), sessionId, wantsSse);
-      }
+    console.log(`[MCP] protocol=legacy method=(batch ${msg.length} msgs)`);
+    const results: Record<string, unknown>[] = [];
+    for (const m of msg) {
+      const { response } = await processLegacyMessage(m);
+      if (response !== null) results.push(response);
+    }
+    if (results.length === 0) {
+      respond(res, 202, null, sessionId, false);
     } else {
-      try {
-        const { status, body } = await forwardToUpstream(messages);
-        respond(res, status, status === 202 ? null : body, sessionId, wantsSse);
-      } catch {
-        respond(res, 502, JSON.stringify({ error: 'upstream unavailable' }), '', false);
-      }
+      respond(res, 200, JSON.stringify(results), sessionId, wantsSse);
     }
     return true;
   }
 
   const single = msg as JsonRpcMessage;
-  console.log(`[MCP] protocol=legacy method=${single.method ?? '(none)'}`);
-  if (isTransportMethod(single)) {
-    const { response, sessionId: newSession } = await processTransportMessage(single);
-    if (newSession) sessionId = newSession;
-    if (response === null) {
-      respond(res, 202, null, sessionId, false);
-    } else {
-      respond(res, 200, JSON.stringify(response), sessionId, wantsSse);
-    }
-    return true;
-  }
-
-  // tools/list・tools/call → dispatchTool（移行済みは TS、未移行は Python へ転送）。
-  // 未知メソッドは Python へ転送（Method not found の応答を単一情報源に保つ）
-  try {
-    const { status, body } = isToolMethod(single)
-      ? await dispatchTool(single)
-      : await forwardToUpstream(single);
-    respond(res, status, status === 202 ? null : body, sessionId, wantsSse);
-  } catch {
-    respond(res, 502, JSON.stringify({ error: 'upstream unavailable' }), '', false);
+  console.log(`[MCP] protocol=legacy method=${single?.method ?? '(none)'}`);
+  const { response, sessionId: newSession } = await processLegacyMessage(single);
+  if (newSession) sessionId = newSession;
+  if (response === null) {
+    respond(res, 202, null, sessionId, false);
+  } else {
+    respond(res, 200, JSON.stringify(response), sessionId, wantsSse);
   }
   return true;
 }

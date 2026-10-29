@@ -2,6 +2,8 @@
 
 *2026-10-29 / v3.99 時点（commit 34e84d1）。調査のみ・コード変更なし。*
 
+> **進捗（2026-10-29）**: 下の「まとめ」の 1（Python 非依存化）と 2（テストハーネス）は `ts-full-step1` で完了。廃止決定: レガシー SSE（削除済み）・旧パス埋め込みトークン API・`/api/memories/symbolic`。移植決定: dedup-scan・cleanup-empty ×2（4 の管理 REST で扱う）。
+
 前提：TS-1 で MCP ツール 38/38 は TS ネイティブ（`tools.ts` に `FORWARD` を返すハンドラーは残っていない）。
 ただし TS 前段（`ts/src/index.ts`）は「担当外のリクエストは全部 Python へ透過転送」する作りなので、
 **MCP ツール以外の REST・HTML・常駐処理の多くはまだ Python が応答している**。

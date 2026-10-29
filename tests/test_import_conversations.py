@@ -7,6 +7,8 @@ v3.60 の回帰テストを含む:
 """
 import json
 
+import pytest
+
 from conftest import make_conversation, new_uuid
 
 
@@ -24,6 +26,7 @@ def _count_entries_for(server, uid):
     return sum(1 for e in d['data'] if uid[:8] in e['id'])
 
 
+@pytest.mark.requires_python
 def test_zip_import_creates_entry_and_conversation(server, make_conv_zip):
     conv = make_conversation(title='ZIP取込テスト会話')
     res = _import_zip(server, make_conv_zip, [conv], name='t1.zip')
@@ -43,6 +46,7 @@ def test_zip_import_creates_entry_and_conversation(server, make_conv_zip):
     assert 'こんにちは' in text
 
 
+@pytest.mark.requires_python
 def test_zip_reimport_skips_duplicates(server, make_conv_zip):
     """同一会話の再インポートは skip され、重複エントリを作らない（v3.60 根本修正の回帰）"""
     conv = make_conversation(title='重複チェック会話')
@@ -57,6 +61,7 @@ def test_zip_reimport_skips_duplicates(server, make_conv_zip):
     assert after == before  # 増殖しない
 
 
+@pytest.mark.requires_python
 def test_zip_reimport_dedup_survives_missing_import_log(server, make_conv_zip):
     """imported_uuids.json が消えても source_thread ベースの重複チェックが効く（v3.60）"""
     import os
@@ -71,6 +76,7 @@ def test_zip_reimport_dedup_survives_missing_import_log(server, make_conv_zip):
     assert r2['skipped'] >= 1
 
 
+@pytest.mark.requires_python
 def test_source_thread_link_by_memory_id_pattern(server, make_conv_zip):
     """会話本文の memory_id: 記載から ExtMemory の source_thread が自動紐づけされる（v3.60）"""
     w = server.tool('memory_write', {
@@ -87,6 +93,7 @@ def test_source_thread_link_by_memory_id_pattern(server, make_conv_zip):
     assert got['source_thread'] == conv['uuid']
 
 
+@pytest.mark.requires_python
 def test_source_thread_link_does_not_overwrite(server, make_conv_zip):
     """既に source_thread が入っているエントリは上書きしない（v3.60）"""
     fixed_uuid = new_uuid()
@@ -104,6 +111,7 @@ def test_source_thread_link_does_not_overwrite(server, make_conv_zip):
     assert got['source_thread'] == fixed_uuid  # 元のUUIDのまま
 
 
+@pytest.mark.requires_python
 def test_claude_code_jsonl_import(server, tmp_path):
     """.jsonl 単体の Claude Code セッション取り込み（v3.54）"""
     sid = new_uuid()
@@ -138,6 +146,7 @@ def test_claude_code_jsonl_import(server, tmp_path):
     assert r2.json()['skipped'] == 1
 
 
+@pytest.mark.requires_python
 def test_unsloth_jsonl_import(server, tmp_path):
     """.jsonl 単体の Unsloth Desktop チャットログ取り込み"""
     lines = [
@@ -191,6 +200,7 @@ def test_unsloth_jsonl_import(server, tmp_path):
     assert r2.json()['skipped'] == 1
 
 
+@pytest.mark.requires_python
 def test_conversation_search_and_index(server, make_conv_zip):
     conv = make_conversation(title='犀の角の会話',
                              created_at='2026-07-03T00:00:00.000000Z',
@@ -213,6 +223,7 @@ def test_conversation_search_and_index(server, make_conv_zip):
     assert any(c['uuid'] == conv['uuid'] for c in idx['items'])
 
 
+@pytest.mark.requires_python
 def test_conversation_read_turn_slicing(server, make_conv_zip):
     conv = make_conversation(title='スライス会話',
                              texts=[f'メッセージ{i}' for i in range(6)])
@@ -225,6 +236,7 @@ def test_conversation_read_turn_slicing(server, make_conv_zip):
     assert 'メッセージ0' not in tail_text
 
 
+@pytest.mark.requires_python
 def test_annotations_append_only(server, make_conv_zip):
     conv = make_conversation(title='注記対象会話')
     _import_zip(server, make_conv_zip, [conv], name='ann.zip')
@@ -242,6 +254,7 @@ def test_annotations_append_only(server, make_conv_zip):
     assert '[No.1]' in text  # 通番プレフィックス
 
 
+@pytest.mark.requires_python
 def test_conversation_rating_gate(server, make_conv_zip):
     """rating=adult の会話はデフォルトで原文が返らない（v3.56）。include_raw=true で原文"""
     conv = make_conversation(title='レーティング対象会話', texts=['秘密の合言葉は柘榴'])
@@ -291,6 +304,7 @@ def test_source_thread_absent_not_in_index(server):
 
 # ── 会話更新時の再処理 (v3.84) ──────────────────────────────────────
 
+@pytest.mark.requires_python
 def test_reimport_with_more_messages_updates_conversation(server, make_conv_zip):
     """追加メッセージ付き再インポートで会話データが更新される（v3.84）"""
     uid = new_uuid()
@@ -311,6 +325,7 @@ def test_reimport_with_more_messages_updates_conversation(server, make_conv_zip)
     assert '追加のメッセージ' in text
 
 
+@pytest.mark.requires_python
 def test_reimport_with_more_messages_remarks_entry(server, make_conv_zip):
     """追加メッセージ付き再インポートでExtMemoryエントリが再処理対象になる（v3.84）"""
     uid = new_uuid()
@@ -343,6 +358,7 @@ def test_reimport_with_more_messages_remarks_entry(server, make_conv_zip):
     assert '## 2層: 要約' not in updated.get('body', '')
 
 
+@pytest.mark.requires_python
 def test_reimport_preserves_rating_on_update(server, make_conv_zip):
     """会話更新時にサーバ側のrating等のメタデータが保持される（v3.87）"""
     uid = new_uuid()
@@ -369,6 +385,7 @@ def test_reimport_preserves_rating_on_update(server, make_conv_zip):
     assert hit[0].get('rating') == 'mature'
 
 
+@pytest.mark.requires_python
 def test_import_compare_endpoint(server, make_conv_zip):
     """POST /api/import/compare でZIPとLogStoreの差分を比較できる（v3.87）"""
     uid = new_uuid()

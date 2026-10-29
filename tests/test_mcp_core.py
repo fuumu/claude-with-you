@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 """MCP トランスポート＋ExtMemory ツールの契約"""
+import os
+
+import pytest
 
 
 def test_initialize(server):
@@ -33,18 +36,23 @@ def test_tools_list_34_tools(server):
         assert expected in names, expected
 
 
-def test_ts_tool_defs_snapshot_matches_python(server):
-    """ts/src/tool-defs.ts（TS ネイティブ tools/list の元データ）が main.py の _MCP_TOOLS と一致する。
-    ずれたら scripts/gen_ts_tool_defs.py を再実行する。Python 単体モードでは tools/list が
-    main.py 由来なので実照合になり、MIO_TS1=1 では TS 応答がスナップショットと一致することの確認になる"""
+def _ts_defs(filename, const_name):
+    """ts/src/*-defs.ts の定義配列（JSON リテラル）を読む"""
     import json
-    import os
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, '..', 'ts', 'src', 'tool-defs.ts'), encoding='utf-8') as f:
+    with open(os.path.join(here, '..', 'ts', 'src', filename), encoding='utf-8') as f:
         src = f.read()
-    snapshot = json.loads(src.split('TOOL_DEFS: ToolDef[] = ', 1)[1].rstrip().rstrip(';'))
+    body = src.split(f'{const_name}: ToolDef[] = ', 1)[1]
+    return json.loads(body[:body.index('\n];') + 2])
+
+
+@pytest.mark.skipif(os.environ.get('MIO_TS1') != '1',
+                    reason='ツール定義の正本は ts/src/tool-defs.ts（TS-FULL ステップ1）。Python 単体は照合しない')
+def test_tools_list_matches_tool_defs(server):
+    """tools/list が ts/src/tool-defs.ts（ツール定義の正本）をそのまま返す"""
     live = server.mcp('tools/list')['result']['tools']
-    assert live == snapshot
+    assert live == _ts_defs('tool-defs.ts', 'TOOL_DEFS')
+    assert len(live) == 38
 
 
 def test_tools_batch_mixes_list_call_and_ping(server):
@@ -76,6 +84,55 @@ def test_ping_and_unknown_method(server):
     assert server.mcp('ping')['result'] == {}
     res = server.mcp('nonexistent/method')
     assert res['error']['code'] == -32601
+
+
+def test_unknown_methods_in_batch_and_invalid_request(server):
+    """バッチ内の未知メソッド・未知 notification・不正要素も個別に応答する（TS は Python へ転送しない）"""
+    import requests
+    batch = [
+        {'jsonrpc': '2.0', 'id': 1, 'method': 'resources/list'},
+        {'jsonrpc': '2.0', 'method': 'resources/updated'},
+        {'jsonrpc': '2.0', 'id': 2, 'method': 'ping'},
+        'not-an-object',
+    ]
+    r = requests.post(server.base_url + '/mcp', json=batch,
+                      headers={'Authorization': f'Bearer {server.token}',
+                               'Accept': 'application/json'}, timeout=15)
+    assert r.status_code == 200
+    out = r.json()
+    assert len(out) == 3
+    by_id = {m['id']: m for m in out if m['id'] is not None}
+    assert by_id[1]['error']['code'] == -32601
+    assert by_id[2]['result'] == {}
+    assert [m['error']['code'] for m in out if m['id'] is None] == [-32600]
+
+
+def test_unknown_tool_returns_tool_level_error(server):
+    d = server.tool('no_such_tool', {})
+    assert d['error'] == 'unknown tool'
+    assert 'server_time' in d and 'server_version' in d
+
+
+def test_legacy_sse_endpoints_removed(server):
+    """レガシー SSE（/mcp/sse・/mcp/messages）は TS-FULL ステップ1 で廃止"""
+    import requests
+    h = {'Authorization': f'Bearer {server.token}'}
+    assert requests.get(server.base_url + '/mcp/sse', headers=h, timeout=10).status_code == 404
+    assert requests.post(server.base_url + '/mcp/messages', json={'jsonrpc': '2.0', 'id': 1, 'method': 'ping'},
+                         headers=h, timeout=10).status_code == 404
+
+
+def test_health_version_matches_server_version(server):
+    """/health の version と tools/call の server_version・initialize の serverInfo が同じ版を指す"""
+    import requests
+    h = requests.get(server.base_url + '/health', timeout=10).json()
+    assert h['status'] == 'ok' and h['mcp_tool_count'] == 38 and len(h['mcp_tools']) == 38
+    assert server.tool('inbox_check', {})['server_version'] == h['version']
+    init = server.mcp('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
+                                     'clientInfo': {'name': 'ts0-test', 'version': '0'}})
+    assert init['result']['serverInfo']['version'] == f"{h['version']}.0"
+    if os.environ.get('MIO_TS1') == '1':
+        assert h['served_by'] == 'ts'
 
 
 def test_notification_returns_202(server):
@@ -129,6 +186,7 @@ def test_memory_search_and_semantics(server):
     assert server.tool('memory_search', {'q': '林檎 存在しない語XYZQ'})['total'] == 0
 
 
+@pytest.mark.requires_python
 def test_memory_search_include_conversations(server, make_conv_zip):
     """統合検索（v3.61）: 会話タイトルも conversations[] で返る"""
     from conftest import make_conversation
@@ -171,6 +229,7 @@ def test_memory_search_search_layer(server):
     assert d_full['total'] >= 1
 
 
+@pytest.mark.requires_python
 def test_conversation_search_and_terms(server, make_conv_zip):
     """v3.81: conversation_search が複数キーワードAND一致"""
     from conftest import make_conversation
@@ -239,6 +298,7 @@ def test_rating_protection(server):
     assert server.tool('memory_search', {'q': '鳳凰', 'include_adult': True})['total'] == 1
 
 
+@pytest.mark.requires_python
 def test_memory_share_creates_24h_url(server):
     """memory_share は admin.html?token=...&id=... 形式のURLと token / expires_at を返す。
     エントリ本体は GET /api/share/<token> で認証なしに取得できる"""
@@ -270,14 +330,8 @@ def test_oplog_list_basic(server):
     assert d4['total'] == 0
 
 
-def test_generated_ts_defs_are_up_to_date():
-    """ts/src/tool-defs.ts・friend-defs.ts（main.py の _MCP_TOOLS / _FRIEND_MCP_TOOLS /
-    _DEFAULT_FRIEND_CORE から生成）が最新であること。ずれたら scripts/gen_ts_tool_defs.py を再実行する"""
-    import os
-    import subprocess
-    import sys
-    here = os.path.dirname(os.path.abspath(__file__))
-    script = os.path.join(here, '..', 'scripts', 'gen_ts_tool_defs.py')
-    r = subprocess.run([sys.executable, '-I', script, '--check'], capture_output=True, text=True,
-                       encoding='utf-8', timeout=60)
-    assert r.returncode == 0, r.stdout + r.stderr
+def test_friend_tool_defs_are_the_six_friend_tools():
+    """ts/src/friend-defs.ts（友達セッション定義の正本）が 6 ツールを持つ"""
+    names = [t['name'] for t in _ts_defs('friend-defs.ts', 'FRIEND_TOOL_DEFS')]
+    assert names == ['friend_memory_read', 'friend_memory_write', 'friend_memory_delete',
+                     'mio_self_note', 'friend_inbox_check', 'friend_inbox_read']

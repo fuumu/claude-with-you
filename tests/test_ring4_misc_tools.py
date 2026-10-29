@@ -8,6 +8,8 @@ import io
 import json
 import os
 
+import pytest
+
 from conftest import new_uuid
 
 
@@ -35,6 +37,7 @@ def _call(server, name, arguments):
 
 # ── album ────────────────────────────────────────────────────────────
 
+@pytest.mark.requires_python
 def test_album_list_read_share_delete(server):
     aid = _upload_album(server, tags='ts0album_a')
     other = _upload_album(server, tags='ts0album_b')
@@ -80,6 +83,7 @@ def test_album_errors_and_traversal(server):
     assert server.tool('album_list', {'tags': ['存在しないタグ']})['total'] == 0
 
 
+@pytest.mark.requires_python
 def test_album_adult_protection_flow(server):
     aid = _upload_album(server, tags='ts0album_adult')
     r = server.patch(f'/api/album/{aid}', json={'rating': 'adult', 'guard_message': '見る前に読んで'})
