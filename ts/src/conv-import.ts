@@ -105,10 +105,18 @@ export function readImportStatus(): Json {
   }
 }
 
-/** インポートで作る ExtMemory エントリ（[会話] 等）を保存して oplog に残す */
+/**
+ * インポートで作る ExtMemory エントリ（[会話] 等）を保存して oplog に残す。
+ * 同じ ID のファイルが既にあれば `_2`, `_3` … を付ける（ID は秒単位の時刻・番号・uuid 先頭 8 文字
+ * なので、同じ秒の別インポートでぶつかりうる。main.py はそのまま上書きしていた）
+ */
 export function writeImportEntry(entry: Json): void {
-  writeJson(path.join(DATA_DIR, `${entry.id}.json`), entry);
-  appendOplog('import', String(entry.id), null, entry);
+  const base = String(entry.id);
+  let id = base;
+  for (let n = 2; fs.existsSync(path.join(DATA_DIR, `${id}.json`)); n++) id = `${base}_${n}`;
+  entry.id = id;
+  writeJson(path.join(DATA_DIR, `${id}.json`), entry);
+  appendOplog('import', id, null, entry);
 }
 
 /** インポート用エントリ ID: {YYYYmmdd_HHMMSS}_{i:04d}_{uid[:8]} */

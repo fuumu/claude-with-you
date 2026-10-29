@@ -6,6 +6,9 @@ v3.60 の回帰テストを含む:
 - source_thread 自動紐づけ（memory_id: パターン / タイムスタンプ照合）
 """
 import json
+import os
+
+import pytest
 
 from conftest import make_conversation, new_uuid
 
@@ -102,6 +105,20 @@ def test_source_thread_link_does_not_overwrite(server, make_conv_zip):
     _import_zip(server, make_conv_zip, [conv], name='keep.zip')
     got = server.tool('memory_read', {'id': 'ts0_keep'})
     assert got['source_thread'] == fixed_uuid  # 元のUUIDのまま
+
+
+@pytest.mark.skipif(os.environ.get('MIO_TS1') != '1',
+                    reason='main.py は同じ秒の ID 衝突で既存エントリを上書きする（TS-FULL ステップ3 で TS 側を修正）')
+def test_import_entry_ids_do_not_overwrite(server):
+    """インポートのエントリ ID（時刻_番号_uuid 先頭8文字）が同じ秒の別インポートとぶつかっても上書きしない"""
+    sids = ['dd000000-0000-0000-0000-000000000001', 'dd000000-0000-0000-0000-000000000002']
+    for sid in sids:
+        line = json.dumps({'type': 'user', 'timestamp': '2026-07-02T01:00:00Z',
+                           'message': {'content': f'ID衝突テスト {sid}'}}, ensure_ascii=False)
+        r = server.post('/api/import/claude-code', files={'file': (f'{sid}.jsonl', line.encode('utf-8'))})
+        assert r.json()['imported'] == 1
+    idx = server.get('/api/memory/index').json()
+    assert {e.get('source_thread') for e in idx if '_dd000000' in e['id']} == set(sids)
 
 
 def test_claude_code_jsonl_import(server, tmp_path):

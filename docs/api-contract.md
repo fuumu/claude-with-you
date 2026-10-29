@@ -174,6 +174,15 @@ response shapes pinned by tests.
 - Supplementary: timestamp matching only when the entry's created_at falls within
   **exactly one** imported conversation's range
 - Existing source_thread values are **never overwritten**
+
+**Intentional differences of the TS implementation (TS-FULL step 3, `ts/src/rest-import.ts`) from main.py:**
+- `/api/import/compare`, `/api/import/unsloth`, `/api/import-status`, `/api/conversations/index/rebuild`, `/cleanup-empty`, `PATCH /<uuid>/title` and `/api/conv-artifacts*` are served by TS as well
+- A broken ZIP or JSON returns 400 instead of 500
+- `conversations.json` is processed one conversation at a time (never one huge string, even at hundreds of MB); the whole file is validated first, so a broken file changes nothing
+- Conversations whose uuid contains a path separator, `..` or NUL, and artifact names that are not valid file names, are not saved (main.py used them as paths)
+- When an import entry id (timestamp_index_first-8-of-uuid) collides with an existing file, `_2`, `_3`, … is appended (main.py overwrote the entry from another import in the same second; `test_import_entry_ids_do_not_overwrite`)
+- `index.json` is rebuilt after source_thread linking too (main.py only when imported > 0)
+- `index/rebuild` does not count the `{uuid}_digest*.json` / `{uuid}_redacted.json` caches as conversations
 - Conversation saving (`_save_conversations`) always runs independently of dedup
   (including rating carry-over); v3.77: diff update — skips write when existing file
   has ≥ message_count (response includes `skipped`/`updated` counts)
