@@ -514,7 +514,7 @@ export function handleConvArtifacts(req: http.IncomingMessage, res: http.ServerR
 
 /**
  * /api/conversations* のルーティング。担当したら true、担当外
- * （digest・未対応メソッド等）は false = プロキシへ。
+ * （digest・redact・未対応メソッド等）は false = 次のハンドラへ。
  * view 以外は Bearer 認証必須。
  */
 export async function handleConversations(
@@ -587,7 +587,7 @@ export async function handleConversations(
     }
   }
 
-  if (route === null) return false; // digest 等はプロキシへ
+  if (route === null) return false; // digest・redact 等は別のハンドラ
 
   if (!verifyToken(extractBearer(req, url))) {
     sendJson(res, 401, { error: 'unauthorized' });

@@ -3,13 +3,12 @@
  * main.py の oauth_metadata / oauth_register / oauth_authorize / oauth_token と
  * 同一契約（レスポンス形状・ステータス・oauth_store.json 永続化形式）。
  *
- * MCP 2026-07-28 仕様の認可強化（実装済み・main.py には触れない）:
+ * MCP 2026-07-28 仕様の認可強化（実装済み）:
  *   - RFC 9207: 認可応答リダイレクトに iss パラメータを付与（クライアントが検証）
  *   - DCR で application_type を受理・永続化（OIDC リダイレクトURI競合回避）
  *   - リフレッシュトークン発行＋grant_type=refresh_token（使用ごとにローテーション、
  *     scope パラメータによる縮小可）。oauth_store.json に refresh_tokens キーを追加
- *     （Python 実装は clients/tokens しか読まないため互換。Python 側が store を
- *     書き戻すと refresh_tokens は落ちるが、本番 Python 単体運用では未発行なので実害なし）
+ *     （旧 Python 実装は clients/tokens しか読まないため、ファイルは両方で読める）
  *   - ディスカバリ: RFC 8414 のパスサフィックス形式
  *     （/.well-known/oauth-authorization-server/<path>）も受理
  */

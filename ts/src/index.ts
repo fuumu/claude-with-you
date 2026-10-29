@@ -1,25 +1,25 @@
 /**
- * mio-memory TS サーバー（TS-1 ストラングラー → TS-FULL 移行中）。
+ * mio-memory サーバー（v4.0〜 TypeScript 単体。Python 版 main.py は legacy-python ブランチに退避）。
  *
- * /health・/mcp・OAuth・移植済み REST は TS がネイティブ応答する。未移植の REST だけを
- * Python 実装（main.py）へ透過転送する（SSE / チャンク転送は pipe でそのまま通す）。
- * MIO_UPSTREAM=off で Python なしの単体起動（未移植ルートは 404 not found）。
+ * /health・/mcp（MCP Streamable HTTP）・OAuth・REST・HTML ページをすべてこのプロセスが応答する。
+ * 依存は node 標準ライブラリと sharp（album の画像縮小）だけ。
  *
- * 環境変数:
- *   MIO_PORT          このサーバーのリッスンポート（デフォルト 5003）
- *   MIO_UPSTREAM      off にすると Python へ転送しない（TS 単体モード）
- *   MIO_UPSTREAM_HOST Python 側ホスト（デフォルト 127.0.0.1）
- *   MIO_UPSTREAM_PORT Python 側ポート（デフォルト 5002）
+ * 環境変数（主なもの。全体は CLAUDE.md の表）:
+ *   MIO_PORT        リッスンポート（デフォルト 5002）
+ *   MIO_BIND        バインド先（デフォルト 0.0.0.0。テストは 127.0.0.1）
+ *   MIO_DATA_ROOT   データディレクトリ（デフォルト /data）
+ *   MIO_API_TOKEN   Bearer 認証トークン
  */
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
+import { extractBearer, verifyToken } from './auth.js';
 import { handleConvArtifacts, handleConversations } from './conversations.js';
 import { ARTIFACTS_DIR, handleCoremem } from './coremem.js';
 import { DATA_DIR, DATA_ROOT, loadAllEntries, loadEntry, loadIndexList } from './data.js';
 import { readBodyText as readRequestBody } from './http-body.js';
-import { BufferedRequest, handleInbox } from './inbox.js';
+import { handleInbox } from './inbox.js';
+import { logInfo } from './llm.js';
 import { handleMcp } from './mcp.js';
 import { handleAdminRest } from './rest-admin.js';
 import { handleFriendsRest } from './rest-friends.js';
@@ -27,24 +27,23 @@ import { handleImportRest } from './rest-import.js';
 import { handleMediaRest } from './rest-media.js';
 import { handleRedactRest } from './redact.js';
 import { startNightlyScheduler } from './scheduler.js';
+import { seedCoreMemIfEmpty } from './seed.js';
 import { handleStatic } from './static.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
+import { migrateAllMeta } from './tools-file.js';
 import { listTools } from './tools.js';
 import { VERSION } from './version.js';
 import { createEntry, deleteEntry, nowJst, reindexAll, updateEntry } from './write.js';
 
-const PORT = parseInt(process.env.MIO_PORT ?? '5003', 10);
-const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
-const UPSTREAM_PORT = parseInt(process.env.MIO_UPSTREAM_PORT ?? '5002', 10);
+const PORT = parseInt(process.env.MIO_PORT ?? '5002', 10);
+const BIND = process.env.MIO_BIND || '0.0.0.0';
 
-const UPSTREAM_ENABLED = (process.env.MIO_UPSTREAM ?? '').toLowerCase() !== 'off';
-
-/** 廃止したレガシー SSE トランスポート（TS-FULL ステップ1）。Python へも転送しない */
+/** 廃止したレガシー SSE トランスポート（TS-FULL ステップ1） */
 const LEGACY_SSE_PATHS = new Set(['/mcp/sse', '/mcp/messages']);
 
-/** /health（main.py health() と同じ形状 + served_by。Python には問い合わせない） */
+/** /health（旧 main.py health() と同じ形状 + served_by） */
 function handleHealth(res: http.ServerResponse): void {
   const tools = listTools();
   sendJson(res, 200, {
@@ -201,45 +200,6 @@ async function handleWriteNative(
   return true;
 }
 
-/** 透過プロキシ（ヘッダ・ボディ・ステータスをそのまま中継。SSE も pipe で流れる） */
-function proxyToUpstream(req: http.IncomingMessage, res: http.ServerResponse, url: string, parsed: URL): void {
-  const headers: http.IncomingHttpHeaders = { ...req.headers, host: `${UPSTREAM_HOST}:${UPSTREAM_PORT}` };
-
-  // トランスポート層の認証は TS が所有する: TS が検証できたトークン（API_TOKEN or
-  // TS 発行を含む OAuth トークン）は API_TOKEN に書き換えて転送する。
-  // Python は起動時に oauth_store.json を読むため、TS がネイティブ発行した
-  // トークンを知らない — この書き換えで proxied ルートでも TS 発行トークンが通る。
-  // 友達トークン・無効トークンは verifyToken が false なので書き換えず素通し
-  // （友達セッションの限定ツール・Python 側 401 の挙動を保つ）。
-  const token = extractBearer(req, parsed);
-  if (token && token !== API_TOKEN && verifyToken(token)) {
-    headers['authorization'] = `Bearer ${API_TOKEN}`;
-  }
-
-  const proxyReq = http.request(
-    {
-      host: UPSTREAM_HOST,
-      port: UPSTREAM_PORT,
-      path: url,
-      method: req.method,
-      headers,
-    },
-    (proxyRes) => {
-      res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
-      proxyRes.pipe(res);
-    },
-  );
-  proxyReq.on('error', () => {
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-    }
-    res.end(JSON.stringify({ error: 'upstream unavailable' }));
-  });
-  const buffered = (req as http.IncomingMessage & BufferedRequest).bufferedBody;
-  if (buffered) proxyReq.end(buffered);
-  else req.pipe(proxyReq);
-}
-
 const server = http.createServer((req, res) => {
   const url = req.url ?? '/';
 
@@ -265,8 +225,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // リング2/3（書き込み系REST・inbox）→ OAuth → MCP の順にネイティブ処理を試み、
-  // どれも担当しなければ透過プロキシへ（MIO_UPSTREAM=off なら 404）
+  // 書き込み系 REST・inbox・coremem・LLM・会話・インポート・管理・album/uploads・友達・OAuth・MCP の順に試し、
+  // どれにも当たらなければ 404
   void (async () => {
     try {
       if (await handleWriteNative(req, res, parsed)) return;
@@ -304,11 +264,7 @@ const server = http.createServer((req, res) => {
       if (await handleFriendsRest(req, res, parsed)) return;
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
-      if (!UPSTREAM_ENABLED) {
-        sendJson(res, 404, { error: 'not found' });
-        return;
-      }
-      proxyToUpstream(req, res, url, parsed);
+      sendJson(res, 404, { error: 'not found' });
     } catch {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -318,20 +274,18 @@ const server = http.createServer((req, res) => {
   })();
 });
 
-// 起動時に基本ディレクトリを用意する（main.py の __main__ と同じ 4 つ）。
-// TS 単体起動では Python が作ってくれないため、新規データでも書き込みが ENOENT にならないように
+// 起動時: 基本ディレクトリ（memory / artifacts / inbox / album）を用意し、旧形式のアップロードメタを
+// {id}.meta.json へ退避、新規環境なら CoreMem に種をまく
 for (const dir of [DATA_DIR, ARTIFACTS_DIR, path.join(DATA_ROOT, 'inbox'), path.join(DATA_ROOT, 'album')]) {
   fs.mkdirSync(dir, { recursive: true });
 }
+const migrated = migrateAllMeta();
+if (migrated > 0) logInfo(`uploads: migrated ${migrated} legacy meta file(s)`);
+seedCoreMemIfEmpty();
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(
-    UPSTREAM_ENABLED
-      ? `mio-memory-ts v${VERSION}: 127.0.0.1:${PORT} (unported REST -> ${UPSTREAM_HOST}:${UPSTREAM_PORT})`
-      : `mio-memory-ts v${VERSION}: 127.0.0.1:${PORT} (standalone, no upstream)`,
-  );
+server.listen(PORT, BIND, () => {
+  console.log(`mio-memory v${VERSION}: listening on ${BIND}:${PORT}`);
+  logInfo(`nightly batch scheduler: hour=${process.env.MIO_NIGHTLY_BATCH_HOUR ?? '3'} ` +
+    `backend=${process.env.MIO_NIGHTLY_BATCH_BACKEND || 'lmstudio'}`);
 });
-
-// 夜間バッチ。Python を後ろに置いた構成では Python 側の夜間バッチが同じ時刻に動くので、
-// 二重起動を避けて TS 単体（MIO_UPSTREAM=off）のときだけ回す
-if (!UPSTREAM_ENABLED) startNightlyScheduler();
+startNightlyScheduler();

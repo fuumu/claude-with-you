@@ -2,6 +2,8 @@
 
 ステータス: **Phase 1 部分実装**（v3.66 でエクスポートファイルからの手動インポートを実装。API ポーリングによる自動同期は未実装）
 
+> **v4.0 注記:** サーバーは TypeScript 単体になった。手動インポートは `ts/src/conv-import.ts` の `convertOpenwebuiChat`。自動同期を作るなら夜間バッチ（`ts/src/scheduler.ts`）と同じタイマー方式になる。本書のコード片は Python 版の頃の設計メモ。
+
 ## 1. 概要
 
 OpenWebUI のチャット履歴を mio-memory の会話ログストア（`/data/conversations/`）に取り込み、

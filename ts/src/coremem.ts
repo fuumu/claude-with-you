@@ -383,7 +383,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 
 /**
  * /api/coremem* のルーティング。認証は呼び出し元（index.ts）で済んでいる前提。
- * 担当したら true、担当外（該当メソッドなし等）は false = プロキシへ。
+ * 担当したら true、担当外（該当メソッドなし等）は false = 次のハンドラへ。
  */
 export async function handleCoremem(
   req: http.IncomingMessage,

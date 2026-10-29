@@ -2,6 +2,8 @@
 
 *Written: 2026-07-13 / Rings 0–3 + transport pull-forward (part of rings 4/5) + MCP 2026-07-28 early RC implementation done*
 
+> **Finished in v4.0 (2026-10-30):** TS-FULL step 8 removed Python; the server is TypeScript only. What follows is the record of the migration (the Python version is on the `legacy-python` branch). For the current layout see README / CLAUDE.md.
+
 ## Approach
 
 Instead of rewriting main.py (Flask, single file) in one go, **place a TypeScript
@@ -87,7 +89,7 @@ to match production. The TS implementation is utf-8 fixed (production-compatible
 | TS-FULL 5 | Album and uploads REST | ✅ done (2026-10-30, `ts-full-step5` branch) — `rest-media.ts`. Album reuses the MCP tool code (`tools-album.ts`, `album-save.ts`); uploads shares the list/delete functions split out of `tools-file.ts`. The differential test (146 calls) matched for both (only the image-library error text differs). `requires_python`: 13 → 6 tests |
 | TS-FULL 6 | Friend REST, HTML pages | ✅ done (2026-10-30, `ts-full-step6` branch) — `rest-friends.ts` (registry shared with `friend.ts`) and `static.ts` (five pages; when a page is missing, the TS-front setup leaves it to Python). The friend REST and public pages had no tests, so `tests/test_friends_rest.py` (6 tests) was added. The differential test (178 calls) matched for the friend REST and all five pages (Content-Type and bytes) |
 | TS-FULL 7 | Nightly batch, redaction | ✅ done (2026-10-30, `ts-full-step7` branch) — `scheduler.ts` (runs only with `MIO_UPSTREAM=off`, so it never doubles Python's nightly batch while Python sits behind TS) and `redact.ts` (prompt, sentence splitting, 30-sentence chunks and body-hash cache invalidation identical to main.py). Generation was not tested in any mode, so the mock LLM now answers redaction prompts and a full-flow test was added. `requires_python`: 6 → 1 test (only the startup seed) |
-| 6 | Remove Python; Node-based Dockerfile | Decide after a parallel-run period + full test green |
+| 6 → TS-FULL 8 | Remove Python; Node-based Dockerfile (v4.0) | ✅ done (2026-10-30, `ts-full-step8` branch) — cut the `legacy-python` branch first, then removed `memory/app/main.py`, the Flask wheels, `memory/Dockerfile`, `docker-compose.parallel.yml` and `scripts/MCP_NEW.sh` / `MCP_OLD.sh`. The proxy (`MIO_UPSTREAM_*`) is gone; a path that matches no route gets a JSON 404. Startup work (`seed.ts`: CoreMem skeleton and welcome inbox; moving legacy upload metadata) is in TS. HTML moved to `ts/public/`, the skeleton to `ts/skeleton/`. Default bind is `0.0.0.0` (`MIO_BIND`) and the nightly batch always runs. The compose `memory` service builds `ts/`. Tests run against the TS server only (conftest no longer starts Python; `MIO_TS1`, `MIO_TS_ONLY` and `requires_python` removed; `tests/test_startup.py` added; 276 passed) |
 
 ## Design commitments
 

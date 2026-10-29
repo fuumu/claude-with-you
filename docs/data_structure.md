@@ -145,7 +145,7 @@ SVG/HTML displayed inline within the chat. Strictly speaking not artifacts, but 
 
 ## 6. Impact on the NAS import process
 
-> **[2026-06 note]** The remediation below has been implemented. `POST /import` now parses `tool_use` blocks (`create_file` / `artifacts`) and extracts them to `/data/conv_artifacts/` (main.py `extract_artifacts()`). The following is preserved as a record of the original investigation.
+> **[2026-06 note]** The remediation below has been implemented. `POST /import` now parses `tool_use` blocks (`create_file` / `artifacts`) and extracts them to `/data/conv_artifacts/` (`ArtifactExtractor` in `ts/src/conv-import.ts` since v4.0; main.py `extract_artifacts()` in v3.x). The following is preserved as a record of the original investigation.
 
 ### The problem at the time
 

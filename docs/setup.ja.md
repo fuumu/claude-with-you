@@ -57,8 +57,8 @@ git remote add origin git@github.com:<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git
 cat > .gitignore << 'EOF'
 .env
 memory/data/
-__pycache__/
-*.pyc
+ts/node_modules/
+ts/dist/
 EOF
 
 # ステージング・コミット
@@ -135,10 +135,57 @@ sudo docker-compose up -d --build memory
 
 ```bash
 curl <YOUR_SERVER_URL>/health
-# {"status": "ok", "version": "3.x", ...} が返ればOK
+# {"status": "ok", "version": "4.0", ..., "served_by": "ts"} が返ればOK
 ```
 
 > **注意：** NASでは `docker-compose` に `sudo` が必要。`git pull` は `origin main` を明示する（upstream未設定のため）。
+
+### v3.x（Python 版・TS 前段構成）から v4.0 への切り替え（一回だけ）
+
+v4.0 でサーバーは TypeScript 単体になり、`docker-compose.yml` の `memory` サービスは `ts/` をビルドする（Python のコンテナと `ts-proxy` サービスは無くなる）。
+データの置き場所（`memory/data` → `/data`）・ポート（5002）・`.env` はそのまま使える。OAuth トークン（`oauth_store.json`）も引き継がれるので、コネクタの再認証は不要。
+
+TS 前段構成（[ts-switchover.ja.md](ts-switchover.ja.md)）で動かしていた NAS では `docker-compose.yml` をローカルで書き換えているため、
+**古い構成のまま先に止めてから**ローカル変更を戻し、更新する：
+
+```bash
+cd <YOUR_NAS_PATH>
+
+# 0. バックアップ（設定とデータ）
+cp docker-compose.yml docker-compose.yml.bak.$(date +%Y%m%d)
+cp .env .env.bak.$(date +%Y%m%d)
+sudo tar czf ../mio-data.$(date +%Y%m%d).tgz memory/data
+
+# 1. 旧構成（Python + ts-proxy）を止める。ローカルの compose のまま実行する（ts-proxy も止めるため）
+sudo docker-compose down
+
+# 2. ローカル変更を戻して更新（git status で他に変更が無いことも確認）
+git checkout -- docker-compose.yml
+git status
+git pull origin main
+
+# 3. TS 単体で起動
+sudo docker-compose up -d --build
+
+# 4. 確認
+curl http://127.0.0.1:5002/health          # "version":"4.0" と "served_by":"ts"
+sudo docker-compose logs memory | head     # mio-memory v4.0: listening on 0.0.0.0:5002
+```
+
+あわせて admin.html が開けること、Claude.ai / Claude Code から MCP ツール（例: `CoreMem_read`）が動くことを確かめる。
+MCP の URL は `https://<YOUR_SERVER_URL>/mcp`（旧 `/mcp/sse` は廃止済み）。不要になった Python のイメージは `sudo docker image prune` で消してよい。
+
+**ロールバック：** Python 版は `legacy-python` ブランチ（TS-FULL ステップ7 時点・TS 前段で動いていた最後の状態）に残してある。
+
+```bash
+sudo docker-compose down
+git fetch origin legacy-python
+git checkout legacy-python
+cp docker-compose.yml.bak.YYYYMMDD docker-compose.yml   # 手順0 で保存した TS 前段構成
+sudo docker-compose up -d --build
+```
+
+通常運用に戻すときは `git checkout -- docker-compose.yml` で compose を戻してから `git checkout main`。
 
 ---
 
@@ -148,13 +195,13 @@ curl <YOUR_SERVER_URL>/health
 mio-memory は**空でも起動するが**、アシスタントの「自分は誰か」を定義する CoreMem `core.md` だけは
 中身が無いと意味をなさない（MCP initialize が起動時に `CoreMem_read("core.md")` を指示するため）。
 
-これを埋めるのが **`memory/skeleton/`**（リポジトリに同梱・v3.43〜）。
+これを埋めるのが **`ts/skeleton/`**（リポジトリに同梱・v3.43〜。v4.0 で `memory/skeleton/` から移動）。
 
 ### 自動シードの挙動（冪等・既存環境は不変）
 
-初回起動時、`_seed_coremem_if_empty()` が次の契約で動く：
+初回起動時、`ts/src/seed.ts` の `seedCoreMemIfEmpty()` が次の契約で動く（旧 Python 版と同じ）：
 
-1. CoreMem に `core_stable.md` が**無い新規環境のときだけ** `skeleton/coremem/*.md` を投入する
+1. CoreMem に `core_stable.md` が**無い新規環境のときだけ** `ts/skeleton/coremem/<lang>/*.md` を投入する
 2. 同名ファイルが既にあればスキップ（**冪等**。再起動で二重投入しない）
 3. `core_stable.md` がある既存環境では**一切何もしない**（運用中のデータを保護）
 
@@ -186,7 +233,7 @@ mio-memory は**空でも起動するが**、アシスタントの「自分は�
 2. `core_rules.md` の運用ルールを必要に応じて調整
 3. `protocol_guide.md`（MCPツール全38本ガイド）はそのまま使える（install 非依存）
 
-> スケルトンの中身・方針の詳細は `memory/skeleton/README.md` を参照。
+> スケルトンの中身・方針の詳細は `ts/skeleton/README.md` を参照。
 
 ---
 
@@ -257,12 +304,13 @@ curl http://<YOUR_WS_IP>:1234/v1/models
 
 ### 症状
 
-`python:3.11-slim` イメージのビルド中に `pip install` がDNS解決失敗で止まる：
+`node:22-slim` イメージのビルド中に `npm install` がDNS解決失敗で止まる（v3.x までは `python:3.11-slim` の `pip install` で同じ症状が出ていた）：
 
 ```
-pip install anthropic
+npm install --no-audit --no-fund
 ...
-socket.gaierror: [Errno -3] Temporary failure in name resolution
+npm error code EAI_AGAIN
+npm error request to https://registry.npmjs.org/sharp failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org
 ```
 
 ### 原因
@@ -277,8 +325,8 @@ Synology NASのDockerビルド環境はデフォルトのDNSが機能しない�
 services:
   memory:
     build:
-      context: ./memory
-      network: host    ← これを追加
+      context: ./ts
+      network: host    ← これを追加（同梱の docker-compose.yml は設定済み）
 ```
 
 ---
@@ -299,5 +347,4 @@ services:
     # dns: は削除（ホストのDNSを使うため不要）
     volumes:
       - ./memory/data:/data
-      - ./scripts:/app/scripts:ro
 ```

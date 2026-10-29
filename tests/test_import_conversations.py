@@ -8,8 +8,6 @@ v3.60 の回帰テストを含む:
 import json
 import os
 
-import pytest
-
 from conftest import make_conversation, new_uuid
 
 
@@ -107,10 +105,9 @@ def test_source_thread_link_does_not_overwrite(server, make_conv_zip):
     assert got['source_thread'] == fixed_uuid  # 元のUUIDのまま
 
 
-@pytest.mark.skipif(os.environ.get('MIO_TS1') != '1',
-                    reason='main.py は同じ秒の ID 衝突で既存エントリを上書きする（TS-FULL ステップ3 で TS 側を修正）')
 def test_import_entry_ids_do_not_overwrite(server):
-    """インポートのエントリ ID（時刻_番号_uuid 先頭8文字）が同じ秒の別インポートとぶつかっても上書きしない"""
+    """インポートのエントリ ID（時刻_番号_uuid 先頭8文字）が同じ秒の別インポートとぶつかっても上書きしない
+    （旧 main.py は上書きしていた。TS-FULL ステップ3 で修正）"""
     sids = ['dd000000-0000-0000-0000-000000000001', 'dd000000-0000-0000-0000-000000000002']
     for sid in sids:
         line = json.dumps({'type': 'user', 'timestamp': '2026-07-02T01:00:00Z',

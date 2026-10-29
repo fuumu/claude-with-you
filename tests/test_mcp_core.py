@@ -2,8 +2,6 @@
 """MCP トランスポート＋ExtMemory ツールの契約"""
 import os
 
-import pytest
-
 
 def test_initialize(server):
     res = server.mcp('initialize', {
@@ -46,8 +44,6 @@ def _ts_defs(filename, const_name):
     return json.loads(body[:body.index('\n];') + 2])
 
 
-@pytest.mark.skipif(os.environ.get('MIO_TS1') != '1',
-                    reason='ツール定義の正本は ts/src/tool-defs.ts（TS-FULL ステップ1）。Python 単体は照合しない')
 def test_tools_list_matches_tool_defs(server):
     """tools/list が ts/src/tool-defs.ts（ツール定義の正本）をそのまま返す"""
     live = server.mcp('tools/list')['result']['tools']
@@ -87,7 +83,7 @@ def test_ping_and_unknown_method(server):
 
 
 def test_unknown_methods_in_batch_and_invalid_request(server):
-    """バッチ内の未知メソッド・未知 notification・不正要素も個別に応答する（TS は Python へ転送しない）"""
+    """バッチ内の未知メソッド・未知 notification・不正要素も個別に応答する"""
     import requests
     batch = [
         {'jsonrpc': '2.0', 'id': 1, 'method': 'resources/list'},
@@ -131,20 +127,7 @@ def test_health_version_matches_server_version(server):
     init = server.mcp('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
                                      'clientInfo': {'name': 'ts0-test', 'version': '0'}})
     assert init['result']['serverInfo']['version'] == f"{h['version']}.0"
-    if os.environ.get('MIO_TS1') == '1':
-        assert h['served_by'] == 'ts'
-
-
-def test_ts_version_matches_main_py():
-    """ts/src/version.ts と main.py の VERSION が同じ（両方が残っている間は揃えて上げる）"""
-    import re
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, '..', 'memory', 'app', 'main.py'), encoding='utf-8') as f:
-        py = re.search(r"^VERSION = '([^']+)'", f.read(), re.M)
-    with open(os.path.join(here, '..', 'ts', 'src', 'version.ts'), encoding='utf-8') as f:
-        ts = re.search(r"^export const VERSION = '([^']+)';", f.read(), re.M)
-    assert py and ts
-    assert ts.group(1) == py.group(1), 'ts/src/version.ts の VERSION を main.py に揃える'
+    assert h['served_by'] == 'ts'
 
 
 def test_notification_returns_202(server):

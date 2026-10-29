@@ -1,24 +1,27 @@
 # API 契約ドキュメント（TS-0）
 
-*対象: mio-memory v3.99 / 作成: 2026-07-13 / 最終更新: 2026-09-28*
+*対象: mio-memory v4.0 / 作成: 2026-07-13 / 最終更新: 2026-10-30*
 
-このドキュメントは、現行 `memory/app/main.py` が外部に約束している挙動（契約）を固定化するためのもの。
+このドキュメントは、mio-memory が外部に約束している挙動（契約）を固定化するためのもの。
+もとは Python 版 `memory/app/main.py` の挙動から作り、v4.0 で TypeScript 単体（`ts/`）になってからも同じ契約を守っている
+（本書で「main.py」と書いているのは v3.x の Python 版のこと。Python 版は `legacy-python` ブランチにある）。
 **実行可能な契約は `tests/` の特性テストスイート**であり、本書はその地図にあたる。
-TS-1（TypeScript移行）の際は、tests/ が全件グリーンであることが「同じサーバーである」ことの判定基準になる。
+TypeScript への移行（TS-1 / TS-FULL）では、tests/ が全件グリーンであることを「同じサーバーである」ことの判定基準にした。
 
 ## テストスイートの実行方法
 
 ```powershell
 # 初回のみ: venv 作成と依存導入
 python -m venv .venv
-.venv/Scripts/python -m pip install flask pytest requests pillow
+.venv/Scripts/python -m pip install pytest requests pillow
 
 # 実行（サーバーは一時データディレクトリで自動起動される。既存環境には触れない）
 .venv/Scripts/python -m pytest tests/ -q
 ```
 
-テストは HTTP 越しの**ブラックボックス**で、`main.py` の内部を import しない。
-サーバー実装を差し替えても（例: TS版）、`tests/conftest.py` の起動コマンドを変えるだけで同じスイートが使える。
+テストは HTTP 越しの**ブラックボックス**で、サーバーの内部を import しない。
+`tests/conftest.py` は `ts/` をビルドして（src が dist より新しいときだけ `npx tsc`）`node ts/dist/index.js` を起動する（Node.js 22 が必要）。
+移行中は同じスイートを Python 版・TS 前段・TS 単体の3通りで流していた。
 
 **テスト用フック（運用では未指定＝従来どおり）:**
 
@@ -26,6 +29,7 @@ python -m venv .venv
 |---|---|
 | `MIO_DATA_ROOT` | データルートの差し替え（デフォルト `/data`） |
 | `MIO_PORT` | リッスンポート（デフォルト `5002`） |
+| `MIO_BIND` | バインド先（デフォルト `0.0.0.0`。テストは `127.0.0.1`） |
 
 ---
 
@@ -61,7 +65,7 @@ python -m venv .venv
 
 | メソッド | パス | 契約 |
 |---|---|---|
-| GET | `/health` | 200 `{status:"ok", version, mcp_tool_count}` 認証不要 |
+| GET | `/health` | 200 `{status:"ok", time, version, mcp_tool_count, mcp_tools, served_by:"ts"}` 認証不要 |
 | GET | `/.well-known/oauth-authorization-server` | issuer / authorization_endpoint / token_endpoint / registration_endpoint、`code_challenge_methods_supported` に S256 |
 | POST | `/oauth/register` | Dynamic Client Registration |
 | GET/POST | `/oauth/authorize` `/oauth/token` | PKCE(S256/plain) 必須。認可コード10分、アクセストークン30日 |
@@ -81,7 +85,7 @@ python -m venv .venv
 | POST | `/api/memory/reindex` | index.json 再構築 |
 | POST | `/api/memory/share/<id>` | 共有トークン発行 |
 | GET | `/api/share/<token>` | 認証不要でエントリ返却（24h期限） |
-| ~~GET~~ | ~~`/api/memories/symbolic`~~ | TS-FULL ステップ4 で廃止（両サーバーとも 404。旧パス埋め込みトークン API `/api/<token>/memory/...` も同時に廃止。`test_removed_legacy_routes_are_404`） |
+| ~~GET~~ | ~~`/api/memories/symbolic`~~ | TS-FULL ステップ4 で廃止（404。旧パス埋め込みトークン API `/api/<token>/memory/...` も同時に廃止。`test_removed_legacy_routes_are_404`） |
 | POST | `/api/memory/cleanup-empty` | 空エントリの一括論理削除（`dry_run` 対応, v3.79） |
 | GET | `/api/export` | CoreMem+ExtMemory の ZIP |
 | POST | `/api/import/backup` | export ZIP から復元（multipart `file`・`mode=skip/overwrite`・`dry_run=true`）。応答 `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`。ZIP不正・構造不一致・不正modeは400（v3.63・契約は tests/test_backup_restore.py） |
@@ -99,9 +103,9 @@ python -m venv .venv
 - 未知メソッド → JSON-RPC error `-32601`
 - 友達トークン（`/mcp?token=<friend_token>`）では別ツールセット（6本: friend_memory_read/write/delete, mio_self_note, friend_inbox_check/read）
 
-### 4b. MCP 2026-07-28 ステートレスコア（TS層のみ・`MIO_TS1=1` で検証）
+### 4b. MCP 2026-07-28 ステートレスコア（v3.62 から TS 層で先行実装）
 
-新仕様の契約は `tests/test_mcp_2026.py` に固定（Python 単体モードでは skip — main.py は 2025-11-25 のまま）。デュアル時代サーバーとして、レガシー（initialize + `Mcp-Session-Id`）と同一エンドポイントで共存する。
+新仕様の契約は `tests/test_mcp_2026.py` に固定（旧 Python 版 main.py は 2025-11-25 のままだった）。デュアル時代サーバーとして、レガシー（initialize + `Mcp-Session-Id`）と同一エンドポイントで共存する。
 
 - モダン判定: `params._meta["io.modelcontextprotocol/protocolVersion"]` または `MCP-Protocol-Version` ヘッダが 2026-07-28（または未知の版）を宣言したリクエスト。セッションIDは発行も参照もしない
 - `server/discover`（MUST）→ `result.{resultType, supportedVersions, capabilities, instructions, ttlMs, cacheScope, _meta["io.modelcontextprotocol/serverInfo"]}`。`serverInfo` はトップレベルではなく `result._meta` に配置。版宣言なしのプローブにも応答
@@ -109,7 +113,7 @@ python -m venv .venv
 - 必須ヘッダ検証（2026-07-28 宣言時）: `MCP-Protocol-Version` / `Mcp-Method` /（tools/call は）`Mcp-Name` がボディと不一致・欠落 → **400** + error `-32020`（HeaderMismatch）。`Mcp-Name` は `=?base64?...?=` センチネルをデコードして比較
 - 未対応の版 → **400** + error `-32022`（`data.supported` / `data.requested` 付き）
 - 廃止メソッド（`ping`・`initialize` をモダン宣言で呼ぶ等）→ **404** + `-32601`
-- 全結果に `resultType: "complete"`、`tools/list` に `ttlMs` / `cacheScope`、全モダンレスポンスの `result._meta` に `io.modelcontextprotocol/serverInfo` を注入（tools/* の中身は従来どおり Python 転送）
+- 全結果に `resultType: "complete"`、`tools/list` に `ttlMs` / `cacheScope`、全モダンレスポンスの `result._meta` に `io.modelcontextprotocol/serverInfo` を注入（tools/* の中身は 2025-11-25 と同じ）
 - `subscriptions/listen` → SSE（`notifications/subscriptions/acknowledged` + keep-alive コメント）
 - OAuth 強化: 認可応答リダイレクトに `iss`（RFC 9207）／DCR で `application_type` 受理（既定 `web`）／`grant_type=refresh_token`（発行・使用ごとローテーション・再利用は `invalid_grant`・`scope` 縮小可）／`/.well-known/oauth-authorization-server/<suffix>` にも応答・`grant_types_supported` に `refresh_token`
 
@@ -189,6 +193,10 @@ python -m venv .venv
 - 画像として読めないファイルのエラー文言は画像ライブラリ（Pillow / sharp）ごとに違う（どちらも 400）
 - `/api/album`（末尾スラッシュなし）も一覧として応答する（main.py は `/api/album/` へリダイレクト）
 
+**TS 単体化（v4.0・TS-FULL ステップ8）での main.py との差（意図的）:**
+- どのルートにも当たらないパスは JSON の 404 `{"error": "not found"}`（Flask は HTML の 404 ページ）
+- 起動時処理（基本ディレクトリの作成・旧形式アップロードメタの退避・新規環境の CoreMem シードと welcome inbox）は同じ契約（`tests/test_startup.py`）。スケルトンの置き場所は `ts/skeleton/coremem/<lang>/`（`MIO_SKELETON_DIR` で差し替え可）
+
 ## 7. その他 REST
 
 | グループ | パス | 契約の要点 |
@@ -209,16 +217,14 @@ python -m venv .venv
 | oauth-resource | `GET /.well-known/oauth-protected-resource` | OAuth 保護リソースメタデータ |
 | conversations-cleanup | `POST /api/conversations/cleanup-empty` | 空会話ログの一括非表示（`dry_run` 対応, v3.79） |
 | import-status | `/api/import-status` | 最終ZIPインポート記録 |
-| friends | `/api/friends*` `/register` `/activate` | 友達システム（テストは未カバー・SendGrid 依存） |
+| friends | `/api/friends*` `/register` `/activate` | 友達システム（登録・承認・取り消し・削除・直接登録・招待文・公開ページ。`tests/test_friends_rest.py`。メール送信は SendGrid 未設定の経路のみ） |
 
-## 8. 既知の未カバー領域（v3.62 時点）
+## 8. 既知の未カバー領域（v3.62 時点。その後の追補を併記）
 
-- 友達システム（登録→承認→アクティベーション→friend MCP セッション）
-- `conversation_digest` / 要約バッチの実生成（ローカルLLM 依存のため status 系のみ固定）
-- `album_save(url=...)` の外部ダウンロード・HTML画像抽出
-- ~~レガシー `/mcp/sse` / `/mcp/messages`~~ → TS-FULL ステップ1 で廃止（両サーバーとも 404。`test_legacy_sse_endpoints_removed`）
-
-これらは TS-1 実施前に必要に応じて追加する。
+- ~~友達システム（登録→承認→アクティベーション→friend MCP セッション）~~ → REST と公開ページは `tests/test_friends_rest.py`（TS-FULL ステップ6）、friend MCP セッションは `tests/test_llm_native.py`（リング5）。SendGrid の実送信は未カバー
+- ~~`conversation_digest` / 要約バッチの実生成（ローカルLLM 依存のため status 系のみ固定）~~ → テスト内のモック LLM（`MockLLM`）で生成まで固定（リング5・伏せ字は TS-FULL ステップ7）
+- ~~`album_save(url=...)` の外部ダウンロード・HTML画像抽出~~ → モック LLM の静的配信で固定（リング5）
+- ~~レガシー `/mcp/sse` / `/mcp/messages`~~ → TS-FULL ステップ1 で廃止（404。`test_legacy_sse_endpoints_removed`）
 
 **v3.62 で追補済み**（tests/test_oauth_mcp_transport.py・12件）: OAuth フルフロー
 （register→authorize→token→発行トークンで REST/MCP。PKCE S256 検証・不正 verifier/

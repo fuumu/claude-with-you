@@ -67,12 +67,6 @@ export function activeFriendByToken(token: string): Friend | null {
   return { ...reg[token], token };
 }
 
-/** レジストリに存在するトークンか（status 不問） */
-export function isRegisteredFriendToken(token: string): boolean {
-  if (!token) return false;
-  return token in loadRegistry();
-}
-
 const seqStr = (f: Friend): string => String(f.seq_no).padStart(3, '0');
 
 /** initialize の instructions（core + 相手のニックネーム + この人との記憶） */

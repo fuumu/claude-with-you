@@ -63,15 +63,17 @@ function existingMetaPath(id: string): string | null {
   return null;
 }
 
-/** file_list 等の前に旧形式メタを一括退避する（main.py _uploads_migrate_all と同一） */
-function migrateAllMeta(): void {
-  if (!fs.existsSync(UPLOADS_DIR) || !fs.statSync(UPLOADS_DIR).isDirectory()) return;
+/** 起動時と file_list 等の前に旧形式メタを一括退避し、退避した件数を返す（main.py _uploads_migrate_all と同一） */
+export function migrateAllMeta(): number {
+  if (!fs.existsSync(UPLOADS_DIR) || !fs.statSync(UPLOADS_DIR).isDirectory()) return 0;
+  let n = 0;
   for (const fname of fs.readdirSync(UPLOADS_DIR).sort()) {
     if (!fname.endsWith('.json') || fname.endsWith('.meta.json')) continue;
     const id = fname.slice(0, -'.json'.length);
     if (fs.existsSync(metaPathFor(id))) continue; // 新形式が既にある → この .json は実体
-    existingMetaPath(id);
+    if (existingMetaPath(id)) n++;
   }
+  return n;
 }
 
 export function loadMeta(id: string): Meta | null {

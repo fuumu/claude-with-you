@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """TS-1 リング5: LLM 依存ツール・album_save・file_upload(file_path)・友達セッションの契約。
 
-LLM は conftest の MockLLM（Anthropic Messages 互換）に向けてある。Python 単体モードが基準で、
-MIO_TS1=1 でも同じ期待値で通ること＝TS ネイティブ実装が同一契約であることの確認になる。
+LLM は conftest の MockLLM（Anthropic Messages 互換）に向けてある。期待値は Python 版 main.py の
+挙動から取った（TS ネイティブ実装が同一契約であることの確認）。
 
 バッチ系はグローバルな状態（全会話・全記憶エントリ）を走査・更新するため、データを一時的に
 空にして実行し、終了後に元へ戻す（isolated_data）。他テストの前提を壊さないための措置。
@@ -36,7 +36,7 @@ def isolated_data(server):
             if os.path.isdir(p):
                 shutil.copytree(p, os.path.join(snap, n))
                 shutil.rmtree(p)
-            os.makedirs(p)  # 空で作り直す（main.py は memory/ 等の存在を前提にする）
+            os.makedirs(p)  # 空で作り直す（サーバーは memory/ 等の存在を前提にする）
         for f in _FILES:
             p = os.path.join(root, f)
             if os.path.exists(p):

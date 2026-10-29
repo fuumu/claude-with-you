@@ -1,5 +1,7 @@
 # MIO Server Full TypeScript Migration Plan
 
+> **v4.0 note (2026-10-30):** this plan was carried out through TS-1 (rings 0–5) and TS-FULL (steps 1–8); since v4.0 the server is TypeScript only. See [ts1-migration.md](ts1-migration.md) and [ts-full-inventory.md](ts-full-inventory.md) for how it went. This document is the pre-migration investigation and plan.
+
 *The Japanese version, `migration-to-ts.ja.md`, is the primary document. This file is its English counterpart.*
 
 ## 1. Current scale

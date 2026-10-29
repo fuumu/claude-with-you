@@ -59,11 +59,6 @@ ${body}`,
   return entryId;
 }
 
-/** index.ts が先読みしたリクエストボディ（Python へ回す場合に再送するため） */
-export interface BufferedRequest {
-  bufferedBody?: Buffer;
-}
-
 export interface InboxMessage {
   id: string;
   to?: string;
@@ -268,8 +263,6 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
-  const buffered = (req as http.IncomingMessage & BufferedRequest).bufferedBody;
-  if (buffered) return Promise.resolve(buffered.toString('utf-8'));
   return readBodyText(req);
 }
 

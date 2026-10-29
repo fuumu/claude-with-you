@@ -145,7 +145,7 @@ data-xxxxx-batch-0000.zip
 
 ## 6. NASインポート処理への影響
 
-> **【2026-06 注記】** 本節の修正方針は実装済み。`POST /import` が `tool_use` ブロック（`create_file` / `artifacts`）を解析して `/data/conv_artifacts/` に抽出する（main.py `extract_artifacts()`）。以下は調査当時の記録として残す。
+> **【2026-06 注記】** 本節の修正方針は実装済み。`POST /import` が `tool_use` ブロック（`create_file` / `artifacts`）を解析して `/data/conv_artifacts/` に抽出する（v4.0 は `ts/src/conv-import.ts` の `ArtifactExtractor`。v3.x は main.py `extract_artifacts()`）。以下は調査当時の記録として残す。
 
 ### 現状の問題
 

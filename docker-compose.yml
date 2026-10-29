@@ -2,12 +2,13 @@ version: '3'
 services:
   memory:
     build:
-      context: ./memory
+      context: ./ts
       network: host
     network_mode: host
     volumes:
       - ./memory/data:/data
-      - ./scripts:/app/scripts:ro
+    environment:
+      - MIO_PORT=5002
     env_file:
       - .env
     restart: unless-stopped

@@ -4,10 +4,7 @@
  * append_oplog と同一契約（ID採番・JSON形状・indent=2・oplog形式・論理削除）。
  *
  * 排他方針: /data/ の JSON は「最後に書いた者が勝つ」read-modify-write。
- * テスト構成ではリクエストは逐次なので競合しない。本番で TS を前段に
- * 入れる際は、REST 書き込みは TS・MCP tools/call は Python（転送先）という
- * 分担になるため、index.json / oplog.json の再構築が交互に走っても
- * 両実装が同一アルゴリズムなので結果は収束する。
+ * サーバーは単一プロセスで、読んで書くまでを同期 I/O で行うので、ほかのリクエストと交わらない。
  */
 import fs from 'node:fs';
 import path from 'node:path';

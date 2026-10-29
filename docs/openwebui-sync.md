@@ -2,6 +2,8 @@
 
 Status: **Phase 1 partially implemented** (v3.66 implements manual import from export files. Automatic sync via API polling is not yet implemented)
 
+> **v4.0 note:** the server is now TypeScript only. Manual import is `convertOpenwebuiChat` in `ts/src/conv-import.ts`; automatic sync would use the same timer approach as the nightly batch (`ts/src/scheduler.ts`). The code snippets here are design notes from the Python era.
+
 ## 1. Overview
 
 Import OpenWebUI chat history into mio-memory's conversation log store (`/data/conversations/`),

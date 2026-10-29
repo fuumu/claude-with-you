@@ -4,8 +4,6 @@ import io
 import json
 import os
 
-import pytest
-
 
 def _make_png_bytes():
     """Pillow で最小のPNGを生成"""
@@ -247,11 +245,9 @@ def test_index_body_length_counts_code_points(server):
     assert hit[0]['body_length'] == 4
 
 
-@pytest.mark.skipif(os.environ.get('MIO_TS1') != '1',
-                    reason='main.py は original_filename が一時ファイル名になり、同じ秒の同名アップロードは上書きする'
-                           '（TS-FULL ステップ5 で TS 側を修正）')
 def test_rest_upload_keeps_filename_and_does_not_overwrite(server):
-    """ブラウザから上げた画像は実際のファイル名を残し、同じ秒の同名アップロードは別 ID になる"""
+    """ブラウザから上げた画像は実際のファイル名を残し、同じ秒の同名アップロードは別 ID になる
+    （旧 main.py は一時ファイル名を残し、上書きしていた。TS-FULL ステップ5 で修正）"""
     r = server.post('/api/album/upload', files={'file': ('海の写真.png', io.BytesIO(_make_png_bytes()), 'image/png')})
     assert r.status_code == 201 and r.json()['original_filename'] == '海の写真.png'
     ids = [server.post('/api/uploads/', files={'file': ('same.txt', io.BytesIO(f'v{i}'.encode()))}).json()['id']

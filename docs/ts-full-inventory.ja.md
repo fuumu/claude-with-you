@@ -8,6 +8,7 @@
 > **進捗（2026-10-30）**: 5（album / uploads REST）は `ts-full-step5` で完了。
 > **進捗（2026-10-30）**: 6（友達 REST・HTML 5 ページの配信）は `ts-full-step6` で完了。
 > **進捗（2026-10-30）**: 7（夜間スケジューラ・伏せ字生成）は `ts-full-step7` で完了。残りは 8（シード・compose・Python 退避）。
+> **完了（2026-10-30）**: 8（シード・compose・Python 退避）は `ts-full-step8` で完了 — `legacy-python` ブランチを切ってから Python 一式を削除し、v4.0（TypeScript 単体）。本書は完了した移行の記録として残す（以下の本文は v3.99 時点の調査）。
 
 前提：TS-1 で MCP ツール 38/38 は TS ネイティブ（`tools.ts` に `FORWARD` を返すハンドラーは残っていない）。
 ただし TS 前段（`ts/src/index.ts`）は「担当外のリクエストは全部 Python へ透過転送」する作りなので、

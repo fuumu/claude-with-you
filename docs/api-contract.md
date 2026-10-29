@@ -1,26 +1,29 @@
 # API Contract Document (TS-0)
 
-*Target: mio-memory v3.99 / Written: 2026-07-13 / Last updated: 2026-09-28*
+*Target: mio-memory v4.0 / Written: 2026-07-13 / Last updated: 2026-10-30*
 
-This document pins down the externally promised behavior (the contract) of the current
-`memory/app/main.py`. **The executable contract is the characterization test suite in
-`tests/`** — this document is its map. For TS-1 (the TypeScript migration), the suite
-passing green is the criterion for "this is the same server."
+This document pins down the externally promised behavior (the contract) of mio-memory.
+It was written from the behavior of the Python `memory/app/main.py`, and the TypeScript-only
+server (`ts/`, v4.0+) keeps the same contract ("main.py" in this document means the v3.x
+Python version, kept on the `legacy-python` branch). **The executable contract is the
+characterization test suite in `tests/`** — this document is its map. During the move to
+TypeScript (TS-1 / TS-FULL), the suite passing green was the criterion for "this is the same server."
 
 ## Running the test suite
 
 ```powershell
 # First time only: create venv and install deps
 python -m venv .venv
-.venv/Scripts/python -m pip install flask pytest requests pillow
+.venv/Scripts/python -m pip install pytest requests pillow
 
 # Run (the server auto-starts on a temp data dir; existing environments are untouched)
 .venv/Scripts/python -m pytest tests/ -q
 ```
 
-The tests are **black-box over HTTP** and never import `main.py` internals.
-Swapping the server implementation (e.g. a TS port) only requires changing the launch
-command in `tests/conftest.py`.
+The tests are **black-box over HTTP** and never import server internals.
+`tests/conftest.py` builds `ts/` (`npx tsc`, only when `src` is newer than `dist`) and starts
+`node ts/dist/index.js` (Node.js 22 required). During the migration the same suite ran
+against the Python server, the TS front, and the TS server alone.
 
 **Test hooks (unset in production = legacy behavior):**
 
@@ -28,6 +31,7 @@ command in `tests/conftest.py`.
 |---|---|
 | `MIO_DATA_ROOT` | Override the data root (default `/data`) |
 | `MIO_PORT` | Listen port (default `5002`) |
+| `MIO_BIND` | Bind address (default `0.0.0.0`; tests use `127.0.0.1`) |
 
 ---
 
@@ -64,7 +68,7 @@ command in `tests/conftest.py`.
 
 | Method | Path | Contract |
 |---|---|---|
-| GET | `/health` | 200 `{status:"ok", version, mcp_tool_count}`, no auth |
+| GET | `/health` | 200 `{status:"ok", time, version, mcp_tool_count, mcp_tools, served_by:"ts"}`, no auth |
 | GET | `/.well-known/oauth-authorization-server` | issuer / authorization_endpoint / token_endpoint / registration_endpoint; `code_challenge_methods_supported` includes S256 |
 | POST | `/oauth/register` | Dynamic Client Registration |
 | GET/POST | `/oauth/authorize` `/oauth/token` | PKCE (S256/plain) required. Auth codes 10 min, access tokens 30 days |
@@ -84,7 +88,7 @@ command in `tests/conftest.py`.
 | POST | `/api/memory/reindex` | Rebuild index.json |
 | POST | `/api/memory/share/<id>` | Issue share token |
 | GET | `/api/share/<token>` | Entry without auth (24h expiry) |
-| ~~GET~~ | ~~`/api/memories/symbolic`~~ | Removed in TS-FULL step 4 (404 on both servers; the legacy path-embedded token API `/api/<token>/memory/...` was removed at the same time; `test_removed_legacy_routes_are_404`) |
+| ~~GET~~ | ~~`/api/memories/symbolic`~~ | Removed in TS-FULL step 4 (404; the legacy path-embedded token API `/api/<token>/memory/...` was removed at the same time; `test_removed_legacy_routes_are_404`) |
 | POST | `/api/memory/cleanup-empty` | Bulk soft-delete empty memory entries (dry_run supported, v3.79) |
 | GET | `/api/export` | ZIP of CoreMem + ExtMemory |
 | POST | `/api/import/backup` | Restore from an export ZIP (multipart `file`, `mode=skip/overwrite`, `dry_run=true`). Response `{mode, dry_run, memory{restored,skipped,overwritten}, coremem{...}, conflicts[], errors[]}`. Bad ZIP / wrong structure / bad mode → 400 (v3.63; contract pinned in tests/test_backup_restore.py) |
@@ -102,9 +106,9 @@ command in `tests/conftest.py`.
 - Unknown method → JSON-RPC error `-32601`
 - Friend tokens (`/mcp?token=<friend_token>`) expose a separate 6-tool set (friend_memory_read/write/delete, mio_self_note, friend_inbox_check/read)
 
-### 4b. MCP 2026-07-28 stateless core (TS layer only; verified with `MIO_TS1=1`)
+### 4b. MCP 2026-07-28 stateless core (implemented early in the TS layer since v3.62)
 
-The new-spec contract is pinned in `tests/test_mcp_2026.py` (skipped in Python-only mode — main.py stays on 2025-11-25). The server is dual-era: legacy (initialize + `Mcp-Session-Id`) coexists on the same endpoint.
+The new-spec contract is pinned in `tests/test_mcp_2026.py` (the old Python main.py stayed on 2025-11-25). The server is dual-era: legacy (initialize + `Mcp-Session-Id`) coexists on the same endpoint.
 
 - Modern detection: the request declares 2026-07-28 (or an unknown version) via `params._meta["io.modelcontextprotocol/protocolVersion"]` or the `MCP-Protocol-Version` header. No session IDs are minted or read
 - `server/discover` (MUST) → `result.{resultType, supportedVersions, capabilities, instructions, ttlMs, cacheScope, _meta["io.modelcontextprotocol/serverInfo"]}`. `serverInfo` lives in `result._meta`, not at the top level. Also answers probes without a version declaration
@@ -112,7 +116,7 @@ The new-spec contract is pinned in `tests/test_mcp_2026.py` (skipped in Python-o
 - Required-header validation (when 2026-07-28 is declared): `MCP-Protocol-Version` / `Mcp-Method` / (for tools/call) `Mcp-Name` missing or mismatching the body → **400** + error `-32020` (HeaderMismatch). `Mcp-Name` is compared after decoding the `=?base64?...?=` sentinel
 - Unsupported version → **400** + error `-32022` (with `data.supported` / `data.requested`)
 - Removed methods (`ping`, or `initialize` declared as modern) → **404** + `-32601`
-- Every result carries `resultType: "complete"`; `tools/list` gains `ttlMs` / `cacheScope`; all modern responses carry `io.modelcontextprotocol/serverInfo` in `result._meta` (tool payloads still forwarded to Python)
+- Every result carries `resultType: "complete"`; `tools/list` gains `ttlMs` / `cacheScope`; all modern responses carry `io.modelcontextprotocol/serverInfo` in `result._meta` (tool payloads are the same as in 2025-11-25)
 - `subscriptions/listen` → SSE (`notifications/subscriptions/acknowledged` + keep-alive comments)
 - OAuth hardening: `iss` on the authorization redirect (RFC 9207) / `application_type` accepted in DCR (default `web`) / `grant_type=refresh_token` (issued, rotated on every use, reuse → `invalid_grant`, scope narrowing allowed) / `/.well-known/oauth-authorization-server/<suffix>` answered, `grant_types_supported` includes `refresh_token`
 
@@ -195,6 +199,10 @@ response shapes pinned by tests.
 - `POST /api/uploads` does not overwrite when the same file name is uploaded twice in one second (`_2`, `_3`, … is appended to the id)
 - The error text for files that are not images depends on the image library (Pillow / sharp); both return 400
 - `/api/album` (no trailing slash) also answers with the list (main.py redirected to `/api/album/`)
+
+**Intentional differences of the TS-only server (v4.0, TS-FULL step 8) from main.py:**
+- A path that matches no route gets a JSON 404 `{"error": "not found"}` (Flask served an HTML 404 page)
+- The startup work (creating the base directories, moving legacy upload metadata, seeding CoreMem and the welcome inbox on a fresh environment) keeps the same contract (`tests/test_startup.py`). The skeleton lives in `ts/skeleton/coremem/<lang>/` (override with `MIO_SKELETON_DIR`)
 - Conversation saving (`_save_conversations`) always runs independently of dedup
   (including rating carry-over); v3.77: diff update — skips write when existing file
   has ≥ message_count (response includes `skipped`/`updated` counts)
@@ -224,16 +232,14 @@ response shapes pinned by tests.
 | oauth-resource | `GET /.well-known/oauth-protected-resource` | OAuth protected resource metadata |
 | conversations-cleanup | `POST /api/conversations/cleanup-empty` | Bulk-hide empty conversation logs (dry_run supported, v3.79) |
 | import-status | `/api/import-status` | Last ZIP import record |
-| friends | `/api/friends*` `/register` `/activate` | Friend system (untested — SendGrid dependent) |
+| friends | `/api/friends*` `/register` `/activate` | Friend system (register, approve, revoke, delete, direct register, invitation text, public pages; `tests/test_friends_rest.py`; mail sending only on the SendGrid-not-configured path) |
 
-## 8. Known uncovered areas (as of v3.62)
+## 8. Known uncovered areas (as of v3.62, with later additions noted)
 
-- Friend system (register → approve → activate → friend MCP session)
-- Actual generation by `conversation_digest` / summary batch (local-LLM dependent; only status shapes pinned)
-- `album_save(url=...)` external download / HTML image extraction
-- ~~Legacy `/mcp/sse` / `/mcp/messages`~~ → removed in TS-FULL step 1 (404 on both servers; `test_legacy_sse_endpoints_removed`)
-
-Add these before executing TS-1 as needed.
+- ~~Friend system (register → approve → activate → friend MCP session)~~ → REST and public pages in `tests/test_friends_rest.py` (TS-FULL step 6), friend MCP sessions in `tests/test_llm_native.py` (ring 5). Real SendGrid sending is not covered
+- ~~Actual generation by `conversation_digest` / summary batch (local-LLM dependent; only status shapes pinned)~~ → pinned through generation with the in-test mock LLM (`MockLLM`; ring 5, redaction in TS-FULL step 7)
+- ~~`album_save(url=...)` external download / HTML image extraction~~ → pinned with the mock LLM's static file serving (ring 5)
+- ~~Legacy `/mcp/sse` / `/mcp/messages`~~ → removed in TS-FULL step 1 (404; `test_legacy_sse_endpoints_removed`)
 
 **Covered since v3.62** (tests/test_oauth_mcp_transport.py, 12 tests): the full OAuth
 flow (register → authorize → token → issued token used on REST/MCP; PKCE S256

@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """UserCoreMemory 4ツール（save / read / list / delete）＋manifestマージの契約"""
-import pytest
 
 
-@pytest.mark.requires_python
 def test_seeded_skeleton_present(server):
     """新規環境には CoreMem スケルトンが冪等シードされる（v3.43〜）"""
     d = server.tool('CoreMem_list', {})
