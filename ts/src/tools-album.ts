@@ -14,10 +14,10 @@ import { safeId } from './inbox.js';
 import { Handler, truthy } from './tool-types.js';
 import { appendOplog, jstIsoFromMs, nowJst, writeJson } from './write.js';
 
-const ALBUM_DIR = path.join(DATA_ROOT, 'album');
+export const ALBUM_DIR = path.join(DATA_ROOT, 'album');
 const SHARE_TOKENS_FILE = path.join(DATA_ROOT, 'share_tokens.json');
 const BASE_URL = process.env.MIO_BASE_URL ?? 'http://localhost:5002';
-const MIME_MAP: Record<string, string> = {
+export const MIME_MAP: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -27,11 +27,11 @@ const MIME_MAP: Record<string, string> = {
 
 type Meta = Record<string, unknown>;
 
-function metaPath(id: string): string {
+export function metaPath(id: string): string {
   return path.join(ALBUM_DIR, `${id}.json`);
 }
 
-function loadMeta(id: string): Meta | null {
+export function loadMeta(id: string): Meta | null {
   if (!safeId(id)) return null;
   const p = metaPath(id);
   if (!fs.existsSync(p)) return null;

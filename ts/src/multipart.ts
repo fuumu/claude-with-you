@@ -71,7 +71,7 @@ export function parseMultipart(body: Buffer, contentType: string | undefined): M
     if (next < 0) return null;
     const data = body.subarray(headerEnd + 4, next);
     let disposition = '';
-    let partType = 'text/plain';
+    let partType = ''; // Werkzeug と同じく Content-Type の無いパートは ''（呼び出し側で既定値を決める）
     for (const h of headers) {
       const i = h.indexOf(':');
       if (i < 0) continue;

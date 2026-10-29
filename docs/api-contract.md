@@ -189,6 +189,12 @@ response shapes pinned by tests.
 - REST CoreMem save/delete (`POST/DELETE /api/coremem/<name>`) also writes `coremem_save` / `coremem_delete` oplog entries (main.py only for the MCP tools)
 - Non-numeric integer parameters such as `limit` return 400 (main.py: 500)
 - TS lag fixed in step 4: REST `hsearch` now takes `author` / `search_layer` (v3.81), `index.json`'s `body_length` counts code points (emoji used to count as 2), REST CoreMem save has the manifest guard (409, v3.96)
+
+**Intentional differences of the TS implementation (TS-FULL step 5, `ts/src/rest-media.ts`) from main.py:**
+- Images uploaded with `POST /api/album/upload` keep the real file name in `original_filename` (main.py stored its temp file name `_upload_tmp_…`)
+- `POST /api/uploads` does not overwrite when the same file name is uploaded twice in one second (`_2`, `_3`, … is appended to the id)
+- The error text for files that are not images depends on the image library (Pillow / sharp); both return 400
+- `/api/album` (no trailing slash) also answers with the list (main.py redirected to `/api/album/`)
 - Conversation saving (`_save_conversations`) always runs independently of dedup
   (including rating carry-over); v3.77: diff update — skips write when existing file
   has ≥ message_count (response includes `skipped`/`updated` counts)

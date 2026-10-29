@@ -18,7 +18,6 @@ def _make_png_bytes():
 
 # ── Uploads（v3.59）──────────────────────────────────────────────────
 
-@pytest.mark.requires_python
 def test_uploads_roundtrip(server):
     content = 'TS0アップロードテスト本文'.encode('utf-8')
     r = server.post('/api/uploads/',
@@ -56,7 +55,6 @@ def test_uploads_roundtrip(server):
     assert server.get(f'/api/uploads/{uid}').status_code == 404
 
 
-@pytest.mark.requires_python
 def test_uploads_json_file_roundtrip(server):
     """ext=json のアップロードでも実体がメタデータに上書きされない（メタは {id}.meta.json）"""
     content = json.dumps({'k': 'v', 'n': 'JSON実体'}, ensure_ascii=False).encode('utf-8')
@@ -82,7 +80,6 @@ def test_uploads_json_file_roundtrip(server):
     assert not os.path.exists(os.path.join(up, f'{uid}.meta.json'))
 
 
-@pytest.mark.requires_python
 def test_uploads_legacy_meta_migration(server):
     """旧形式（メタが {id}.json）のアップロードは参照時に {id}.meta.json へ退避される"""
     up = os.path.join(server.data_root, 'uploads')
@@ -121,7 +118,6 @@ def test_mcp_id_args_reject_path_traversal(server):
         assert 'error' in server.tool('conversation_read', {'uuid': bad})
 
 
-@pytest.mark.requires_python
 def test_uploads_delete_not_found(server):
     r = server.delete('/api/uploads/nonexistent_id_xyz')
     assert r.status_code == 404
@@ -129,7 +125,6 @@ def test_uploads_delete_not_found(server):
 
 # ── Album ────────────────────────────────────────────────────────────
 
-@pytest.mark.requires_python
 def test_album_upload_list_patch_delete(server):
     png = _make_png_bytes()
     r = server.post('/api/album/upload',
@@ -250,3 +245,16 @@ def test_index_body_length_counts_code_points(server):
     server.tool('memory_upsert', {'id': 'ts0_body_len', 'title': '長さ', 'body': '🍎🍏ab'})
     hit = [e for e in server.get('/api/memory/index').json() if e['id'] == 'ts0_body_len']
     assert hit[0]['body_length'] == 4
+
+
+@pytest.mark.skipif(os.environ.get('MIO_TS1') != '1',
+                    reason='main.py は original_filename が一時ファイル名になり、同じ秒の同名アップロードは上書きする'
+                           '（TS-FULL ステップ5 で TS 側を修正）')
+def test_rest_upload_keeps_filename_and_does_not_overwrite(server):
+    """ブラウザから上げた画像は実際のファイル名を残し、同じ秒の同名アップロードは別 ID になる"""
+    r = server.post('/api/album/upload', files={'file': ('海の写真.png', io.BytesIO(_make_png_bytes()), 'image/png')})
+    assert r.status_code == 201 and r.json()['original_filename'] == '海の写真.png'
+    ids = [server.post('/api/uploads/', files={'file': ('same.txt', io.BytesIO(f'v{i}'.encode()))}).json()['id']
+           for i in range(2)]
+    assert len(set(ids)) == 2
+    assert server.get(f'/api/uploads/{ids[0]}').content == b'v0'
