@@ -210,7 +210,7 @@ response shapes pinned by tests.
 - Friend system (register → approve → activate → friend MCP session)
 - Actual generation by `conversation_digest` / summary batch (local-LLM dependent; only status shapes pinned)
 - `album_save(url=...)` external download / HTML image extraction
-- Legacy `/mcp/sse` / `/mcp/messages`
+- ~~Legacy `/mcp/sse` / `/mcp/messages`~~ → removed in TS-FULL step 1 (404 on both servers; `test_legacy_sse_endpoints_removed`)
 
 Add these before executing TS-1 as needed.
 

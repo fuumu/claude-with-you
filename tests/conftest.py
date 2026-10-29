@@ -4,6 +4,15 @@
 サーバー（memory/app/main.py）を一時データディレクトリ＋ローカルポートで
 サブプロセス起動し、HTTP 越しのブラックボックステストを行う。
 main.py 内部は import しない（TS-1 移行後もテストがそのまま使えることが目的）。
+
+起動モード:
+  （既定）        Python（main.py）単体
+  MIO_TS1=1       TS サーバーを前段に置き、未移植 REST だけ Python へ転送
+  MIO_TS_ONLY=1   TS サーバー単体（Python を起動しない・MIO_UPSTREAM=off）。
+                  MIO_TS1=1 も立つので TS 専用テストも走る。未移植 REST に依存する
+                  テストは @pytest.mark.requires_python で印を付け、このモードでは skip する。
+                  404 を期待するテストも、相手が未移植ルートなら印を付ける（TS 単体の
+                  フォールバック 404 で、ルートが無いのに通ってしまうため）
 """
 import json
 import os
@@ -23,6 +32,26 @@ import requests
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_PY = os.path.join(REPO_ROOT, 'memory', 'app', 'main.py')
 TEST_TOKEN = 'ts0-test-token'
+
+# TS 単体モード。テストモジュールの skipif（MIO_TS1 == '1'）が評価される前に立てる
+TS_ONLY = os.environ.get('MIO_TS_ONLY') == '1'
+if TS_ONLY:
+    os.environ['MIO_TS1'] = '1'
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        'markers',
+        'requires_python: 未移植（Python のみ）の REST に依存する。MIO_TS_ONLY=1 では skip')
+
+
+def pytest_collection_modifyitems(config, items):
+    if not TS_ONLY:
+        return
+    skip = pytest.mark.skip(reason='未移植 REST に依存（MIO_TS_ONLY=1 では Python がいない）')
+    for item in items:
+        if 'requires_python' in item.keywords:
+            item.add_marker(skip)
 
 
 def _free_port() -> int:
@@ -249,8 +278,9 @@ def _ensure_ts_built():
 def server():
     """一時データディレクトリでサーバーを起動するセッションフィクスチャ。
 
-    MIO_TS1=1 を指定すると、Python の前に TypeScript プロキシ（ts/・リング0）を
+    MIO_TS1=1 を指定すると、Python の前に TypeScript サーバー（ts/）を
     立て、テストは TS サーバー経由で実行される（TS-1 の「同一サーバー」判定）。
+    MIO_TS_ONLY=1 では Python を起動せず TS サーバーだけで実行する。
     """
     tmpdir = tempfile.mkdtemp(prefix='mio-ts0-')
     py_port = _free_port()
@@ -290,15 +320,18 @@ def server():
     # なりサーバーが書き込みでブロックし、一括実行の中盤でハングする（MIO_TS1=1 で顕在化）
     logdir = tempfile.mkdtemp(prefix='mio-ts0-log-')
     py_log = open(os.path.join(logdir, 'python.log'), 'wb')
-    proc = subprocess.Popen(
-        [sys.executable, MAIN_PY], env=env,
-        stdout=py_log, stderr=subprocess.STDOUT,
-        cwd=REPO_ROOT)
-    proc.log_path = py_log.name
+    proc = None
+    if not TS_ONLY:
+        proc = subprocess.Popen(
+            [sys.executable, MAIN_PY], env=env,
+            stdout=py_log, stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT)
+        proc.log_path = py_log.name
     ts_proc = None
     ts_log = None
     try:
-        _wait_health(py_url, proc)
+        if proc is not None:
+            _wait_health(py_url, proc)
         if ts1:
             dist = _ensure_ts_built()
             ts_env = dict(os.environ)
@@ -313,6 +346,8 @@ def server():
                 'MIO_BASE_URL': front_url,
                 'MIO_LOG_LEVEL': 'off',
             })
+            if TS_ONLY:
+                ts_env['MIO_UPSTREAM'] = 'off'
             ts_env.update(llm_env)
             ts_log = open(os.path.join(logdir, 'node.log'), 'wb')
             ts_proc = subprocess.Popen(
@@ -321,13 +356,14 @@ def server():
                 cwd=os.path.join(REPO_ROOT, 'ts'))
             ts_proc.log_path = ts_log.name
             _wait_health(front_url, ts_proc)
-        yield Server(front_url, TEST_TOKEN, tmpdir, proc, llm)
+        yield Server(front_url, TEST_TOKEN, tmpdir, proc or ts_proc, llm)
     finally:
         if ts_proc is not None:
             ts_proc.kill()
             ts_proc.wait(timeout=10)
-        proc.kill()
-        proc.wait(timeout=10)
+        if proc is not None:
+            proc.kill()
+            proc.wait(timeout=10)
         py_log.close()
         llm.close()
         if ts_log is not None:

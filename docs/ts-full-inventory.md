@@ -2,6 +2,8 @@
 
 *2026-10-29 / as of v3.99 (commit 34e84d1). Investigation only — no code changes. Japanese version (`ts-full-inventory.ja.md`) is authoritative.*
 
+> **Progress (2026-10-29)**: items 1 (remove runtime Python dependency) and 2 (test harness) of the summary are done in `ts-full-step1`. Dropped: legacy SSE (removed), legacy path-token API, `/api/memories/symbolic`. To port: dedup-scan, cleanup-empty ×2 (handled with admin REST in item 4).
+
 Premise: after TS-1, all 38 MCP tools are TS-native (no handler in `tools.ts` returns `FORWARD`).
 However, the TS front (`ts/src/index.ts`) transparently forwards **everything it does not handle** to Python,
 so **many REST routes, the HTML pages, and background jobs are still served by Python**.

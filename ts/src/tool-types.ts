@@ -3,12 +3,9 @@
 export type Args = Record<string, unknown>;
 
 export interface ToolContext {
-  /** Python 側 VERSION（/health の version。server_version に載せる） */
+  /** サーバーバージョン（version.ts の VERSION。server_version に載せる） */
   serverVersion: string;
 }
-
-/** ハンドラーが返すと、その呼び出しは TS では処理せず Python へ転送される（LLM 依存の分岐など） */
-export const FORWARD = Symbol('forward-to-python');
 
 /** ハンドラーは同期・非同期どちらでもよい（URL ダウンロード等は Promise を返す） */
 export type Handler = (args: Args, ctx: ToolContext) => unknown | Promise<unknown>;

@@ -1,77 +1,52 @@
 /**
- * TS-1 ストラングラー・リング0: TypeScript リバースプロキシ
+ * mio-memory TS サーバー（TS-1 ストラングラー → TS-FULL 移行中）。
  *
- * 全リクエストを Python 実装（main.py）へ透過転送する。/health のみ TS 側で
- * ネイティブ実装（形状互換・served_by: "ts" を追加）。以降のリング（TS-1 本移行）では
- * エンドポイントを1つずつ NATIVE_ROUTES に移し、特性テスト（tests/）が全パスする
- * ことを合格判定として進める。
- *
- * 依存ゼロ（node:http のみ）。SSE / チャンク転送は pipe でそのまま通す。
+ * /health・/mcp・OAuth・移植済み REST は TS がネイティブ応答する。未移植の REST だけを
+ * Python 実装（main.py）へ透過転送する（SSE / チャンク転送は pipe でそのまま通す）。
+ * MIO_UPSTREAM=off で Python なしの単体起動（未移植ルートは 404 not found）。
  *
  * 環境変数:
- *   MIO_PORT          このプロキシのリッスンポート（デフォルト 5003）
+ *   MIO_PORT          このサーバーのリッスンポート（デフォルト 5003）
+ *   MIO_UPSTREAM      off にすると Python へ転送しない（TS 単体モード）
  *   MIO_UPSTREAM_HOST Python 側ホスト（デフォルト 127.0.0.1）
  *   MIO_UPSTREAM_PORT Python 側ポート（デフォルト 5002）
  */
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { API_TOKEN, extractBearer, verifyToken } from './auth.js';
 import { handleConversations } from './conversations.js';
-import { handleCoremem } from './coremem.js';
-import { loadAllEntries, loadEntry, loadIndexList } from './data.js';
+import { ARTIFACTS_DIR, handleCoremem } from './coremem.js';
+import { DATA_DIR, DATA_ROOT, loadAllEntries, loadEntry, loadIndexList } from './data.js';
 import { BufferedRequest, handleInbox } from './inbox.js';
 import { handleMcp } from './mcp.js';
 import { handleLlmRest } from './rest-llm.js';
 import { handleOAuth } from './oauth.js';
 import { hierarchicalSearch, randomIndexSample } from './search.js';
-import { createEntry, deleteEntry, reindexAll, updateEntry } from './write.js';
+import { listTools } from './tools.js';
+import { VERSION } from './version.js';
+import { createEntry, deleteEntry, nowJst, reindexAll, updateEntry } from './write.js';
 
 const PORT = parseInt(process.env.MIO_PORT ?? '5003', 10);
 const UPSTREAM_HOST = process.env.MIO_UPSTREAM_HOST ?? '127.0.0.1';
 const UPSTREAM_PORT = parseInt(process.env.MIO_UPSTREAM_PORT ?? '5002', 10);
 
-interface HealthShape {
-  status: string;
-  version: string;
-  mcp_tool_count: number;
-  [key: string]: unknown;
-}
+const UPSTREAM_ENABLED = (process.env.MIO_UPSTREAM ?? '').toLowerCase() !== 'off';
 
-let healthCache: HealthShape | null = null;
+/** 廃止したレガシー SSE トランスポート（TS-FULL ステップ1）。Python へも転送しない */
+const LEGACY_SSE_PATHS = new Set(['/mcp/sse', '/mcp/messages']);
 
-/** アップストリームの /health を取得（バージョン等の形状互換のため） */
-function fetchUpstreamHealth(): Promise<HealthShape> {
-  return new Promise((resolve, reject) => {
-    const req = http.get(
-      { host: UPSTREAM_HOST, port: UPSTREAM_PORT, path: '/health', timeout: 5000 },
-      (res) => {
-        let body = '';
-        res.on('data', (c) => (body += c));
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(body) as HealthShape);
-          } catch (e) {
-            reject(e);
-          }
-        });
-      },
-    );
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error('upstream health timeout')));
+/** /health（main.py health() と同じ形状 + served_by。Python には問い合わせない） */
+function handleHealth(res: http.ServerResponse): void {
+  const tools = listTools();
+  sendJson(res, 200, {
+    status: 'ok',
+    time: nowJst(),
+    version: VERSION,
+    mcp_tool_count: tools.length,
+    mcp_tools: tools.map((t) => t.name),
+    served_by: 'ts',
   });
-}
-
-/** /health のネイティブ実装（リング0で唯一 TS が直接応えるエンドポイント） */
-async function handleHealth(res: http.ServerResponse): Promise<void> {
-  try {
-    if (!healthCache) {
-      healthCache = await fetchUpstreamHealth();
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ...healthCache, served_by: 'ts' }));
-  } catch {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'upstream unavailable' }));
-  }
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -268,11 +243,16 @@ const server = http.createServer((req, res) => {
   const url = req.url ?? '/';
 
   if (url === '/health' || url.startsWith('/health?')) {
-    void handleHealth(res);
+    handleHealth(res);
     return;
   }
 
   const parsed = new URL(url, `http://127.0.0.1:${PORT}`);
+
+  if (LEGACY_SSE_PATHS.has(parsed.pathname)) {
+    sendJson(res, 404, { error: 'not found' });
+    return;
+  }
 
   // リング1: 読み取り系 REST を TS がネイティブ応答
   if (handleNative(req, res, parsed)) {
@@ -280,7 +260,7 @@ const server = http.createServer((req, res) => {
   }
 
   // リング2/3（書き込み系REST・inbox）→ OAuth → MCP の順にネイティブ処理を試み、
-  // どれも担当しなければ透過プロキシへ（友達セッションの /mcp を含む）
+  // どれも担当しなければ透過プロキシへ（MIO_UPSTREAM=off なら 404）
   void (async () => {
     try {
       if (await handleWriteNative(req, res, parsed)) return;
@@ -307,6 +287,10 @@ const server = http.createServer((req, res) => {
       }
       if (await handleOAuth(req, res, parsed)) return;
       if (await handleMcp(req, res, parsed)) return;
+      if (!UPSTREAM_ENABLED) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
       proxyToUpstream(req, res, url, parsed);
     } catch {
       if (!res.headersSent) {
@@ -317,8 +301,16 @@ const server = http.createServer((req, res) => {
   })();
 });
 
+// 起動時に基本ディレクトリを用意する（main.py の __main__ と同じ 4 つ）。
+// TS 単体起動では Python が作ってくれないため、新規データでも書き込みが ENOENT にならないように
+for (const dir of [DATA_DIR, ARTIFACTS_DIR, path.join(DATA_ROOT, 'inbox'), path.join(DATA_ROOT, 'album')]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 server.listen(PORT, '127.0.0.1', () => {
   console.log(
-    `mio-memory-ts ring0 proxy: 127.0.0.1:${PORT} -> ${UPSTREAM_HOST}:${UPSTREAM_PORT}`,
+    UPSTREAM_ENABLED
+      ? `mio-memory-ts v${VERSION}: 127.0.0.1:${PORT} (unported REST -> ${UPSTREAM_HOST}:${UPSTREAM_PORT})`
+      : `mio-memory-ts v${VERSION}: 127.0.0.1:${PORT} (standalone, no upstream)`,
   );
 });

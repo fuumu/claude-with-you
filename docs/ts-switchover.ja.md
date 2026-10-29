@@ -240,5 +240,5 @@ curl http://127.0.0.1:5002/health
 ### 既知のリスク
 
 1. **oauth_store.json の同時書き込み**: TS と Python が同一ファイルを read-modify-write する。OAuth トークン発行が集中しない限り競合リスクは極低
-2. **レガシーSSE (`/mcp/sse`, `/mcp/messages`)**: TS は Python に透過転送する。現在の Claude.ai は `/mcp` のみ使用しているため影響なし
+2. ~~**レガシーSSE (`/mcp/sse`, `/mcp/messages`)**: TS は Python に透過転送する~~ → TS-FULL ステップ1 で廃止（404）。現在の Claude.ai は `/mcp` のみ使用しているため影響なし
 3. **バッチ・ダイジェスト系**: Python直のまま :5003 で動作。admin.html からの操作は TS → Python の透過転送で通る

@@ -1,8 +1,9 @@
 /**
- * 自動生成ファイル — 手で編集しない。
- * 生成元: memory/app/main.py の _MCP_TOOLS（通常セッションの MCP ツール定義）
- * 再生成: .venv/Scripts/python scripts/gen_ts_tool_defs.py
- * 照合: tests/test_mcp_core.py::test_ts_tool_defs_snapshot_matches_python
+ * 通常セッションの MCP ツール定義（正本）。tools/list はこの配列をそのまま返す。
+ * TS-FULL ステップ1 で main.py の _MCP_TOOLS からの自動生成をやめ、このファイルを正本にした。
+ * ツールを追加・変更するときはここを直接編集し、tools.ts の HANDLERS にハンドラーを登録する。
+ * 照合: tests/test_mcp_core.py::test_tools_list_matches_tool_defs
+ * 配列は JSON 互換の書き方を保つ（テストが json.loads で読む: ダブルクォート・末尾カンマなし・コメントなし）。
  */
 export interface ToolDef {
   name: string;

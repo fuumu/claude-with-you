@@ -1,7 +1,7 @@
 /**
  * TS-1 リング5: 友達セッション（/mcp?token=<friend_token>）のネイティブ化。
  * main.py の _get_friend_by_token / _get_friend_instructions / _handle_friend_tool_call /
- * _FRIEND_MCP_TOOLS（定義は scripts/gen_ts_tool_defs.py で friend-defs.ts に生成）と同一契約。
+ * _FRIEND_MCP_TOOLS と同一契約（定義の正本は friend-defs.ts）。
  *
  * 友達セッションは通常の 38 ツールではなく 6 ツール（friend_memory_* / mio_self_note /
  * friend_inbox_*）だけを持つ。記憶ファイルは /data/friends/{seq_no:03d}/memory.md。

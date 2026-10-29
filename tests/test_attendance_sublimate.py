@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """出席簿（attendance_view・発注④）＋昇華パイプライン（sublimate・発注⑤）の契約（v3.71）"""
+import pytest
+
 from conftest import make_conversation
 
 
@@ -58,6 +60,7 @@ def test_attendance_local_channel_detection(server):
     assert by_title['ローカル便テスト']['individual'] == 'しずく'
 
 
+@pytest.mark.requires_python
 def test_attendance_conversation_layer(server, make_conv_zip):
     """会話ログのメタデータが channel=chat の行になる（rating 併記）"""
     conv = make_conversation(title='出席簿用会話ログ')
@@ -122,6 +125,7 @@ def test_attendance_date_filter(server):
 
 # ── attendance REST (/api/attendance) ─────────────────────────────────
 
+@pytest.mark.requires_python
 def test_rest_attendance_summary(server):
     """GET /api/attendance returns individual summaries (v3.74)"""
     r = server.get('/api/attendance')
@@ -132,6 +136,7 @@ def test_rest_attendance_summary(server):
     assert isinstance(d['rows'], list)
 
 
+@pytest.mark.requires_python
 def test_rest_attendance_individual(server):
     """GET /api/attendance?individual=... returns detail for one person (v3.74)"""
     server.tool('inbox_post', {
@@ -146,6 +151,7 @@ def test_rest_attendance_individual(server):
     assert any(row['title'] == 'REST出席簿テスト' for row in d['rows'])
 
 
+@pytest.mark.requires_python
 def test_rest_attendance_date_filter(server):
     """GET /api/attendance supports date_from/date_to (v3.74)"""
     r = server.get('/api/attendance', params={
@@ -199,6 +205,7 @@ def test_attendance_unresolved_models(server):
         assert 'unresolved_models' in d
 
 
+@pytest.mark.requires_python
 def test_oplog_delete(server):
     """DELETE /api/oplog/<index> で個別エントリが削除できる（v3.82）"""
     server.tool('memory_write', {'title': 'oplogテスト用', 'body': 'x', 'tags': ['テスト']})
@@ -213,6 +220,7 @@ def test_oplog_delete(server):
     assert len(r3.json()) == before_count - 1
 
 
+@pytest.mark.requires_python
 def test_oplog_delete_out_of_range(server):
     """存在しないインデックスへの削除は 404"""
     r = server.delete('/api/oplog/99999')
