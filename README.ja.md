@@ -1321,6 +1321,8 @@ claude-with-you/
 ├── scripts/
 │   ├── generate_summary_layers.py  要約レイヤーをサーバーの外から一括生成する補助スクリプト（REST 経由）
 │   ├── manage_llm_endpoints.py     .env の LLM エンドポイント設定を対話的に更新
+│   ├── deploy-v4.sh           v3.x → v4.0 の切り替えデプロイ（docs/setup.ja.md）
+│   ├── rollback-v4.sh         v4.0 → v3.x（legacy-python）へのロールバック
 │   └── update-env.sh          .env_sample → .env マージスクリプト
 └── memory/
     └── data/                実データ（gitignored・コンテナ内は /data）
