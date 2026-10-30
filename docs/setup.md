@@ -146,7 +146,29 @@ v4.0 makes the server TypeScript only: the `memory` service in `docker-compose.y
 The data location (`memory/data` → `/data`), the port (5002) and `.env` stay as they are. OAuth tokens (`oauth_store.json`) carry over, so connectors do not need to re-authenticate.
 
 A NAS that ran the TS-front setup ([ts-switchover.md](ts-switchover.md)) has a locally edited `docker-compose.yml`, so
-**stop the old setup first, with the old file**, then drop the local edit and update:
+**stop the old setup first, with the old file**, then drop the local edit and update.
+
+#### With the script (recommended)
+
+`scripts/deploy-v4.sh` runs the steps below. It asks before each step (`-y` skips that), and on failure it stops right there and prints the current state and how to get back.
+Before stopping anything it checks that origin/main can be fast-forwarded and that no untracked file collides with a file the update brings in, so git cannot fail after the service is already down.
+A v3.x NAS does not have the script yet, so extract it first (do not use sudo; the script uses sudo only for docker and tar):
+
+```bash
+cd <YOUR_NAS_PATH>
+git fetch origin main
+git show origin/main:scripts/deploy-v4.sh > ../deploy-v4.sh
+bash ../deploy-v4.sh        # -y skips the confirmations
+```
+
+Backups go to `../mio-backups/<timestamp>-deploy-v4/` (`docker-compose.yml`, `.env`, `mio-data.tgz`, and `backup.info` with the commit and compose kind at that time).
+Local changes are moved to `git stash` (see `git stash list`).
+
+To go back, run `bash scripts/rollback-v4.sh`. It restores `docker-compose.yml` from the newest v3.x backup and starts again on `legacy-python`
+(`-b <dir>` picks the backup, `--pre-deploy` returns to the commit that was running before the deploy instead of legacy-python, `-y` skips the confirmations).
+To switch to v4.0 again after a rollback, extract and run `deploy-v4.sh` the same way.
+
+#### By hand
 
 ```bash
 cd <YOUR_NAS_PATH>
@@ -175,7 +197,7 @@ sudo docker-compose logs memory | head     # mio-memory v4.0: listening on 0.0.0
 Also check that admin.html opens and that MCP tools (e.g. `CoreMem_read`) work from Claude.ai / Claude Code.
 The MCP URL is `https://<YOUR_SERVER_URL>/mcp` (the old `/mcp/sse` was removed). The unused Python image can be removed with `sudo docker image prune`.
 
-**Rollback:** the Python version is kept on the `legacy-python` branch (TS-FULL step 7, the last state that ran with the TS front).
+**Rollback:** the Python version is kept on the `legacy-python` branch (TS-FULL step 7, the last state that ran with the TS front); with the script, `bash scripts/rollback-v4.sh`.
 
 ```bash
 sudo docker-compose down

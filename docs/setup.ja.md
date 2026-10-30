@@ -146,7 +146,29 @@ v4.0 でサーバーは TypeScript 単体になり、`docker-compose.yml` の `m
 データの置き場所（`memory/data` → `/data`）・ポート（5002）・`.env` はそのまま使える。OAuth トークン（`oauth_store.json`）も引き継がれるので、コネクタの再認証は不要。
 
 TS 前段構成（[ts-switchover.ja.md](ts-switchover.ja.md)）で動かしていた NAS では `docker-compose.yml` をローカルで書き換えているため、
-**古い構成のまま先に止めてから**ローカル変更を戻し、更新する：
+**古い構成のまま先に止めてから**ローカル変更を戻し、更新する。
+
+#### スクリプトで行う（おすすめ）
+
+下の手順は `scripts/deploy-v4.sh` にまとめてある。ステップごとに確認を出し（`-y` で省略）、失敗したらその場で止まって、そのときの状態と戻し方を表示する。
+止める前に「origin/main へ早送りできるか」「更新で入ってくるファイルと同じ名前の未追跡ファイルが無いか」を確かめるので、止めたあとで git が失敗してサービスが止まったままになることを避けられる。
+v3.x の NAS にはまだスクリプトが無いので、取り出してから実行する（sudo は付けない。docker と tar だけ中で sudo する）：
+
+```bash
+cd <YOUR_NAS_PATH>
+git fetch origin main
+git show origin/main:scripts/deploy-v4.sh > ../deploy-v4.sh
+bash ../deploy-v4.sh        # -y で確認を省く
+```
+
+バックアップは `../mio-backups/<日時>-deploy-v4/` に入る（`docker-compose.yml`・`.env`・`mio-data.tgz`、そのときのコミットと compose の種類を書いた `backup.info`）。
+ローカル変更は `git stash` に退避する（`git stash list` で確認できる）。
+
+戻すときは `bash scripts/rollback-v4.sh`。いちばん新しい v3.x 構成のバックアップの `docker-compose.yml` を戻し、`legacy-python` で起動し直す
+（`-b <ディレクトリ>` でバックアップを指定、`--pre-deploy` で legacy-python ではなくデプロイ直前に動いていたコミットへ戻す、`-y` で確認を省く）。
+ロールバックしたあとでもう一度 v4.0 にするときも、上と同じく `deploy-v4.sh` を取り出して実行する。
+
+#### 手で行う場合
 
 ```bash
 cd <YOUR_NAS_PATH>
@@ -175,7 +197,7 @@ sudo docker-compose logs memory | head     # mio-memory v4.0: listening on 0.0.0
 あわせて admin.html が開けること、Claude.ai / Claude Code から MCP ツール（例: `CoreMem_read`）が動くことを確かめる。
 MCP の URL は `https://<YOUR_SERVER_URL>/mcp`（旧 `/mcp/sse` は廃止済み）。不要になった Python のイメージは `sudo docker image prune` で消してよい。
 
-**ロールバック：** Python 版は `legacy-python` ブランチ（TS-FULL ステップ7 時点・TS 前段で動いていた最後の状態）に残してある。
+**ロールバック：** Python 版は `legacy-python` ブランチ（TS-FULL ステップ7 時点・TS 前段で動いていた最後の状態）に残してある（スクリプトなら `bash scripts/rollback-v4.sh`）。
 
 ```bash
 sudo docker-compose down

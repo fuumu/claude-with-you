@@ -641,6 +641,8 @@ claude-with-you/
 ├── scripts/
 │   ├── generate_summary_layers.py  Generate summary layers from outside the server (over REST)
 │   ├── manage_llm_endpoints.py     Interactively update the LLM endpoint settings in .env
+│   ├── deploy-v4.sh           Switch a v3.x install to v4.0 (docs/setup.md)
+│   ├── rollback-v4.sh         Roll back from v4.0 to v3.x (legacy-python)
 │   └── update-env.sh          .env_sample → .env merge script
 └── memory/
     └── data/               Live data (gitignored; /data in the container)
